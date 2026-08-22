@@ -1,0 +1,58 @@
+MELODY - iOS DERLEME TALIMATLARI
+================================
+
+Bu paket, Melody uygulamasının iOS sürümünü derlemek için
+hazırlanmış tam kaynak kodudur. (Android APK'sı zaten hazır:
+Melody.apk)
+
+GEREKSİNİMLER
+-------------
+- macOS çalıştıran bir bilgisayar (Mac veya Hackintosh/VM)
+- Xcode 15 veya üstü (App Store'dan ücretsiz)
+- Flutter SDK 3.47+  → https://docs.flutter.dev/get-started/install/macos
+- CocoaPods:  sudo gem install cocoapods
+- Apple kimliği (ücretsiz hesap yeterli, kendi cihazına kurulum için)
+
+DERLEME ADIMLARI
+----------------
+1) Bu klasörü Mac'te aç ve Terminal'de klasöre gir:
+
+   cd Melody-iOS-Kaynak
+
+2) Bağımlılıkları indir:
+
+   flutter pub get
+
+3) iOS bağımlılıklarını kur:
+
+   cd ios && pod install && cd ..
+
+4) iPhone'u bağla, Xcode ile imzalama ayarla:
+   ios/Runner.xcworkspace dosyasını Xcode ile aç
+   → Sol menüden "Runner" projesini seç
+   → "Signing & Capabilities" sekmesi
+   → Team kısmından kendi Apple ID'ni seç
+   → Bundle Identifier'ı benzersiz yap, örn: com.adin.melodyios
+
+5) Derle ve telefona yükle:
+
+   flutter run --release          (doğrudan bağlı cihaza kurar)
+
+   veya IPA dosyası üretmek için:
+
+   flutter build ipa              (TestFlight/App Store için)
+   flutter build ios --release --no-codesign   (imzasız .app)
+
+ALTERNATIF: MACSIZ COZUMLER
+---------------------------
+- Codemagic (codemagic.io): Ücretsiz katmanıyla bulutta iOS derler,
+  GitHub'a projeyi yükleyip 10 dakikada IPA alabilirsin.
+- GitHub Actions: Aşağıdaki workflow dosyası pakette hazır
+  (.github/workflows/ios.yml) — repo'ya yükleyince otomatik
+  imzasız IPA derler.
+
+NOTLAR
+------
+- Uygulama GPL-3.0 lisanslı açık kaynaktır; orijinal çekirdek
+  Musify (github.com/gokadzev/Musify) projesinden türetilmiştir.
+- Kaynak kodu: lib/ klasöründe (Dart), iOS arayüzü: ios/Runner/
