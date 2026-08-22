@@ -39,27 +39,33 @@ import 'package:rxdart/rxdart.dart';
 
 class MusifyAudioHandler extends BaseAudioHandler {
   MusifyAudioHandler() {
-    _androidEqualizer = AndroidEqualizer();
-    audioPlayer = AudioPlayer(
-      audioPipeline: AudioPipeline(androidAudioEffects: [_androidEqualizer]),
-      audioLoadConfiguration: const AudioLoadConfiguration(
-        androidLoadControl: AndroidLoadControl(
-          maxBufferDuration: Duration(seconds: 60),
-          bufferForPlaybackDuration: Duration(milliseconds: 500),
-          bufferForPlaybackAfterRebufferDuration: Duration(seconds: 3),
+    if (Platform.isAndroid) {
+      _androidEqualizer = AndroidEqualizer();
+      audioPlayer = AudioPlayer(
+        audioPipeline: AudioPipeline(androidAudioEffects: [_androidEqualizer]),
+        audioLoadConfiguration: const AudioLoadConfiguration(
+          androidLoadControl: AndroidLoadControl(
+            maxBufferDuration: Duration(seconds: 60),
+            bufferForPlaybackDuration: Duration(milliseconds: 500),
+            bufferForPlaybackAfterRebufferDuration: Duration(seconds: 3),
+          ),
         ),
-      ),
-    );
+      );
+    } else {
+      audioPlayer = AudioPlayer();
+    }
 
     _setupEventSubscriptions();
     _updatePlaybackState();
 
-    audioPlayer.setAndroidAudioAttributes(
-      const AndroidAudioAttributes(
-        contentType: AndroidAudioContentType.music,
-        usage: AndroidAudioUsage.media,
-      ),
-    );
+    if (Platform.isAndroid) {
+      audioPlayer.setAndroidAudioAttributes(
+        const AndroidAudioAttributes(
+          contentType: AndroidAudioContentType.music,
+          usage: AndroidAudioUsage.media,
+        ),
+      );
+    }
 
     _initialize();
   }
@@ -378,6 +384,7 @@ class MusifyAudioHandler extends BaseAudioHandler {
 
   Future<bool> _ensureEqualizerConfigured({bool force = false}) async {
     if (_equalizerInitialized) return true;
+    if (!Platform.isAndroid) return false;
 
     final now = DateTime.now();
     if (!force && now.isBefore(_equalizerRetryNotBefore)) {
