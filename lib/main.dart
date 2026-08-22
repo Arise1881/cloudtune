@@ -20,6 +20,7 @@
  */
 
 import 'dart:async';
+import 'dart:io' show Directory, File, FileLock, FileMode, Platform, RandomAccessFile, exit;
 
 import 'package:app_links/app_links.dart';
 import 'package:audio_service/audio_service.dart';
@@ -132,7 +133,8 @@ class _MusifyState extends State<Musify> with WidgetsBindingObserver {
 
     offlineMode.addListener(_onOfflineModeChanged);
 
-    sharingIntentSubscription = ReceiveSharingIntent.getTextStream().listen(
+    if (Platform.isAndroid || Platform.isIOS) {
+      sharingIntentSubscription = ReceiveSharingIntent.getTextStream().listen(
       (String? value) async {
         await consumeYoutubeSharedTextIntent(
           value,
@@ -146,10 +148,11 @@ class _MusifyState extends State<Musify> with WidgetsBindingObserver {
           },
         );
       },
-      onError: (err) {
-        logger.log('getTextStream error:', error: err);
-      },
-    );
+        onError: (err) {
+          logger.log('getTextStream error:', error: err);
+        },
+      );
+    }
 
     try {
       LicenseRegistry.addLicense(() async* {
@@ -275,9 +278,38 @@ void main() async {
   runApp(const Musify());
 }
 
+RandomAccessFile? _singleInstanceLock;
+
+Future<void> _acquireSingleInstanceLock(String dirPath) async {
+  try {
+    final lockFile = File('$dirPath/melody.lock');
+    final raf = await lockFile.open(mode: FileMode.write);
+    _singleInstanceLock = await raf.lock(FileLock.exclusive);
+  } catch (_) {
+    exit(0);
+  }
+}
+
 Future<void> initialisation() async {
   try {
-    await Hive.initFlutter();
+    if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+      final supportDir = await getApplicationSupportDirectory();
+      await supportDir.create(recursive: true);
+      await _acquireSingleInstanceLock(supportDir.path);
+      final oldDocsDir = await getApplicationDocumentsDirectory();
+      for (final box in ['settings', 'user', 'usernobackup', 'cache']) {
+        final oldFile = File('${oldDocsDir.path}/$box.hive');
+        if (await oldFile.exists() &&
+            !await File('${supportDir.path}/$box.hive').exists()) {
+          try {
+            await oldFile.copy('${supportDir.path}/$box.hive');
+          } catch (_) {}
+        }
+      }
+      Hive.init(supportDir.path);
+    } else {
+      await Hive.initFlutter();
+    }
 
     await Future.wait([
       Hive.openBox('settings'),
