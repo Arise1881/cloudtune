@@ -90,7 +90,7 @@ final equalizerEnabled = ValueNotifier<bool>(
 final equalizerBandGains = ValueNotifier<List<double>>(_readEqualizerGains());
 
 Locale languageSetting = getLocaleFromLanguageCode(
-  Hive.box('settings').get('languageCode', defaultValue: 'en') as String,
+  Hive.box('settings').get('languageCode', defaultValue: 'tr') as String,
 );
 
 int themeModeSetting =

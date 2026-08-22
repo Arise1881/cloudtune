@@ -248,6 +248,7 @@ class SettingsPage extends StatelessWidget {
               context.l10n!.automaticSongPicker,
               FluentIcons.music_note_2_play_20_regular,
               description: context.l10n!.automaticSongPickerDescription,
+              borderRadius: commonCustomBarRadiusLast,
               trailing: Switch(
                 value: value,
                 onChanged: (value) {
@@ -258,25 +259,8 @@ class SettingsPage extends StatelessWidget {
             );
           },
         ),
-        ValueListenableBuilder<bool>(
-          valueListenable: externalRecommendations,
-          builder: (_, value, __) {
-            return CustomBar(
-              context.l10n!.externalRecommendations,
-              FluentIcons.channel_share_24_regular,
-              description: context.l10n!.externalRecommendationsDescription,
-              borderRadius: commonCustomBarRadiusLast,
-              trailing: Switch(
-                value: value,
-                onChanged: (value) =>
-                    _toggleExternalRecommendations(context, value),
-              ),
-            );
-          },
-        ),
 
         _buildToolsSection(context),
-        _buildSponsorSection(context),
       ],
     );
   }
@@ -439,63 +423,6 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
-  Widget _buildSponsorSection(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Column(
-      children: [
-        SectionHeader(
-          title: context.l10n!.becomeSponsor,
-          icon: FluentIcons.heart_24_filled,
-        ),
-        Card(
-          margin: const EdgeInsets.only(bottom: 8),
-          elevation: 0,
-          color: colorScheme.primaryContainer,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: InkWell(
-            onTap: () => launchURL(Uri.parse('https://ko-fi.com/gokadzev')),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-              child: Row(
-                children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: colorScheme.onPrimaryContainer.withValues(
-                        alpha: 0.14,
-                      ),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      FluentIcons.heart_24_filled,
-                      color: colorScheme.onPrimaryContainer,
-                      size: 24,
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Text(
-                      context.l10n!.sponsorProject,
-                      style: TextStyle(
-                        color: colorScheme.onPrimaryContainer,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildOthersSection(BuildContext context) {
     return Column(
       children: [
@@ -519,13 +446,8 @@ class SettingsPage extends StatelessWidget {
         CustomBar(
           '${context.l10n!.copyLogs} (${logger.getLogCount()})',
           FluentIcons.error_circle_24_regular,
-          onTap: () async => showToast(context, await logger.copyLogs(context)),
-        ),
-        CustomBar(
-          context.l10n!.about,
-          FluentIcons.book_information_24_regular,
           borderRadius: commonCustomBarRadiusLast,
-          onTap: () => NavigationManager.router.go('/settings/about'),
+          onTap: () async => showToast(context, await logger.copyLogs(context)),
         ),
       ],
     );
@@ -775,12 +697,6 @@ class SettingsPage extends StatelessWidget {
   void _toggleAutomaticUpdateChecks(BuildContext context, bool value) {
     addOrUpdateData<bool>('settings', 'shouldWeCheckUpdates', value);
     shouldWeCheckUpdates.value = value;
-    showToast(context, context.l10n!.settingChangedMsg);
-  }
-
-  void _toggleExternalRecommendations(BuildContext context, bool value) {
-    addOrUpdateData<bool>('settings', 'externalRecommendations', value);
-    externalRecommendations.value = value;
     showToast(context, context.l10n!.settingChangedMsg);
   }
 
