@@ -272,10 +272,12 @@ class _MusifyState extends State<Musify> with WidgetsBindingObserver {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    JustAudioMediaKit.ensureInitialized();
-  } catch (e) {
-    logger.log('Desktop audio backend init failed:', error: e);
+  if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+    try {
+      JustAudioMediaKit.ensureInitialized();
+    } catch (e) {
+      logger.log('Desktop audio backend init failed:', error: e);
+    }
   }
   await initialisation();
 
