@@ -19,6 +19,8 @@
  *     please visit: https://github.com/gokadzev/Musify
  */
 
+import 'dart:io' show Platform;
+
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:melody/constants/app_constants.dart';
@@ -118,73 +120,80 @@ String formatMonthPeriodLabel(Locale locale, String monthKey) {
       : '${label[0].toUpperCase()}${label.substring(1)}';
 }
 
+enum _PlaybackCodec { opus, vorbis, aac, unsupported }
+
+_PlaybackCodec _codecOf(AudioOnlyStreamInfo stream) {
+  final codec = stream.codec.toString().toLowerCase();
+  if (_isDolbyCodec(codec)) return _PlaybackCodec.unsupported;
+  if (codec.contains('opus')) return _PlaybackCodec.opus;
+  if (codec.contains('vorbis')) return _PlaybackCodec.vorbis;
+  if (codec.contains('mp4a') || codec.contains('aac')) {
+    return _PlaybackCodec.aac;
+  }
+  return _PlaybackCodec.unsupported;
+}
+
+/// Whether the app's audio backend on this platform can decode [codec].
+///
+/// iOS's AVPlayer only plays AAC-in-M4A/MP4, so Opus (WebM) streams must never
+/// be picked on iPhones — otherwise the track silently fails to start. Android
+/// (ExoPlayer) and desktop (media_kit) decode Opus/Vorbis natively, so they're
+/// free to use the best-sounding codec.
+bool _isStreamPlayableOnThisPlatform(_PlaybackCodec codec) {
+  if (codec == _PlaybackCodec.unsupported) return false;
+  if (Platform.isIOS) return codec == _PlaybackCodec.aac;
+  return true;
+}
+
+/// Relative perceptual quality of a codec at a given bitrate. Opus is the most
+/// transparent codec on YouTube (~transparent from 128 kbps), followed by
+/// Vorbis and AAC. The multiplier is used as a tie-breaker so that "high"
+/// prefers, e.g., 160 kbps Opus over 129 kbps AAC, while a genuinely
+/// higher-bitrate AAC stream (256 kbps premium tracks) still wins when it is
+/// truly better.
+const Map<_PlaybackCodec, double> _codecQualityFactor = {
+  _PlaybackCodec.opus: 1.35,
+  _PlaybackCodec.vorbis: 1.10,
+  _PlaybackCodec.aac: 1.0,
+};
+
+double _audioQualityScore(AudioOnlyStreamInfo stream) {
+  final codec = _codecOf(stream);
+  return stream.bitrate.bitsPerSecond * (_codecQualityFactor[codec] ?? 0);
+}
+
+/// Picks the stream that best matches the user's quality setting while still
+/// being guaranteed to play on this platform.
+///
+/// * iOS keeps only AAC-in-M4A streams (everything AVPlayer can decode) and
+///   "high" plays the best of those.
+/// * Android/desktop prefer Opus at its ~160 kbps rate, falling back to the
+///   highest scoring stream when only other codecs are available.
+///
+/// No stream is ever transcoded or resampled on the way to the speaker, so the
+/// chosen audio quality reaches the headphones losslessly.
 AudioOnlyStreamInfo selectAudioOnlyStreamForQuality(
   List<AudioOnlyStreamInfo> availableSources,
 ) {
-  final sortedByCompatibility = _sortAudioOnlyByCompatibility(availableSources);
-  final compatibleSources = _filterCompatibleAudioOnlySources(
-    sortedByCompatibility,
+  final playable = availableSources
+      .where((stream) => _isStreamPlayableOnThisPlatform(_codecOf(stream)))
+      .toList();
+  if (playable.isEmpty) {
+    return availableSources.withHighestBitrate();
+  }
+
+  playable.sort(
+    (a, b) => _audioQualityScore(a).compareTo(_audioQualityScore(b)),
   );
-  final selectionPool = compatibleSources.isNotEmpty
-      ? compatibleSources
-      : sortedByCompatibility;
 
   final qualitySetting = audioQualitySetting.value;
-
   if (qualitySetting == 'low') {
-    return selectionPool.last;
+    return playable.first;
   } else if (qualitySetting == 'medium') {
-    return selectionPool[selectionPool.length ~/ 2];
+    return playable[playable.length ~/ 2];
   }
 
-  return selectionPool.withHighestBitrate();
-}
-
-List<AudioOnlyStreamInfo> _filterCompatibleAudioOnlySources(
-  List<AudioOnlyStreamInfo> sources,
-) {
-  return sources.where((stream) {
-    final codec = stream.codec.toString().toLowerCase();
-    final container = stream.container.name.toLowerCase();
-
-    if (_isDolbyCodec(codec)) {
-      return false;
-    }
-
-    return _isPreferredAudioOnlyCodec(codec, container);
-  }).toList();
-}
-
-List<AudioOnlyStreamInfo> _sortAudioOnlyByCompatibility(
-  List<AudioOnlyStreamInfo> sources,
-) {
-  final sorted = List<AudioOnlyStreamInfo>.from(sources)
-    ..sort((a, b) {
-      final aScore = _audioOnlyCompatibilityScore(a);
-      final bScore = _audioOnlyCompatibilityScore(b);
-      return bScore.compareTo(aScore);
-    });
-  return sorted;
-}
-
-int _audioOnlyCompatibilityScore(AudioOnlyStreamInfo stream) {
-  final codec = stream.codec.toString().toLowerCase();
-  final container = stream.container.name.toLowerCase();
-
-  if (_isDolbyCodec(codec)) {
-    return 0;
-  }
-
-  if ((codec.contains('mp4a') || codec.contains('aac')) &&
-      (container == 'mp4' || container == 'm4a')) {
-    return 3;
-  }
-
-  if (codec.contains('opus') || codec.contains('vorbis')) {
-    return 2;
-  }
-
-  return 1;
+  return playable.last;
 }
 
 bool _isDolbyCodec(String codec) {
@@ -192,13 +201,4 @@ bool _isDolbyCodec(String codec) {
       codec.contains('ac-3') ||
       codec.contains('eac3') ||
       codec.contains('dolby');
-}
-
-bool _isPreferredAudioOnlyCodec(String codec, String container) {
-  if ((codec.contains('mp4a') || codec.contains('aac')) &&
-      (container == 'mp4' || container == 'm4a')) {
-    return true;
-  }
-
-  return codec.contains('opus') || codec.contains('vorbis');
 }
