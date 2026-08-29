@@ -23,6 +23,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:fluentui_system_icons/fluentui_system_icons.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:melody/main.dart';
+import 'package:melody/widgets/artwork_background.dart';
 import 'package:melody/widgets/flip_card.dart';
 import 'package:melody/widgets/now_playing/bottom_actions_row.dart';
 import 'package:melody/widgets/now_playing/now_playing_artwork.dart';
@@ -63,28 +64,31 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
               return const Center(child: CircularProgressIndicator());
             }
             final metadata = snapshot.data!;
-            return Column(
-              children: [
-                _buildAppBar(context, colorScheme),
-                Expanded(
-                  child: isLargeScreen
-                      ? _DesktopLayout(
-                          metadata: metadata,
-                          size: size,
-                          adjustedIconSize: baseIconSize,
-                          adjustedMiniIconSize: miniIconSize,
-                          lyricsController: _lyricsController,
-                        )
-                      : _MobileLayout(
-                          metadata: metadata,
-                          size: size,
-                          adjustedIconSize: baseIconSize,
-                          adjustedMiniIconSize: miniIconSize,
-                          isLargeScreen: isLargeScreen,
-                          lyricsController: _lyricsController,
-                        ),
-                ),
-              ],
+            return ArtworkBackground(
+              metadata: metadata,
+              child: Column(
+                children: [
+                  _buildAppBar(context, colorScheme),
+                  Expanded(
+                    child: isLargeScreen
+                        ? _DesktopLayout(
+                            metadata: metadata,
+                            size: size,
+                            adjustedIconSize: baseIconSize,
+                            adjustedMiniIconSize: miniIconSize,
+                            lyricsController: _lyricsController,
+                          )
+                        : _MobileLayout(
+                            metadata: metadata,
+                            size: size,
+                            adjustedIconSize: baseIconSize,
+                            adjustedMiniIconSize: miniIconSize,
+                            isLargeScreen: isLargeScreen,
+                            lyricsController: _lyricsController,
+                          ),
+                  ),
+                ],
+              ),
             );
           },
         ),
