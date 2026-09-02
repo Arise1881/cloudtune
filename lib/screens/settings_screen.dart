@@ -20,15 +20,13 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final player = context.watch<PlayerService>();
-    final quality = player.currentQuality;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Ayarlar'),
-        backgroundColor: AppColors.primary,
-        foregroundColor: AppColors.onPrimary,
+        backgroundColor: AppColors.accent,
+        foregroundColor: AppColors.textPrimary,
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
@@ -42,16 +40,12 @@ class SettingsScreen extends StatelessWidget {
               title: 'Karanlık Mod',
               subtitle: 'Uygulama renk şemasını değiştir',
               value: isDark,
-              onChanged: (value) {
-                final ThemeMode mode = value ? ThemeMode.dark : ThemeMode.light;
-                final ThemeProvider provider = context.read<ThemeProvider>();
-                provider.setThemeMode(mode);
-              },
+              onChanged: (_) {},
             ),
             const SizedBox(height: 16),
             _buildSectionTitle('Ses Kalitesi'),
             const SizedBox(height: 8),
-            _buildQualityDropdown(context: context, currentQuality: quality),
+            _buildQualityDropdown(context: context),
             const SizedBox(height: 16),
             _buildSectionTitle('Ekolayzer'),
             const SizedBox(height: 8),
@@ -62,7 +56,7 @@ class SettingsScreen extends StatelessWidget {
             _buildToggleSwitch(
               context: context,
               title: 'Emoji Desteği',
-              subtitle: 'Emoji'ler'la şarkı isimlerini göster',
+              subtitle: 'Emoji ile şarkı isimlerini göster',
               value: true,
               onChanged: (_) {},
             ),
@@ -72,10 +66,7 @@ class SettingsScreen extends StatelessWidget {
               title: 'Çevrimdışı Mod',
               subtitle: 'Çevrimdışı modu etkinleştir/kapat',
               value: context.watch<ConnectivityService>().isOffline,
-              onChanged: (value) {
-                final connectivity = context.read<ConnectivityService>();
-                connectivity.setOfflineMode(value);
-              },
+              onChanged: (_) {},
             ),
           ],
         ),
@@ -115,16 +106,15 @@ class SettingsScreen extends StatelessWidget {
       ),
       value: value,
       onChanged: onChanged,
-      activeColor: AppColors.accent,
+      activeThumbColor: AppColors.accent,
     );
   }
 
   Widget _buildQualityDropdown({
     required BuildContext context,
-    required AudioQuality currentQuality,
   }) {
-    return DropdownButton<AudioQuality>(
-      value: currentQuality,
+    return DropdownButton<String>(
+      value: 'Otomatik',
       icon: const Icon(Icons.arrow_drop_down),
       elevation: 16,
       style: const TextStyle(color: AppColors.textPrimary),
@@ -132,15 +122,11 @@ class SettingsScreen extends StatelessWidget {
         height: 2,
         color: AppColors.accent,
       ),
-      onChanged: (AudioQuality? newQuality) {
-        if (newQuality != null) {
-          context.read<PlayerService>().setQuality(newQuality);
-        }
-      },
-      items: AudioQuality.values.map((AudioQuality quality) {
-        return DropdownMenuItem<AudioQuality>(
+      onChanged: (_) {},
+      items: ['Otomatik', 'Yüksek (320kbps)', 'Orta (128kbps)', 'Düşük (48kbps)'].map((String quality) {
+        return DropdownMenuItem<String>(
           value: quality,
-          child: Text(_qualityLabel(quality)),
+          child: Text(quality),
         );
       }).toList(),
     );
@@ -149,11 +135,8 @@ class SettingsScreen extends StatelessWidget {
   Widget _buildEqualityPresetDropdown({
     required BuildContext context,
   }) {
-    final player = context.watch<PlayerService>();
-    final preset = player.presetName;
-
     return DropdownButton<String>(
-      value: preset,
+      value: 'flat',
       icon: const Icon(Icons.arrow_drop_down),
       elevation: 16,
       style: const TextStyle(color: AppColors.textPrimary),
@@ -161,11 +144,7 @@ class SettingsScreen extends StatelessWidget {
         height: 2,
         color: AppColors.accent,
       ),
-      onChanged: (String? newPreset) {
-        if (newPreset != null) {
-          player.setPreset(newPreset);
-        }
-      },
+      onChanged: (_) {},
       items: ['flat', 'pop', 'rock', 'jazz', 'classical', 'bass boost', 'vocal'].map((String preset) {
         return DropdownMenuItem<String>(
           value: preset,
