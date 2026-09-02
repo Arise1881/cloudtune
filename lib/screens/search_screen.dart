@@ -1,0 +1,304 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../constants.dart';
+import '../models/song.dart';
+import '../services/connectivity_service.dart';
+import '../services/download_manager.dart';
+import '../services/library_store.dart';
+import '../services/music_service.dart';
+import '../services/player_service.dart';
+import '../widgets/song_tile.dart';
+import 'now_playing_screen.dart';
+import 'song_actions.dart';
+
+/// Arama ekranı: debounce'lu canlı arama + son aramalar.
+class SearchScreen extends StatefulWidget {
+  const SearchScreen({super.key});
+
+  @override
+  State<SearchScreen> createState() => _SearchScreenState();
+}
+
+class _SearchScreenState extends State<SearchScreen> {
+  final TextEditingController _controller = TextEditingController();
+  final FocusNode _focus = FocusNode();
+  bool _isListening = false;
+  Timer? _debounce;
+  List<Song> _results = [];
+  bool _searching = false;
+  String? _error;
+  List<String> _recent = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRecent();
+  }
+
+  Future<void> _loadRecent() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() => _recent = prefs.getStringList('recent_searches') ?? []);
+  }
+
+  Future<void> _saveRecent(String q) async {
+    final prefs = await SharedPreferences.getInstance();
+    _recent
+      ..remove(q)
+      ..insert(0, q);
+    if (_recent.length > 8) _recent = _recent.sublist(0, 8);
+    await prefs.setStringList('recent_searches', _recent);
+    if (mounted) setState(() {});
+  }
+
+  void _onQueryChanged(String q) {
+    _debounce?.cancel();
+    if (q.trim().isEmpty) {
+      setState(() {
+        _results = [];
+        _error = null;
+        _searching = false;
+      });
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 500), () => _search(q));
+  }
+
+  Future<void> _search(String q) async {
+    setState(() {
+      _searching = true;
+      _error = null;
+    });
+    try {
+      final results = await MusicService.instance.search(q.trim());
+      if (!mounted) return;
+      setState(() => _results = results);
+      unawaited(_saveRecent(q.trim()));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Arama başarısız oldu. Bağlantını kontrol et.');
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final offline = context.watch<ConnectivityService>().isOffline;
+
+    return SafeArea(
+      bottom: false,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Text(AppStrings.appName,
+                style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800)),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              controller: _controller,
+              focusNode: _focus,
+              readOnly: offline,
+              enabled: !offline,
+              onChanged: _onQueryChanged,
+              onSubmitted: (q) => _search(q),
+              textInputAction: TextInputAction.search,
+              style: const TextStyle(color: AppColors.textPrimary),
+              decoration: InputDecoration(
+                hintText: offline ? 'Çevrimdışıyken arama kapalı' : AppStrings.searchHint,
+                hintStyle: const TextStyle(color: AppColors.textSecondary),
+                prefixIcon:
+                    const Icon(Icons.search, color: AppColors.textSecondary),
+                 suffixIcon: _controller.text.isNotEmpty
+                      ? IconButton(
+                        icon: Icon(_isListening ? Icons.mic : Icons.mic_off,
+                            size: 20, color: _isListening ? AppColors.accent : AppColors.textSecondary),
+                        onPressed: _toggleListening,
+                      )
+                    ? IconButton(
+                        icon: const Icon(Icons.close,
+                            size: 20, color: AppColors.textSecondary),
+                        onPressed: () {
+                          _controller.clear();
+                          _onQueryChanged('');
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+            ),
+          ),
+          Expanded(
+            child: offline
+                ? _offlineState()
+                : _buildBody(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_searching) {
+      return const Center(
+        child: CircularProgressIndicator(color: AppColors.accentBright),
+      );
+    }
+    if (_error != null) {
+      return _message(icon: Icons.wifi_off_rounded, text: _error!);
+    }
+    if (_controller.text.isEmpty) {
+      if (_recent.isEmpty) {
+        return _message(icon: Icons.music_note_outlined, text: AppStrings.emptySearch);
+      }
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Son aramalar',
+                  style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700)),
+              TextButton(
+                onPressed: () async {
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.remove('recent_searches');
+                  setState(() => _recent = []);
+                },
+                child: const Text('Temizle'),
+              ),
+            ],
+          ),
+          ..._recent.map((q) => ListTile(
+                leading: const Icon(Icons.history,
+                    color: AppColors.textSecondary),
+                title: Text(q,
+                    style: const TextStyle(color: AppColors.textPrimary)),
+                onTap: () {
+                  _controller.text = q;
+                  _search(q);
+                },
+              )),
+        ],
+      );
+    }
+    if (_results.isEmpty) {
+      return _message(icon: Icons.search_off, text: AppStrings.noResults);
+    }
+
+    final player = context.read<PlayerService>();
+    final downloads = context.watch<DownloadManager>();
+    final library = context.watch<LibraryStore>();
+    return ListView.builder(
+      itemCount: _results.length,
+      itemBuilder: (_, i) {
+        final song = _results[i];
+        final isCurrent = player.current?.id == song.id;
+        final isDownloaded = library.isDownloaded(song.id);
+        final progress = downloads.progress[song.id];
+        return SongTile(
+          song: song,
+          selected: isCurrent,
+          downloadState: isDownloaded
+              ? true
+              : (downloads.isDownloading(song.id)
+                  ? (progress ?? 0.0)
+                  : const NoDownloadState()),
+          onDownloadTap: () {
+            if (isDownloaded) {
+              _showDownloadedSnack(context, song);
+            } else if (!downloads.isDownloading(song.id)) {
+              downloads.download(song).catchError((_) {});
+            }
+          },
+          onTap: () async {
+            try {
+              player.playQueue(_results, startIndex: i);
+              if (!context.mounted) return;
+              Navigator.of(context).push(NowPlayingScreen.route(context));
+            } catch (_) {}
+          },
+          onMenuTap: () => showSongActions(context, song),
+        );
+      },
+    );
+  }
+
+  void _showDownloadedSnack(BuildContext context, Song song) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: const Text('Bu şarkı zaten indirildi.'),
+        duration: const Duration(seconds: 2),
+      ));
+  }
+
+  Widget _offlineState() =>
+      _message(icon: Icons.cloud_off_outlined, text: AppStrings.offlineMessage);
+
+  Widget _message({required IconData icon, required String text}) => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 52, color: AppColors.textSecondary),
+            const SizedBox(height: 14),
+            Text(text,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    color: AppColors.textSecondary, fontSize: 15)),
+          ],
+        ),
+      );
+
+  @override
+  void _toggleListening() {
+    setState(() {
+      _isListening = !_isListening;
+    });
+  }
+  void dispose() {
+  void _toggleListening() {
+    setState(() {
+      _isListening = !_isListening;
+    });
+  }
+    _debounce?.cancel();
+  void _toggleListening() {
+    setState(() {
+      _isListening = !_isListening;
+    });
+  }
+    _controller.dispose();
+  void _toggleListening() {
+    setState(() {
+      _isListening = !_isListening;
+    });
+  }
+    _focus.dispose();
+  void _toggleListening() {
+    setState(() {
+      _isListening = !_isListening;
+    });
+  }
+    super.dispose();
+  }
+}

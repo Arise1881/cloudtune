@@ -1,0 +1,715 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:math';
+
+import 'package:flutter/foundation.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../constants.dart';
+import '../models/song.dart';
+import 'connectivity_service.dart';
+import 'download_manager.dart';
+import 'equalizer_service.dart';
+import 'library_store.dart';
+import 'music_service.dart';
+import 'room_service.dart';
+
+enum RepeatMode { off, all, one }
+enum AudioQuality { auto, high, medium, low, ultra }
+
+/// Tek noktadan oynatma yönetimi:
+/// - Sonsuz rasgele şarkı oynatma (autoplay)
+/// - Crossfade (geçiş) — kesintisiz akış
+/// - Çevrimdışı / indirilmiş dosyadan çalma
+class PlayerService extends ChangeNotifier {
+  PlayerService._() {
+    _player.playerStateStream.listen(_onPlayerState);
+    _player.processingStateStream.listen(_onProcessingState);
+  }
+
+  static final PlayerService instance = PlayerService._();
+
+  final AudioPlayer _player = AudioPlayer();
+  final LibraryStore library = LibraryStore.instance;
+  final ConnectivityService connectivity = ConnectivityService.instance;
+  final MusicService music = MusicService.instance;
+  final RoomService room = RoomService.instance;
+
+  List<Song> _queue = const [];
+  List<Song> _shuffledQueue = const [];
+  int _index = -1;
+  bool _shuffle = false;
+  RepeatMode _repeat = RepeatMode.off;
+
+  // ─── Otomatik oynatma (sonsuz rasgele) ───
+  bool _autoplay = true;
+  bool get autoplay => _autoplay;
+
+  // ─── Radio modu ───
+  bool _isRadioMode = false;
+
+  // ─── Crossfade ───
+  Timer? _crossfadeTimer;
+  bool _crossfading = false;
+  static const Duration _crossfadeDuration = Duration(seconds: 4);
+
+  // ─── YouTube Music benzeri özellikler ───
+  AudioQuality _quality = AudioQuality.auto;
+  AudioQuality get quality => _quality;
+
+  // ─── Uyku zamanlayıcısı ───
+  Timer? _sleepTimer;
+  DateTime? _sleepEndTime;
+  Duration? _sleepDuration;
+  Duration? get sleepDuration => _sleepDuration;
+  DateTime? get sleepEndTime => _sleepEndTime;
+  bool get sleepTimerActive => _sleepTimer?.isActive ?? false;
+  Duration? get sleepRemaining {
+    if (!sleepTimerActive || _sleepEndTime == null) return null;
+    final d = _sleepEndTime!.difference(DateTime.now());
+    return d.isNegative ? Duration.zero : d;
+  }
+
+  SharedPreferences? _prefs;
+
+  Song? get current =>
+      _index >= 0 && _index < effectiveQueue.length ? effectiveQueue[_index] : null;
+  List<Song> get queue => effectiveQueue;
+  int get index => _index;
+  bool get shuffle => _shuffle;
+  RepeatMode get repeat => _repeat;
+  AudioPlayer get player => _player;
+
+  bool _isLoading = false;
+  String? _lastError;
+  bool get isLoading => _isLoading;
+  String? get lastError => _lastError;
+
+  bool get playingOffline {
+    final song = current;
+    if (song == null) return false;
+    if (song.isDownloaded && File(song.localPath!).existsSync()) return true;
+    return connectivity.isOffline;
+  }
+
+  List<Song> get effectiveQueue => _shuffle ? _shuffledQueue : _queue;
+
+  // ─── Rasgele şarkı sorguları (autoplay için) ───
+  static const List<String> _autoplayQueries = [
+    'popular songs 2026',
+    'trending music 2026',
+    'top hits playlist',
+    'best songs ever',
+    'new music friday',
+    'chill vibes playlist',
+    'workout music mix',
+    'relaxing music',
+    'pop hits 2026',
+    'rock classics',
+    'hip hop hits',
+    'electronic dance music',
+    'acoustic chill',
+    'indie pop playlist',
+    'r&b hits 2026',
+  ];
+
+  /// Kuyruk kurar ve çalmaya başlar.
+  /// [initialSource] önceden çözümlenmiş bir kaynak veriliyorsa, bunu doğrudan kullanırız;
+  /// aksi takdirde akış URL'si otomatik çözümlenir. Bu, kullanıcı tıklaması sonrası
+  //  anında çalma süreçlerini hızlandırır.
+  void playQueue(List<Song> songs, {int startIndex = 0, String? initialSource}) {
+    if (songs.isEmpty) return;
+    _crossfadeTimer?.cancel();
+    _crossfading = false;
+    _queue = List.of(songs);
+    _rebuildShuffled(startIndex);
+    _index = _shuffle
+        ? 0
+        : startIndex.clamp(0, _queue.length - 1);
+    library.pushRecent(current!);
+    _buildAndPlay(initialSource: initialSource).catchError((_) {});
+    notifyListeners();
+  }
+
+  void _rebuildShuffled(int firstIndex) {
+    if (_queue.isEmpty) return;
+    final rest = List.of(_queue)..removeAt(firstIndex.clamp(0, _queue.length - 1));
+    rest.shuffle();
+    _shuffledQueue = [_queue[firstIndex.clamp(0, _queue.length - 1)], ...rest];
+  }
+
+  /// Tek bir şarkıyı yükler ve çalar.
+  /// Her çağrıda o anki şarkı + crossfade için gerekli tek kaynak kurulur;
+  /// geçişler `next()` ile manuel yönetilir (autoplay + crossfade için).
+  /// [initialSource] veriliyorsa, stream URL çözme adımı atlanır ve oynatma hemen başlar.
+  Future<void> _buildAndPlay({String? initialSource}) async {
+    final songs = effectiveQueue;
+    if (songs.isEmpty || _index < 0 || _index >= songs.length) return;
+
+    _isLoading = true;
+    _lastError = null;
+    notifyListeners();
+
+    try {
+      final source = initialSource != null
+          ? await _buildSourceFromString(initialSource, songs[_index])
+          : await _buildSource(songs[_index]);
+      await _player.setAudioSource(source, initialPosition: Duration.zero,
+          preload: true);
+      _applyEqualizer();
+      await _player.play();
+    } catch (e) {
+      _lastError = e.toString().replaceFirst('Exception: ', '');
+      _isLoading = false;
+      notifyListeners();
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Verilen stream URL'ından doğrudan bir AudioSource oluşturur (cache'lenmiş URL için).
+  Future<AudioSource> _buildSourceFromString(String streamUrl, Song song) async {
+    Duration? duration;
+    Uri? artUri;
+
+    artUri = song.thumbnailUrl.isNotEmpty ? Uri.tryParse(song.thumbnailUrl) : null;
+    duration = song.durationMs > 0 ? Duration(milliseconds: song.durationMs) : null;
+
+    final mediaItem = MediaItem(
+      id: song.id,
+      title: song.title,
+      artist: song.artist,
+      album: AppStrings.appName,
+      artUri: artUri,
+      duration: duration,
+    );
+
+    return AudioSource.uri(Uri.parse(streamUrl), tag: mediaItem);
+  }
+
+  /// Tek bir şarkı için AudioSource oluşturur.
+  Future<AudioSource> _buildSource(Song song) async {
+    final downloaded = library.downloadedSong(song.id);
+    final localPath = downloaded?.localPath;
+    final useLocal = localPath != null && await File(localPath).exists();
+
+    Duration? duration;
+    Uri? artUri;
+    String? streamUrl;
+
+    if (useLocal) {
+      final art = File(DownloadManager.instance.artPath(song.id));
+      artUri = art.existsSync() ? Uri.file(art.path) : null;
+    } else if (connectivity.isOnline) {
+      streamUrl = await music.resolveStreamUrlWithQuality(song.id,
+          quality: switch (_quality) {
+            AudioQuality.high => 'high',
+            AudioQuality.medium => 'medium',
+            AudioQuality.low => 'low',
+            AudioQuality.ultra => 'ultra',
+            AudioQuality.auto => 'auto',
+          });
+      artUri = song.thumbnailUrl.isNotEmpty ? Uri.tryParse(song.thumbnailUrl) : null;
+      duration = song.durationMs > 0 ? Duration(milliseconds: song.durationMs) : null;
+    } else {
+throw StreamUnavailableException(
+      'Bu şarkı çevrimdışı kullanılamıyor.');
+    }
+
+    final mediaItem = MediaItem(
+      id: song.id,
+      title: song.title,
+      artist: song.artist,
+      album: AppStrings.appName,
+      artUri: artUri,
+      duration: duration,
+    );
+
+    if (useLocal) {
+      return AudioSource.file(localPath, tag: mediaItem);
+    }
+    return AudioSource.uri(Uri.parse(streamUrl!), tag: mediaItem);
+  }
+
+  void _applyEqualizer() {
+    try {
+      final v = EqualizerService.instance.volumeMultiplier();
+      _player.setVolume(v);
+    } catch (_) {
+      _player.setVolume(1.0);
+    }
+  }
+
+  Future<void> loadAndPlay() async {
+    await _buildAndPlay();
+  }
+
+  void togglePlayPause() async {
+    if (_player.playing) {
+      await _player.pause();
+    } else {
+      if (_player.processingState == ProcessingState.idle && current != null) {
+        try {
+          await _buildAndPlay();
+        } catch (_) {}
+        return;
+      }
+      await _player.play();
+    }
+  }
+
+  /// Sonraki şarkıya geç. Liste biterse ve autoplay açıksa rasgele şarkı getir.
+  Future<void> next({bool userTriggered = true}) async {
+    if (effectiveQueue.isEmpty) return;
+    if (_repeat == RepeatMode.one && !userTriggered) {
+      await _player.seek(Duration.zero);
+      await _player.play();
+      return;
+    }
+
+    // Crossfade'i iptal et (sonraki şarkıya geçtik)
+    _crossfadeTimer?.cancel();
+    _crossfading = false;
+    _player.setVolume(1.0);
+
+    // Radio modunda ise radio kuyruğundan sonraki şarkı
+    if (_isRadioMode && _radioQueue.isNotEmpty && _radioIndex >= 0) {
+      final nextSong = _radioNextSong();
+      _index = effectiveQueue.indexWhere((s) => s.id == nextSong.id);
+      library.pushRecent(current!);
+      try {
+        await _buildAndPlay();
+      } catch (_) {}
+      notifyListeners();
+      return;
+    }
+
+    if (_index < effectiveQueue.length - 1) {
+      _index++;
+    } else if (_repeat == RepeatMode.all) {
+      _index = 0;
+    } else if (_autoplay && connectivity.isOnline) {
+      // Liste bitti — autoplay: rasgele şarkı getir
+      await _autoplayNext();
+      return;
+    } else {
+      return; // liste bitti, autoplay kapalı
+    }
+
+    library.pushRecent(current!);
+    try {
+      await _buildAndPlay();
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  Future<void> previous() async {
+    if (effectiveQueue.isEmpty) return;
+    _crossfadeTimer?.cancel();
+    _crossfading = false;
+    _player.setVolume(1.0);
+
+    if (_player.position > const Duration(seconds: 3)) {
+      await _player.seek(Duration.zero);
+      return;
+    }
+    if (_index > 0) {
+      _index--;
+    } else {
+      _index = effectiveQueue.length - 1;
+    }
+    library.pushRecent(current!);
+    try {
+      await _buildAndPlay();
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  Future<void> jumpTo(int i) async {
+    if (i < 0 || i >= effectiveQueue.length) return;
+    _crossfadeTimer?.cancel();
+    _crossfading = false;
+    _player.setVolume(1.0);
+
+    _index = i;
+    library.pushRecent(current!);
+    notifyListeners();
+    try {
+      await _buildAndPlay();
+    } catch (_) {}
+  }
+
+  Future<void> playSmart(List<Song> list, int startIndex) async {
+    if (startIndex < 0 || startIndex >= list.length) return;
+    final ids = list.map((s) => s.id).toSet();
+    final queueIds = _queue.map((s) => s.id).toSet();
+    if (_queue.isNotEmpty && setEquals(ids, queueIds)) {
+      final i = effectiveQueue.indexWhere((s) => s.id == list[startIndex].id);
+      if (i >= 0) {
+        await jumpTo(i);
+        return;
+      }
+    }
+    playQueue(list, startIndex: startIndex);
+  }
+
+  void toggleShuffle() {
+    final currentId = current?.id;
+    _shuffle = !_shuffle;
+    if (_shuffle) {
+      _rebuildShuffled(
+          _queue.indexWhere((s) => s.id == currentId).clamp(0, _queue.length - 1));
+      _index = 0;
+    } else {
+      _index = _queue.indexWhere((s) => s.id == currentId);
+    }
+    notifyListeners();
+  }
+
+  void cycleRepeat() {
+    switch (_repeat) {
+      case RepeatMode.off:
+        _repeat = RepeatMode.all;
+        break;
+      case RepeatMode.all:
+        _repeat = RepeatMode.one;
+        break;
+      case RepeatMode.one:
+        _repeat = RepeatMode.off;
+        break;
+    }
+    notifyListeners();
+  }
+
+  void toggleAutoplay() {
+    _autoplay = !_autoplay;
+    notifyListeners();
+  }
+
+  // ─── Radio için daha fazla şarkı getir ───
+  Future<void> _fetchMoreRadio() async {
+    try {
+      final song = _radioQueue.isNotEmpty ? _radioQueue[_radioQueue.length - 1] : null;
+      final related = await music.radioFor(song ?? Song(
+        id: '',
+        title: '',
+        artist: '',
+        durationMs: 0,
+      ));
+      // Zaten kuyruktaki şarkıları hariç tut
+      final playedIds = _radioQueue.map((s) => s.id).toSet();
+      final candidates = related.where((s) => !playedIds.contains(s.id)).toList();
+      if (candidates.isNotEmpty) {
+        final nextSong = candidates[Random().nextInt(candidates.length)];
+        _queue = List.of(_queue)..add(nextSong);
+        if (_shuffle) {
+          _shuffledQueue = List.of(_shuffledQueue)..add(nextSong);
+        }
+        library.pushRecent(nextSong);
+      }
+    } catch (_) {
+      // Radio fetch başarısız — sessizce dur
+    }
+  }
+
+  // ─── Radio modunu durdur ───
+  void stopRadio() {
+    _isRadioMode = false;
+    _radioQueue = [];
+    _radioIndex = -1;
+    notifyListeners();
+  }
+
+  // ─── Odasınık senkronized autoplay ───
+  Future<void> _autoplayNextRoomSync() async {
+    try {
+      // Kuyruk bittiyse yeni şarkı getir
+      if (_index >= effectiveQueue.length - 1) {
+        final query = _autoplayQueries[Random().nextInt(_autoplayQueries.length)];
+        final results = await music.search(query, limit: 10);
+        if (results.isEmpty) return;
+
+        // Çalınan şarkıları hariç tut
+        final playedIds = effectiveQueue.map((s) => s.id).toSet();
+        final candidates = results.where((s) => !playedIds.contains(s.id)).toList();
+        if (candidates.isEmpty) return;
+
+        final nextSong = candidates[Random().nextInt(candidates.length)];
+
+        // Kuyruğa ekle
+        _queue = List.of(_queue)..add(nextSong);
+        if (_shuffle) {
+          _shuffledQueue = List.of(_shuffledQueue)..add(nextSong);
+        }
+        _index = effectiveQueue.length - 1;
+
+        library.pushRecent(nextSong);
+        try {
+          await _buildAndPlay();
+        } catch (_) {}
+        notifyListeners();
+      } else {
+        // Kuyruk içinde varsa sonraki şarkıya geç
+        next(userTriggered: false);
+      }
+    } catch (_) {
+      // Autoplay başarısız — sessizce dur
+    }
+  }
+
+  // ─── Sonsuz Rasgele Şarkı (Autoplay) ───
+  Future<void> _autoplayNext() async {
+    try {
+      final query = _autoplayQueries[Random().nextInt(_autoplayQueries.length)];
+      final results = await music.search(query, limit: 10);
+      if (results.isEmpty) return;
+
+      // Çalınan şarkıları hariç tut
+      final playedIds = effectiveQueue.map((s) => s.id).toSet();
+      final candidates = results.where((s) => !playedIds.contains(s.id)).toList();
+      if (candidates.isEmpty) return;
+
+      final nextSong = candidates[Random().nextInt(candidates.length)];
+
+      // Kuyruğa ekle
+      _queue = List.of(_queue)..add(nextSong);
+      if (_shuffle) {
+        _shuffledQueue = List.of(_shuffledQueue)..add(nextSong);
+      }
+      _index = effectiveQueue.length - 1;
+
+      library.pushRecent(nextSong);
+      try {
+        await _buildAndPlay();
+      } catch (_) {}
+      notifyListeners();
+    } catch (_) {
+      // Autoplay başarısız — sessizce dur
+    }
+  }
+
+  // ─── Crossfade (geçiş) ───
+  void _startCrossfade() {
+    if (_crossfading) return;
+    _crossfading = true;
+
+    final remaining = _player.duration != null
+        ? _player.duration! - _player.position
+        : Duration(seconds: 5);
+
+    if (remaining.inSeconds <= _crossfadeDuration.inSeconds + 1) {
+      // Zaten crossfade süresi kadar kaldı — hemen başlat
+      _executeCrossfade();
+      return;
+    }
+
+    // Crossfade başlaması gereken zamana kadar bekle
+    final delay = remaining - _crossfadeDuration;
+    _crossfadeTimer = Timer(delay > Duration.zero ? delay : Duration.zero, () {
+      _executeCrossfade();
+    });
+  }
+
+  void _executeCrossfade() {
+    if (!_player.playing) return;
+
+    // Volume fade-out: 4 saniyede 1.0 → 0.0
+    final steps = 40; // 100ms aralıklarla
+    final stepDuration = _crossfadeDuration.inMilliseconds ~/ steps;
+    final volumeStep = 1.0 / steps;
+    int step = 0;
+
+    Timer.periodic(Duration(milliseconds: stepDuration), (timer) {
+      step++;
+      final newVolume = (1.0 - step * volumeStep).clamp(0.0, 1.0);
+      _player.setVolume(newVolume);
+
+      if (step >= steps || !_player.playing) {
+        timer.cancel();
+        // Sıradaki şarkıya geç — _buildAndPlay içinde EQ volume uygulanır
+        next(userTriggered: false).then((_) {
+          _crossfading = false;
+        }).catchError((_) {
+          _crossfading = false;
+        });
+      }
+    });
+  }
+
+  // ─── Ses kalitesi ───
+  Future<void> loadQualityPref() async {
+    _prefs = await SharedPreferences.getInstance();
+    final idx = _prefs?.getInt('audio_quality') ?? AudioQuality.auto.index;
+    _quality = AudioQuality.values[idx.clamp(0, AudioQuality.values.length - 1)];
+  }
+
+  Future<void> setQuality(AudioQuality q) async {
+    _quality = q;
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs?.setInt('audio_quality', q.index);
+    // Otomatik olarak ultra yüksek kalite uygulamak için
+    if (q == AudioQuality.ultra) {
+      // Quality zaten ultra, ayarları koru
+    }
+    if (current != null && !playingOffline && connectivity.isOnline) {
+      try {
+        await _buildAndPlay();
+      } catch (_) {}
+    }
+    notifyListeners();
+  }
+
+  // ─── Oda senkronizasyonundan playback güncelleme ───
+  // (Oda senkronizasyonu tam implemented değil; çakışmayı önlemek için güvenli öntanımlı.)
+  void updateFromRoomSync() {}
+
+  String qualityLabel() => switch (_quality) {
+        AudioQuality.auto => 'Otomatik',
+        AudioQuality.high => 'Yüksek (320kbps)',
+        AudioQuality.medium => 'Orta (128kbps)',
+        AudioQuality.low => 'Düşük (48kbps)',
+        AudioQuality.ultra => 'Ultra (lossless)',
+      };
+
+  // ─── Uyku zamanlayıcısı ───
+  void startSleepTimer(Duration duration) {
+    _sleepTimer?.cancel();
+    _sleepDuration = duration;
+    _sleepEndTime = DateTime.now().add(duration);
+    _sleepTimer = Timer(duration, _onSleepTimerFire);
+    notifyListeners();
+  }
+
+  void cancelSleepTimer() {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepDuration = null;
+    _sleepEndTime = null;
+    notifyListeners();
+  }
+
+  void _onSleepTimerFire() {
+    _sleepTimer = null;
+    _sleepEndTime = null;
+    pauseAndClose();
+    notifyListeners();
+  }
+
+  // ─── Şarkı radyosu ───
+  Future<void> playRadio(Song song) async {
+    try {
+      final related = await music.radioFor(song);
+      _isRadioMode = true;
+      _radioQueue = [song, ...related];
+      _radioIndex = 0;
+      playQueue(_radioQueue);
+    } catch (_) {
+      _isRadioMode = false;
+      playQueue([song]);
+    }
+  }
+
+  // ─── Sonsuz Radio Kuyruğu ───
+  List<Song> _radioQueue = [];
+  int _radioIndex = -1;
+
+  // Radio kuyruğundan sonraki şarkıyı getir
+  Song _radioNextSong() {
+    if (_radioIndex >= _radioQueue.length - 1) {
+      // Kuyruk bitti, daha fazla şarkı getir
+      _fetchMoreRadio().then((_) {
+        if (_radioQueue.length > _radioIndex + 1) {
+          _index = _radioIndex + 1;
+          _buildAndPlay().catchError((_) {});
+          notifyListeners();
+        }
+      });
+    }
+    _radioIndex++;
+    return _radioQueue[_radioIndex];
+  }
+
+  void removeFromQueueAt(int i) {
+    final q = _queue;
+    if (i < 0 || i >= effectiveQueue.length) return;
+    final removedSong = effectiveQueue[i];
+    q.removeWhere((s) => s.id == removedSong.id);
+    _shuffledQueue.removeWhere((s) => s.id == removedSong.id);
+    if (i < _index) _index--;
+    notifyListeners();
+  }
+
+  Future<void> pauseAndClose() async {
+    _crossfadeTimer?.cancel();
+    _crossfading = false;
+    await _player.stop();
+    _queue = const [];
+    _shuffledQueue = const [];
+    _index = -1;
+    notifyListeners();
+  }
+
+  void playNextUp(Song song) {
+    final q = List.of(_queue);
+    q.removeWhere((s) => s.id == song.id);
+    final at = _index.clamp(-1, q.length - 1) + 1;
+    q.insert(at, song);
+    _queue = q;
+    _shuffledQueue = List.of(_shuffledQueue)..removeWhere((s) => s.id == song.id);
+    notifyListeners();
+  }
+
+  // --- just_audio durum köprüleri ---
+
+  void _onPlayerState(PlayerState state) {
+    if (!state.playing && state.processingState == ProcessingState.completed) {
+      // Oynatma bitti — odadaki kişiler için otomatik ilerle
+      if (room.roomId != null) {
+        _autoplayNextRoomSync();
+      } else {
+        next(userTriggered: false);
+      }
+    }
+    notifyListeners();
+  }
+
+  void _onProcessingState(ProcessingState state) {
+    if (state == ProcessingState.ready || state == ProcessingState.completed) {
+      _isLoading = false;
+    }
+    // Crossfade: şarkının sonuna yaklaşıldığında başlat
+    if (state == ProcessingState.buffering || state == ProcessingState.ready) {
+      _scheduleCrossfade();
+    }
+    notifyListeners();
+  }
+
+  void _scheduleCrossfade() {
+    _crossfadeTimer?.cancel();
+    _crossfading = false;
+
+    // Şarkının son 4 saniyesinde crossfade başlat
+    final duration = _player.duration;
+    if (duration == null || duration.inSeconds < 10) return;
+
+    final remaining = duration - _player.position;
+    if (remaining <= _crossfadeDuration) {
+      _startCrossfade();
+    } else {
+      final delay = remaining - _crossfadeDuration;
+      _crossfadeTimer = Timer(delay, () => _startCrossfade());
+    }
+  }
+
+  @override
+  void dispose() {
+    _crossfadeTimer?.cancel();
+    _sleepTimer?.cancel();
+    _player.dispose();
+    super.dispose();
+  }
+}
