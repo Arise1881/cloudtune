@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/song.dart';
-import '../constants.dart';
 
 enum RoomStatus { idle, creating, joining, playing }
 enum RoomRole { owner, member }

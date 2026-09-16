@@ -155,7 +155,6 @@ class _LyricsScreenState extends State<LyricsScreen> {
   }
 
   String _getLineTime(int lineIndex) {
-    final duration = Duration(seconds: 5);
     final minutes = lineIndex ~/ 12;
     final seconds = (lineIndex % 12 * 5).remainder(60);
     return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';

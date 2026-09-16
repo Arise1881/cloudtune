@@ -37,16 +37,19 @@ jobs:
           path: Melody-windows.zip
 
       - name: GitHub release'e yukle
-        if: ${{ startsWith(github.ref, 'refs/tags/') && secrets.GH_TOKEN != '' }}
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          TOKEN_OK: ${{ secrets.GH_TOKEN != '' }}
           REPO: Arise1881/melody-dist
           TAG: melody-latest
         shell: pwsh
         run: |
-          $EmptyBody = '{}'
-          $Release = Invoke-RestMethod -Method Get -Headers @{Authorization="token $env:GH_TOKEN";Accept="application/vnd.github+json"} -Uri "https://api.github.com/repos/$env:REPO/releases/tags/$env:TAG"
-          $Headers = @{ Authorization = "token $env:GH_TOKEN"; "Content-Type" = "application/zip" }
+          if ("$env:TOKEN_OK" -ne "True") { Write-Host "GH_TOKEN secret yok; sadece artifact yuklendi. DEPLOY_TOKEN:melody-dist'ac ekle ve tekrar tag at."; exit 0 }
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          $Headers = @{ Authorization = "token $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
+          $Release = Invoke-RestMethod -Method Get -Headers $Headers -Uri "https://api.github.com/repos/$env:REPO/releases/tags/$env:TAG"
+          $UploadHeaders = @{ Authorization = "token $env:GH_TOKEN"; "Content-Type" = "application/zip" }
           $UploadUri = "https://uploads.github.com/repos/$($env:REPO)/releases/$($Release.id)/assets?name=Melody-windows.zip"
-          Invoke-RestMethod -Method Post -Headers $Headers -InFile "Melody-windows.zip" -Uri $UploadUri | Out-Null
+          Invoke-RestMethod -Method Post -Headers $UploadHeaders -InFile "Melody-windows.zip" -Uri $UploadUri | Out-Null
           Write-Host "Melody-windows.zip -> release eklendi"

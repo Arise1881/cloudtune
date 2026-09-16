@@ -139,8 +139,9 @@ class _MiniArt extends StatelessWidget {
       } catch (_) {}
       _artCache[song.id] = local;
     }
-    if (local != null && local!.isNotEmpty) {
-      return Image.file(File(local!), width: 44, height: 44, fit: BoxFit.cover,
+    final path = local;
+    if (path != null && path.isNotEmpty) {
+      return Image.file(File(path), width: 44, height: 44, fit: BoxFit.cover,
           cacheWidth: 132,
           errorBuilder: (_, _, _) => _net());
     }

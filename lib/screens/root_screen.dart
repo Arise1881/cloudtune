@@ -8,7 +8,6 @@ import '../widgets/offline_banner.dart';
 import 'home_screen.dart';
 import 'library_screen.dart';
 import 'search_screen.dart';
-import '../widgets/update_banner.dart';
 
 /// Ana iskelet: alt navigasyon + mini oynatıcı + çevrimdışı bandı.
 class RootScreen extends StatefulWidget {

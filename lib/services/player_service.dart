@@ -63,7 +63,6 @@ class PlayerService extends ChangeNotifier {
 
   // ─── Çözümlenen akış URL önbelleği (sıradaki şarkı önceden ısıtılır) ───
   final Map<String, String> _streamCache = {};
-  Future<void>? _warmTask;
 
   // ─── YouTube Music benzeri özellikler ───
   AudioQuality _quality = AudioQuality.auto;
@@ -646,10 +645,11 @@ throw StreamUnavailableException(
       AudioQuality.ultra => 'ultra',
       AudioQuality.auto => 'auto',
     };
-    _warmTask = music
+    music
         .resolveStreamUrlWithQuality(nextSong.id, quality: q)
-        .then((url) => _streamCache[nextSong.id] = url)
-        .catchError((_) => <String>{});
+        .then((url) {
+          _streamCache[nextSong.id] = url;
+        }).catchError((_) {});
   }
 
   // ─── Oturum kaldırma: kuyruk + konum geri yükleme ───
