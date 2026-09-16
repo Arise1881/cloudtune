@@ -29,17 +29,16 @@ Future<void> main() async {
 
   // Release modunda bile hatalar boş ekran yerine görünür olsun.
   ErrorWidget.builder = (details) {
-    return Material(
+    return Container(
       color: const Color(0xFF121212),
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: SelectableText(
-            'Melody bir hata yakaladı.\n\n${details.exception}',
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white70, fontSize: 13),
-          ),
-        ),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(24),
+      child: Text(
+        'Melody hata yakaladı:\n${details.exception}',
+        textAlign: TextAlign.center,
+        maxLines: 6,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: Colors.white70, fontSize: 13),
       ),
     );
   };

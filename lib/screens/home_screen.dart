@@ -33,9 +33,11 @@ class HomeScreen extends StatelessWidget {
             const SliverToBoxAdapter(child: _OfflineHome()),
           ] else ...[
             SliverToBoxAdapter(child: _quickAccess(context, library)),
-            _TrendSection(
-              title: 'Türkçe Pop Hits',
-              query: 'türkçe pop 2026 hit şarkılar',
+            SliverToBoxAdapter(
+              child: _TrendSection(
+                title: 'Türkçe Pop Hits',
+                query: 'türkçe pop 2026 hit şarkılar',
+              ),
             ),
             const SliverToBoxAdapter(child: SizedBox(height: 24)),
           ],
