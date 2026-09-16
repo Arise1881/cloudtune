@@ -111,6 +111,21 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Playlist adını değiştirir. Yeni ad boşsa veya zaten varsa false döner.
+  bool renamePlaylist(String oldName, String newName) {
+    final trimmed = newName.trim();
+    if (trimmed.isEmpty ||
+        trimmed == oldName ||
+        _playlists.containsKey(trimmed)) {
+      return false;
+    }
+    final songs = _playlists.remove(oldName) ?? [];
+    _playlists[trimmed] = songs;
+    _persist();
+    notifyListeners();
+    return true;
+  }
+
   void addToPlaylist(String name, Song song) {
     final list = _playlists.putIfAbsent(name, () => []);
     if (!list.any((s) => s.id == song.id)) list.add(song);

@@ -109,6 +109,30 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
+  /// İndirme klasörünün toplam boyutu (şarkı + kapak).
+  Future<int> totalSizeBytes() async {
+    final dir = _dir;
+    if (dir == null || !await dir.exists()) return 0;
+    var total = 0;
+    try {
+      await for (final e in dir.list(followLinks: false)) {
+        if (e is File) {
+          total += await e.length();
+        }
+      }
+    } catch (_) {}
+    return total;
+  }
+
+  String formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+
   Future<void> _downloadFile(
     String url,
     String savePath,

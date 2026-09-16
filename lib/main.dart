@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:just_audio_background/just_audio_background.dart';
@@ -26,7 +28,7 @@ Future<void> main() async {
     await JustAudioBackground.init(
       androidNotificationChannelId: 'com.melody.app.playback',
       androidNotificationChannelName: 'Melody Müzik Çalar',
-      androidNotificationOngoing: true,
+      androidNotificationOngoing: false,
       androidStopForegroundOnPause: true,
       preloadArtwork: true,
     );
@@ -48,12 +50,15 @@ Future<void> main() async {
     debugPrint('Ses kalitesi tercihi yükleme uyarısı: $e');
   }
 
-  // Güncelleme kontrolü (uygulamayı bloklamaz; arka planda çalışır)
+  // Ekolayzer (YouTube Music benzeri ses ayarı)
   try {
-    await UpdateService.instance.init();
+    await EqualizerService.instance.init();
   } catch (e) {
-    debugPrint('Güncelleme kontrolü başlatma uyarısı: $e');
+    debugPrint('Ekolayzer başlatma uyarısı: $e');
   }
+
+  // Güncelleme kontrolü (ilk kareyi bloklamaz; arka planda çalışır)
+  UpdateService.instance.init();
 
   // Tema tercihi (açık/koyu + vurgu rengi)
   try {
@@ -62,14 +67,22 @@ Future<void> main() async {
     debugPrint('Tema başlatma uyarısı: $e');
   }
 
-  // Ekolayzer (YouTube Music benzeri ses ayarı)
+  // Son çalman oturumu geri yükle (kuyruk + konum)
   try {
-    await EqualizerService.instance.init();
+    await PlayerService.instance.restoreSession();
   } catch (e) {
-    debugPrint('Ekolayzer başlatma uyarısı: $e');
+    debugPrint('Oturum geri yükleme uyarısı: $e');
   }
 
-  runApp(const MelodyApp());
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+  };
+
+  await runZonedGuarded(() async {
+    runApp(const MelodyApp());
+  }, (error, stack) {
+    debugPrint('Yakalanmayan hata: $error\n$stack');
+  });
 }
 
 class MelodyApp extends StatelessWidget {

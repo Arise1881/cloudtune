@@ -50,14 +50,27 @@ class PlayerService extends ChangeNotifier {
   // ─── Radio modu ───
   bool _isRadioMode = false;
 
-  // ─── Crossfade ───
+  // ─── Crossfade (geçiş) ───
   Timer? _crossfadeTimer;
   bool _crossfading = false;
-  static const Duration _crossfadeDuration = Duration(seconds: 4);
+  bool _crossfadeEnabled = true;
+  int _crossfadeSeconds = 4;
+  Duration get _crossfadeDuration => Duration(seconds: _crossfadeSeconds);
+
+  // ─── Oynatma hızı ───
+  double _speed = 1.0;
+  double get speed => _speed;
+
+  // ─── Çözümlenen akış URL önbelleği (sıradaki şarkı önceden ısıtılır) ───
+  final Map<String, String> _streamCache = {};
+  Future<void>? _warmTask;
 
   // ─── YouTube Music benzeri özellikler ───
   AudioQuality _quality = AudioQuality.auto;
   AudioQuality get quality => _quality;
+
+  bool get crossfadeEnabled => _crossfadeEnabled;
+  int get crossfadeSeconds => _crossfadeSeconds;
 
   // ─── Uyku zamanlayıcısı ───
   Timer? _sleepTimer;
@@ -158,8 +171,10 @@ class PlayerService extends ChangeNotifier {
           : await _buildSource(songs[_index]);
       await _player.setAudioSource(source, initialPosition: Duration.zero,
           preload: true);
+      await _player.setSpeed(_speed);
       _applyEqualizer();
       await _player.play();
+      _saveSession();
     } catch (e) {
       _lastError = e.toString().replaceFirst('Exception: ', '');
       _isLoading = false;
@@ -205,14 +220,17 @@ class PlayerService extends ChangeNotifier {
       final art = File(DownloadManager.instance.artPath(song.id));
       artUri = art.existsSync() ? Uri.file(art.path) : null;
     } else if (connectivity.isOnline) {
-      streamUrl = await music.resolveStreamUrlWithQuality(song.id,
-          quality: switch (_quality) {
-            AudioQuality.high => 'high',
-            AudioQuality.medium => 'medium',
-            AudioQuality.low => 'low',
-            AudioQuality.ultra => 'ultra',
-            AudioQuality.auto => 'auto',
-          });
+      streamUrl = _streamCache[song.id] ??
+          await music.resolveStreamUrlWithQuality(song.id,
+              quality: switch (_quality) {
+                AudioQuality.high => 'high',
+                AudioQuality.medium => 'medium',
+                AudioQuality.low => 'low',
+                AudioQuality.ultra => 'ultra',
+                AudioQuality.auto => 'auto',
+              });
+      // Başarılı çözümü önbellekle; hızlı şarkı değiştirme için.
+      _streamCache[song.id] = streamUrl;
       artUri = song.thumbnailUrl.isNotEmpty ? Uri.tryParse(song.thumbnailUrl) : null;
       duration = song.durationMs > 0 ? Duration(milliseconds: song.durationMs) : null;
     } else {
@@ -494,8 +512,11 @@ throw StreamUnavailableException(
 
   // ─── Crossfade (geçiş) ───
   void _startCrossfade() {
-    if (_crossfading) return;
+    if (_crossfading || !_crossfadeEnabled) return;
     _crossfading = true;
+
+    // Crossfade sırasında sıradaki şarkının akış URL'sini önceden çöz.
+    _warmNextTrack();
 
     final remaining = _player.duration != null
         ? _player.duration! - _player.position
@@ -545,6 +566,9 @@ throw StreamUnavailableException(
     _prefs = await SharedPreferences.getInstance();
     final idx = _prefs?.getInt('audio_quality') ?? AudioQuality.auto.index;
     _quality = AudioQuality.values[idx.clamp(0, AudioQuality.values.length - 1)];
+    _speed = (_prefs?.getDouble('playback_speed') ?? 1.0).clamp(0.5, 2.0);
+    _crossfadeEnabled = _prefs?.getBool('crossfade_enabled') ?? true;
+    _crossfadeSeconds = (_prefs?.getInt('crossfade_seconds') ?? 4).clamp(2, 10);
   }
 
   Future<void> setQuality(AudioQuality q) async {
@@ -574,6 +598,99 @@ throw StreamUnavailableException(
         AudioQuality.low => 'Düşük (48kbps)',
         AudioQuality.ultra => 'Ultra (lossless)',
       };
+
+  // ─── Oynatma hızı ───
+  Future<void> setSpeed(double value) async {
+    _speed = value;
+    try {
+      await _player.setSpeed(value);
+    } catch (_) {}
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs?.setDouble('playback_speed', value);
+    notifyListeners();
+  }
+
+  // ─── Crossfade ayarları ───
+  Future<void> setCrossfadeEnabled(bool value) async {
+    _crossfadeEnabled = value;
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs?.setBool('crossfade_enabled', value);
+    if (value) _startCrossfade();
+    notifyListeners();
+  }
+
+  Future<void> setCrossfadeSeconds(int value) async {
+    _crossfadeSeconds = value.clamp(2, 10);
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs?.setInt('crossfade_seconds', _crossfadeSeconds);
+    notifyListeners();
+  }
+
+  // ─── Sıradaki şarkının akışını önceden çöz (gecikmeyi öldürür) ───
+  Song? _nextSongForWarm() {
+    final songs = effectiveQueue;
+    if (songs.isEmpty || _index < 0) return null;
+    if (_index < songs.length - 1) return songs[_index + 1];
+    if (_repeat == RepeatMode.all && songs.isNotEmpty) return songs.first;
+    return null;
+  }
+
+  void _warmNextTrack() {
+    if (!connectivity.isOnline) return;
+    final nextSong = _nextSongForWarm();
+    if (nextSong == null || _streamCache.containsKey(nextSong.id)) return;
+    final q = switch (_quality) {
+      AudioQuality.high => 'high',
+      AudioQuality.medium => 'medium',
+      AudioQuality.low => 'low',
+      AudioQuality.ultra => 'ultra',
+      AudioQuality.auto => 'auto',
+    };
+    _warmTask = music
+        .resolveStreamUrlWithQuality(nextSong.id, quality: q)
+        .then((url) => _streamCache[nextSong.id] = url)
+        .catchError((_) => <String>{});
+  }
+
+  // ─── Oturum kaldırma: kuyruk + konum geri yükleme ───
+  Future<void> restoreSession() async {
+    try {
+      _prefs ??= await SharedPreferences.getInstance();
+      final rawQueue = _prefs?.getString('session_queue') ?? '';
+      if (rawQueue.isEmpty) return;
+      final saved = Song.listFromJson(rawQueue);
+      if (saved.isEmpty) return;
+      _queue = saved;
+      _rebuildShuffled(0);
+      _index = (_prefs?.getInt('session_index') ?? 0).clamp(0, saved.length - 1);
+      await _buildAndPlay();
+      final posMs = _prefs?.getInt('session_position') ?? 0;
+      if (posMs > 0) {
+        await _player.seek(Duration(milliseconds: posMs));
+      }
+    } catch (e) {
+      debugPrint('oturum geri yükleme uyarısı: $e');
+    }
+  }
+
+  Future<void> _saveSession({bool clear = false}) async {
+    try {
+      _prefs ??= await SharedPreferences.getInstance();
+      if (clear) {
+        await _prefs?.remove('session_queue');
+        await _prefs?.remove('session_index');
+        await _prefs?.remove('session_position');
+        return;
+      }
+      if (_queue.isEmpty || _index < 0) return;
+      await _prefs?.setString('session_queue', Song.listToJson(_queue));
+      await _prefs?.setInt('session_index', _index);
+      final pos = _player.position.inMilliseconds;
+      await _prefs?.setInt('session_position', pos);
+    } catch (e) {
+      debugPrint('oturum kaydetme uyarısı: $e');
+    }
+  }
 
   // ─── Uyku zamanlayıcısı ───
   void startSleepTimer(Duration duration) {
@@ -643,6 +760,26 @@ throw StreamUnavailableException(
     notifyListeners();
   }
 
+  /// Kuyrukta şarkıyı taşır (sürükle-bırak sıralama için).
+  void moveQueueItem(int from, int to) {
+    final songs = effectiveQueue;
+    if (from < 0 || from >= songs.length || to < 0 || to >= songs.length) return;
+    if (_shuffle) return; // karışık modda sıralama anlamsız
+    final song = songs[from];
+    final q = List.of(_queue)..removeWhere((s) => s.id == song.id);
+    q.insert(to.clamp(0, q.length), song);
+    _queue = q;
+    _shuffledQueue = List.of(_queue);
+    if (_index == from) {
+      _index = to;
+    } else if (from < _index && to >= _index) {
+      _index--;
+    } else if (from > _index && to <= _index) {
+      _index++;
+    }
+    notifyListeners();
+  }
+
   Future<void> pauseAndClose() async {
     _crossfadeTimer?.cancel();
     _crossfading = false;
@@ -650,6 +787,8 @@ throw StreamUnavailableException(
     _queue = const [];
     _shuffledQueue = const [];
     _index = -1;
+    _streamCache.clear();
+    _saveSession(clear: true);
     notifyListeners();
   }
 

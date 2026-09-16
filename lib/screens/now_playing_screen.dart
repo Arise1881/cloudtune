@@ -58,11 +58,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                 ),
               ),
               child: SafeArea(
-          child: song == null
-              ? const Center(
-                  child: Text('Çalan şarkı yok',
-                      style: TextStyle(color: AppColors.textSecondary)))
-              : Column(
+                child: Column(
                   children: [
                     _topBar(context, player),
                     Expanded(child: _artwork(song)),
@@ -73,7 +69,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                     _footer(player),
                   ],
                 ),
-        ),
+              ),
       ),
     );
   }
@@ -208,36 +204,58 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
   }
 
   Widget _actionRow(BuildContext context, PlayerService player, Song song) {
+    final sleepLabel =
+        player.sleepTimerActive && player.sleepRemaining != null
+            ? _fmt(player.sleepRemaining!)
+            : 'Zamanlayıcı';
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 4, 24, 0),
-      child: Row(
-        children: [
-          _pillButton(
-            icon: Icons.lyrics_outlined,
-            label: 'Sözler',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => LyricsScreen(song: song, player: player)),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            _pillButton(
+              icon: Icons.lyrics_outlined,
+              label: 'Sözler',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                    builder: (_) =>
+                        LyricsScreen(song: song, player: player)),
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          _pillButton(
-            icon: Icons.radio,
-            label: 'Radyo',
-            onTap: () => player.playRadio(song),
-          ),
-          const SizedBox(width: 8),
-          _pillButton(
-            icon: Icons.library_music_outlined,
-            label: 'Sıra',
-            onTap: () => _showQueue(context, player),
-          ),
-          const SizedBox(width: 8),
-          _pillButton(
-            icon: Icons.high_quality,
-            label: player.qualityLabel(),
-            onTap: () => _showQualityDialog(context, player),
-          ),
-        ],
+            const SizedBox(width: 8),
+            _pillButton(
+              icon: Icons.radio,
+              label: 'Radyo',
+              onTap: () => player.playRadio(song),
+            ),
+            const SizedBox(width: 8),
+            _pillButton(
+              icon: Icons.library_music_outlined,
+              label: 'Sıra',
+              onTap: () => _showQueue(context, player),
+            ),
+            const SizedBox(width: 8),
+            _pillButton(
+              icon: Icons.high_quality,
+              label: player.qualityLabel(),
+              onTap: () => _showQualityDialog(context, player),
+            ),
+            const SizedBox(width: 8),
+            _pillButton(
+              icon: Icons.speed,
+              label: player.speed == 1.0 ? 'Hız' : _fmtSpeed(player.speed),
+              onTap: () => player.setSpeed(_nextSpeed(player.speed)),
+            ),
+            const SizedBox(width: 8),
+            _pillButton(
+              icon: Icons.timer_outlined,
+              label: sleepLabel,
+              active: player.sleepTimerActive,
+              onTap: () => _showSleepTimerSheet(context, player),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -283,13 +301,91 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
     if (selected != null) await player.setQuality(selected);
   }
 
+  Future<void> _showSleepTimerSheet(
+      BuildContext context, PlayerService player) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 18, 20, 8),
+              child: Text('Zamanlayıcı',
+                  style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800)),
+            ),
+            if (player.sleepTimerActive) ...[
+              _sleepTimerOption(
+                icon: Icons.timer_off_outlined,
+                label: 'İptal',
+                color: Colors.redAccent,
+                onTap: () {
+                  player.cancelSleepTimer();
+                  Navigator.pop(ctx);
+                },
+              ),
+              _sleepTimerOption(
+                icon: Icons.timer_outlined,
+                label: player.sleepRemaining != null
+                    ? _fmt(player.sleepRemaining!)
+                    : '',
+                color: AppColors.textSecondary,
+                onTap: null,
+              ),
+            ],
+            for (final (label, duration) in [
+              ('5 dakika', const Duration(minutes: 5)),
+              ('10 dakika', const Duration(minutes: 10)),
+              ('15 dakika', const Duration(minutes: 15)),
+              ('30 dakika', const Duration(minutes: 30)),
+              ('1 saat', const Duration(hours: 1)),
+            ])
+              _sleepTimerOption(
+                icon: Icons.timer_outlined,
+                label: label,
+                color: AppColors.textPrimary,
+                onTap: () {
+                  player.startSleepTimer(duration);
+                  Navigator.pop(ctx);
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sleepTimerOption({
+    required IconData icon,
+    required String label,
+    required Color color,
+    VoidCallback? onTap,
+  }) =>
+      ListTile(
+        dense: true,
+        leading: Icon(icon, size: 20, color: color),
+        title: Text(label,
+            style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+        onTap: onTap,
+      );
+
   Widget _pillButton({
     required IconData icon,
     required String label,
     required VoidCallback onTap,
+    bool active = false,
   }) =>
       Material(
-        color: AppColors.card,
+        color: active ? AppColors.accent : AppColors.card,
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
@@ -299,11 +395,18 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon, size: 16, color: AppColors.accentBright),
+                Icon(
+                  icon,
+                  size: 16,
+                  color:
+                      active ? AppColors.background : AppColors.accentBright,
+                ),
                 const SizedBox(width: 6),
                 Text(label,
-                    style: const TextStyle(
-                        color: AppColors.textPrimary, fontSize: 12)),
+                    style: TextStyle(
+                        color:
+                            active ? AppColors.background : AppColors.textPrimary,
+                        fontSize: 12)),
               ],
             ),
           ),
@@ -311,7 +414,6 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
       );
 
   void _showQueue(BuildContext context, PlayerService player) {
-    final queue = player.queue;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: AppColors.card,
@@ -319,91 +421,127 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (sheetCtx) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.6,
-        maxChildSize: 0.85,
-        minChildSize: 0.3,
-        builder: (ctx, scrollController) => Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 18, 20, 8),
-              child: Text('Sırada',
-                  style: TextStyle(
-                      color: AppColors.textPrimary,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800)),
-            ),
-            SizedBox(
-              height: 40,
-              child: Row(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(left: 20),
-                    child: Text('${queue.length} şarkı',
-                        style: TextStyle(
-                            color: AppColors.textSecondary.withValues(alpha: .7),
-                            fontSize: 12)),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.shuffle, size: 20,
-                        color: AppColors.textSecondary),
-                    onPressed: player.toggleShuffle,
-                  ),
-                  IconButton(
-                    tooltip: player.autoplay ? 'Otomatik oynatma açık' : 'Otomatik oynatma kapalı',
-                    icon: Icon(Icons.auto_awesome,
-                        size: 20,
-                        color: player.autoplay
-                            ? AppColors.accentBright
-                            : AppColors.textSecondary),
-                    onPressed: player.toggleAutoplay,
-                  ),
-                ],
+      builder: (sheetCtx) => Consumer<PlayerService>(
+        builder: (_, _, _) => DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.6,
+          maxChildSize: 0.85,
+          minChildSize: 0.3,
+          builder: (ctx, scrollController) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 18, 20, 8),
+                child: Text('Sırada',
+                    style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800)),
               ),
-            ),
-            const Divider(color: Colors.white12, height: 1),
-            Expanded(
-              child: ListView.builder(
-                controller: scrollController,
-                padding: const EdgeInsets.only(bottom: 12),
-                itemCount: queue.length,
-                itemBuilder: (ctx, i) {
-                  final s = queue[i];
-                  final isCurrent = i == player.index;
-                  return ListTile(
-                    leading: isCurrent
-                        ? const Icon(Icons.graphic_eq,
-                            color: AppColors.accentBright)
-                        : const Icon(Icons.music_note_outlined,
-                            color: AppColors.textSecondary),
-                    title: Text(s.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: isCurrent
+              SizedBox(
+                height: 40,
+                child: Row(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(left: 20),
+                      child: Text('${player.queue.length} şarkı',
+                          style: TextStyle(
+                              color:
+                                  AppColors.textSecondary.withValues(alpha: .7),
+                              fontSize: 12)),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.shuffle, size: 20,
+                          color: AppColors.textSecondary),
+                      onPressed: player.toggleShuffle,
+                    ),
+                    IconButton(
+                      tooltip: player.autoplay
+                          ? 'Otomatik oynatma açık'
+                          : 'Otomatik oynatma kapalı',
+                      icon: Icon(Icons.auto_awesome,
+                          size: 20,
+                          color: player.autoplay
                               ? AppColors.accentBright
-                              : AppColors.textPrimary,
-                          fontSize: 14,
-                          fontWeight:
-                              isCurrent ? FontWeight.w700 : FontWeight.w500,
-                        )),
-                    subtitle: Text(s.artist,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: AppColors.textSecondary, fontSize: 12)),
-                    onTap: () {
-                      Navigator.pop(sheetCtx);
-                      player.jumpTo(i);
-                    },
-                  );
-                },
+                              : AppColors.textSecondary),
+                      onPressed: player.toggleAutoplay,
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+              const Divider(color: Colors.white12, height: 1),
+              Expanded(
+                child: ListView.builder(
+                  controller: scrollController,
+                  padding: const EdgeInsets.only(bottom: 12),
+                  itemCount: player.queue.length,
+                  itemBuilder: (ctx, i) {
+                    final s = player.queue[i];
+                    final isCurrent = i == player.index;
+                    final len = player.queue.length;
+                    return ListTile(
+                      leading: isCurrent
+                          ? const Icon(Icons.graphic_eq,
+                              color: AppColors.accentBright)
+                          : const Icon(Icons.music_note_outlined,
+                              color: AppColors.textSecondary),
+                      title: Text(s.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: isCurrent
+                                ? AppColors.accentBright
+                                : AppColors.textPrimary,
+                            fontSize: 14,
+                            fontWeight: isCurrent
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          )),
+                      subtitle: Text(s.artist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: AppColors.textSecondary, fontSize: 12)),
+                      onTap: () {
+                        Navigator.pop(sheetCtx);
+                        player.jumpTo(i);
+                      },
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (i > 0)
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Icons.keyboard_arrow_up,
+                                  size: 20,
+                                  color: AppColors.textSecondary),
+                              onPressed: () =>
+                                  player.moveQueueItem(i, i - 1),
+                            ),
+                          if (i < len - 1)
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Icons.keyboard_arrow_down,
+                                  size: 20,
+                                  color: AppColors.textSecondary),
+                              onPressed: () =>
+                                  player.moveQueueItem(i, i + 1),
+                            ),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(Icons.close,
+                                size: 18, color: AppColors.textSecondary),
+                            onPressed: () => player.removeFromQueueAt(i),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -564,6 +702,16 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
       return [AppColors.gradientTop, AppColors.background];
     }
   }
+
+  static const List<double> _speeds = [1.0, 1.25, 1.5, 2.0, 0.75, 0.5];
+
+  double _nextSpeed(double current) {
+    final i = _speeds.indexOf(current);
+    return _speeds[(i + 1) % _speeds.length];
+  }
+
+  String _fmtSpeed(double s) =>
+      s == s.roundToDouble() ? '${s.toInt()}x' : '${(s * 100).round() / 100}x';
 
   Widget _footer(PlayerService player) => StreamBuilder<PlayerState>(
         stream: player.player.playerStateStream,

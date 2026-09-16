@@ -121,30 +121,30 @@ class _MiniArt extends StatelessWidget {
 
   final dynamic song;
 
+  // Yerel kapak yolu çözümünü önbellekle; her rebuild'de Future üretme.
+  static final Map<String, String?> _artCache = {};
+
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<String?>(
-      future: _localArt(),
-      builder: (context, snap) {
-        final local = snap.data;
-        if (local != null) {
-          return Image.file(File(local), width: 44, height: 44, fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => _net());
+    var local = _artCache[song.id];
+    if (local == null) {
+      try {
+        final lib = LibraryStore.instance.downloadedSong(song.id);
+        if (lib != null) {
+          final f = File(DownloadManager.instance.artPath(song.id));
+          if (f.existsSync()) {
+            local = f.path;
+          }
         }
-        return _net();
-      },
-    );
-  }
-
-  Future<String?> _localArt() async {
-    try {
-      final lib = LibraryStore.instance.downloadedSong(song.id);
-      if (lib != null) {
-        final f = File(DownloadManager.instance.artPath(song.id));
-        if (await f.exists()) return f.path;
-      }
-    } catch (_) {}
-    return null;
+      } catch (_) {}
+      _artCache[song.id] = local;
+    }
+    if (local != null && local!.isNotEmpty) {
+      return Image.file(File(local!), width: 44, height: 44, fit: BoxFit.cover,
+          cacheWidth: 132,
+          errorBuilder: (_, _, _) => _net());
+    }
+    return _net();
   }
 
   Widget _net() {
@@ -154,6 +154,7 @@ class _MiniArt extends StatelessWidget {
         width: 44,
         height: 44,
         fit: BoxFit.cover,
+        memCacheWidth: 132,
         httpHeaders: const {'User-Agent': 'Mozilla/5.0'},
         errorWidget: (_, _, _) => Container(
           width: 44,

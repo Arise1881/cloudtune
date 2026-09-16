@@ -71,9 +71,9 @@ class _LibraryScreenState extends State<LibraryScreen>
             labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
             dividerColor: Colors.transparent,
             tabs: const [
-              Tab(text: 'İndirilenler'),
-              Tab(text: 'Beğeniler'),
-              Tab(text: 'Çalma Listeleri'),
+              Tab(icon: Icon(Icons.download_outlined), text: 'İndirilenler'),
+              Tab(icon: Icon(Icons.favorite_outline), text: 'Beğeniler'),
+              Tab(icon: Icon(Icons.queue_music), text: 'Çalma Listeleri'),
             ],
           ),
           Expanded(
@@ -97,10 +97,11 @@ class _LibraryScreenState extends State<LibraryScreen>
 // ---------------------------------------------------------------------------
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.icon, required this.text});
+  const _EmptyState({required this.icon, required this.text, this.hint});
 
   final IconData icon;
   final String text;
+  final String? hint;
 
   @override
   Widget build(BuildContext context) {
@@ -113,6 +114,12 @@ class _EmptyState extends StatelessWidget {
           Text(text,
               textAlign: TextAlign.center,
               style: const TextStyle(color: AppColors.textSecondary, fontSize: 15)),
+          if (hint != null) ...[
+            const SizedBox(height: 6),
+            Text(hint!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+          ],
         ],
       ),
     );
@@ -205,8 +212,10 @@ class _DownloadsTab extends StatelessWidget {
             ),
         Expanded(
           child: downloads.isEmpty && downloader.progress.isEmpty
-              ? const _EmptyState(
-                  icon: Icons.download_outlined, text: AppStrings.downloadsEmpty)
+              ? _EmptyState(
+                  icon: Icons.download_outlined,
+                  text: 'İndirilen şarkı yok',
+                  hint: 'Şarkıdaki indir simgesiyle çevrimdışı dinle')
               : ListView.separated(
                   padding: const EdgeInsets.only(bottom: 8),
                   itemCount: downloads.length + 1,
@@ -273,7 +282,11 @@ class _FavoritesTab extends StatelessWidget {
     final favorites = library.favorites;
 
     if (favorites.isEmpty) {
-      return const _EmptyState(icon: Icons.favorite_border, text: AppStrings.favoritesEmpty);
+      return _EmptyState(
+        icon: Icons.favorite_border,
+        text: 'Favori şarkın yok',
+        hint: 'Şarkıdaki kalp simgesiyle beğen',
+      );
     }
 
     return ListView.separated(
@@ -374,7 +387,7 @@ class __PlaylistsTabState extends State<_PlaylistsTab> {
         children: [
           const _EmptyState(
               icon: Icons.library_music_outlined,
-              text: 'Şarkıları gruplamak için yeni bir çalma listesi oluştur'),
+              text: 'Henüz çalma listesi yok'),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             icon: const Icon(Icons.add, size: 18),
@@ -387,37 +400,38 @@ class __PlaylistsTabState extends State<_PlaylistsTab> {
 
     return Stack(
       children: [
-        ListView(
+        ListView.builder(
           padding: const EdgeInsets.symmetric(vertical: 8),
-          children: [
-            for (final entry in playlists.entries)
-              ListTile(
-                leading: Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    color: AppColors.cardLight,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: entry.value.isNotEmpty
-                      ? Artwork(url: entry.value.first.thumbnailUrl, size: 50, radius: 6)
-                      : const Icon(Icons.music_note,
-                          color: AppColors.textSecondary),
+          itemCount: playlists.length + 1,
+          itemBuilder: (context, i) {
+            if (i == playlists.length) return const SizedBox(height: 64);
+            final entry = playlists.entries.elementAt(i);
+            return ListTile(
+              leading: Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  color: AppColors.cardLight,
+                  borderRadius: BorderRadius.circular(6),
                 ),
-                title: Text(entry.key,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: AppColors.textPrimary)),
-                subtitle: Text('${entry.value.length} şarkı',
-                    style: const TextStyle(color: AppColors.textSecondary)),
-                onLongPress: () => _confirmDelete(entry.key),
-                onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) =>
-                      PlaylistScreen(title: entry.key, songs: entry.value, playlistName: entry.key),
-                )),
+                child: entry.value.isNotEmpty
+                    ? Artwork(url: entry.value.first.thumbnailUrl, size: 50, radius: 6)
+                    : const Icon(Icons.music_note,
+                        color: AppColors.textSecondary),
               ),
-            const SizedBox(height: 64),
-          ],
+              title: Text(entry.key,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: AppColors.textPrimary)),
+              subtitle: Text('${entry.value.length} şarkı',
+                  style: const TextStyle(color: AppColors.textSecondary)),
+              onLongPress: () => _showPlaylistActions(entry.key),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) =>
+                    PlaylistScreen(title: entry.key, songs: entry.value, playlistName: entry.key),
+              )),
+            );
+          },
         ),
         Positioned(
           right: 16,
@@ -432,6 +446,79 @@ class __PlaylistsTabState extends State<_PlaylistsTab> {
         ),
       ],
     );
+  }
+
+  Future<void> _showPlaylistActions(String name) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.card,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_outlined,
+                  color: AppColors.textSecondary),
+              title: const Text('Yeniden Adlandır',
+                  style: TextStyle(color: AppColors.textPrimary)),
+              onTap: () => Navigator.pop(ctx, 'rename'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline,
+                  color: AppColors.textSecondary),
+              title: const Text('Sil',
+                  style: TextStyle(color: AppColors.textPrimary)),
+              onTap: () => Navigator.pop(ctx, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'rename') {
+      await _renameDialog(name);
+    } else if (action == 'delete') {
+      await _confirmDelete(name);
+    }
+  }
+
+  Future<void> _renameDialog(String oldName) async {
+    final controller = TextEditingController(text: oldName);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: const Text('Yeniden Adlandır',
+            style: TextStyle(color: AppColors.textPrimary)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 40,
+          style: const TextStyle(color: AppColors.textPrimary),
+          decoration: const InputDecoration(hintText: 'Adı girin'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Vazgeç')),
+          FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.accent),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Kaydet')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      if (!mounted) return;
+      final success =
+          context.read<LibraryStore>().renamePlaylist(oldName, controller.text);
+      if (!success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Bu isim kullanılıyor')),
+        );
+      }
+    }
   }
 
   Future<void> _confirmDelete(String name) async {

@@ -21,6 +21,9 @@ class Artwork extends StatelessWidget {
   final double size;
   final double radius;
 
+  /// En fazla bu genişlikte decode edilir; küçük hücrelerde çok az RAM kullanır.
+  int get _decodeWidth => size > 256 ? (size * 1.2).toInt() : (size * 2).round();
+
   @override
   Widget build(BuildContext context) {
     if (localPath != null && localPath!.isNotEmpty) {
@@ -29,6 +32,7 @@ class Artwork extends StatelessWidget {
         child: SizedBox(width: size, height: size, child: Image.file(
           File(localPath!),
           fit: BoxFit.cover,
+          cacheWidth: _decodeWidth,
           errorBuilder: (_, _, _) => _placeholder(),
         )),
       );
@@ -43,6 +47,7 @@ class Artwork extends StatelessWidget {
           child: CachedNetworkImage(
             imageUrl: url!,
             fit: BoxFit.cover,
+            memCacheWidth: _decodeWidth,
             httpHeaders: const {'User-Agent': 'Mozilla/5.0'},
             placeholder: (_, _) => _placeholder(),
             errorWidget: (_, _, _) => _placeholder(),

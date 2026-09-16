@@ -1,0 +1,52 @@
+name: Windows 11 Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Bagimliliklar
+        run: flutter pub get
+
+      - name: Analiz
+        run: flutter analyze
+
+      - name: Windows release derle
+        run: flutter build windows --release
+
+      - name: ZIP paketle
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath Melody-windows.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Melody-windows
+          path: Melody-windows.zip
+
+      - name: GitHub release'e yukle
+        if: ${{ startsWith(github.ref, 'refs/tags/') && secrets.GH_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          REPO: Arise1881/melody-dist
+          TAG: melody-latest
+        shell: pwsh
+        run: |
+          $EmptyBody = '{}'
+          $Release = Invoke-RestMethod -Method Get -Headers @{Authorization="token $env:GH_TOKEN";Accept="application/vnd.github+json"} -Uri "https://api.github.com/repos/$env:REPO/releases/tags/$env:TAG"
+          $Headers = @{ Authorization = "token $env:GH_TOKEN"; "Content-Type" = "application/zip" }
+          $UploadUri = "https://uploads.github.com/repos/$($env:REPO)/releases/$($Release.id)/assets?name=Melody-windows.zip"
+          Invoke-RestMethod -Method Post -Headers $Headers -InFile "Melody-windows.zip" -Uri $UploadUri | Out-Null
+          Write-Host "Melody-windows.zip -> release eklendi"

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../constants.dart';
 import '../services/connectivity_service.dart';
+import '../services/download_manager.dart';
 import '../services/equalizer_service.dart';
 import '../services/player_service.dart';
 import '../services/theme_service.dart';
@@ -72,6 +73,42 @@ class SettingsScreen extends StatelessWidget {
               showDivider: false,
             ),
             const SizedBox(height: 16),
+            _sectionTitle('Oynatma Hızı'),
+            const SizedBox(height: 4),
+            _speedSelector(player),
+            const SizedBox(height: 16),
+            _toggleTile(
+              title: 'Crossfade',
+              subtitle: 'Şarkı geçişlerinde yumuşak ses geçişi',
+              value: player.crossfadeEnabled,
+              onChanged: player.setCrossfadeEnabled,
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  Text('Süre: ${player.crossfadeSeconds} sn',
+                      style: const TextStyle(
+                          color: AppColors.textSecondary, fontSize: 13)),
+                  Expanded(
+                    child: Slider(
+                      min: 2,
+                      max: 10,
+                      divisions: 8,
+                      value: player.crossfadeSeconds.toDouble(),
+                      label: '${player.crossfadeSeconds} sn',
+                      activeColor: AppColors.accent,
+                      onChanged: (v) =>
+                          player.setCrossfadeSeconds(v.round()),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _sectionTitle('Depolama'),
+            _StorageTile(),
+            const SizedBox(height: 16),
             _sectionTitle('Ekolayzer'),
             _dropdownTile(
               title: 'Hazır Ayar',
@@ -105,6 +142,29 @@ class SettingsScreen extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _speedSelector(PlayerService player) {
+    const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+    return Wrap(
+      spacing: 8,
+      children: speeds.map((s) {
+        final selected = (player.speed - s).abs() < 0.01;
+        return ChoiceChip(
+          label: Text(s == 1.0 ? '1x' : '${s}x'),
+          selected: selected,
+          showCheckmark: false,
+          selectedColor: AppColors.accent,
+          backgroundColor: AppColors.card,
+          labelStyle: TextStyle(
+            color: selected ? Colors.white : AppColors.textPrimary,
+            fontWeight: FontWeight.w600,
+          ),
+          side: BorderSide.none,
+          onSelected: (_) => player.setSpeed(s),
+        );
+      }).toList(),
     );
   }
 
@@ -215,6 +275,77 @@ class SettingsScreen extends StatelessWidget {
             .map((e) => DropdownMenuItem(value: e.label, child: Text(e.label)))
             .toList(),
         onChanged: (v) => onChanged(v ?? value),
+      ),
+    );
+  }
+}
+
+class _StorageTile extends StatefulWidget {
+  @override
+  State<_StorageTile> createState() => _StorageTileState();
+}
+
+class _StorageTileState extends State<_StorageTile> {
+  int? _bytes;
+  bool _clearing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _recompute();
+  }
+
+  Future<void> _recompute() async {
+    final b = await DownloadManager.instance.totalSizeBytes();
+    if (mounted) setState(() => _bytes = b);
+  }
+
+  Future<void> _clearAll() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('İndirilenleri Sil'),
+        content: const Text(
+            'Tüm indirilen şarkılar ve kapak görselleri cihazdan silinecek. Bu işlem geri alınamaz.'),
+        backgroundColor: AppColors.card,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Vazgeç'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Sil'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _clearing = true);
+    await DownloadManager.instance.clearAll();
+    await _recompute();
+    if (mounted) setState(() => _clearing = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _bytes;
+    final label = bytes == null
+        ? 'Hesaplanıyor…'
+        : 'İndirilenler: ${DownloadManager.instance.formatBytes(bytes)}';
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.sd_storage_outlined, color: AppColors.textSecondary),
+      title: Text(label,
+          style: const TextStyle(color: AppColors.textPrimary, fontSize: 14)),
+      trailing: TextButton(
+        onPressed: _clearing ? null : _clearAll,
+        child: _clearing
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : const Text('Temizle'),
       ),
     );
   }
