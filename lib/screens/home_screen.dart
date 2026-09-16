@@ -114,7 +114,7 @@ class HomeScreen extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       child: Row(
         children: [
-          _songCard(
+          _SongCard(
             context,
             title: 'Dinleme Geçmişi',
             subtitle: '${recents.length} şarkı',
@@ -130,7 +130,7 @@ class HomeScreen extends StatelessWidget {
             },
           ),
           const SizedBox(width: 12),
-          _songCard(
+          _SongCard(
             context,
             title: 'İndirilenler',
             subtitle: '${library.downloads.length} şarkı',
@@ -144,7 +144,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _songCard(
+  Widget _SongCard(
     BuildContext context, {
     required String title,
     required String subtitle,
@@ -198,7 +198,7 @@ class HomeScreen extends StatelessWidget {
 
 /// Küratörlü bölüm: sorguyla şarkıları çeker, yatay kart listesi gösterir.
 class _TrendSection extends StatefulWidget {
-  const _TrendSection({required this.title, required this.query});
+  const _TrendSection({super.key, required this.title, required this.query});
 
   final String title;
   final String query;
@@ -218,6 +218,7 @@ class _TrendSectionState extends State<_TrendSection> {
 
   @override
   Widget build(BuildContext context) {
+    final library = context.watch<LibraryStore>();
     return FutureBuilder<List<Song>>(
       future: _future,
       builder: (context, snapshot) {
@@ -274,7 +275,7 @@ class _TrendSectionState extends State<_TrendSection> {
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     itemCount: songs.length,
-                    separatorBuilder: (_, _) => const SizedBox(width: 12),
+                    separatorBuilder: (_, __) => const SizedBox(width: 12),
                     itemBuilder: (context, i) => _TrendCard(
                       song: songs[i],
                       onTap: () {
@@ -293,7 +294,7 @@ class _TrendSectionState extends State<_TrendSection> {
 }
 
 class _TrendCard extends StatelessWidget {
-  const _TrendCard({required this.song, required this.onTap});
+  const _TrendCard({super.key, required this.song, required this.onTap});
 
   final Song song;
   final VoidCallback onTap;
