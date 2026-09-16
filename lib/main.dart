@@ -20,69 +20,67 @@ import 'screens/settings_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-
-  // Arka planda çalma + kilit ekranı bildirimi.
-  // Başarısız olsa bile uygulamanın açılması engellenmez.
   try {
-    await JustAudioBackground.init(
-      androidNotificationChannelId: 'com.melody.app.playback',
-      androidNotificationChannelName: 'Melody Müzik Çalar',
-      androidNotificationOngoing: false,
-      androidStopForegroundOnPause: true,
-      preloadArtwork: true,
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)
+        .timeout(const Duration(seconds: 3), onTimeout: () {});
+  } catch (e) {
+    debugPrint('Sistem UI modu uyarısı: $e');
+  }
+
+  // Release modunda bile hatalar boş ekran yerine görünür olsun.
+  ErrorWidget.builder = (details) {
+    return Material(
+      color: const Color(0xFF121212),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: SelectableText(
+            'Melody bir hata yakaladı.\n\n${details.exception}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+        ),
+      ),
     );
-  } catch (e) {
-    debugPrint('JustAudioBackground init uyarısı: $e');
-  }
-
-  final library = LibraryStore.instance;
-  try {
-    await library.init();
-  } catch (e) {
-    debugPrint('Kitaplık yükleme uyarısı: $e');
-  }
-
-  // Oynatıcıda saklanan ses kalitesi tercihi (YouTube Music benzeri)
-  try {
-    await PlayerService.instance.loadQualityPref();
-  } catch (e) {
-    debugPrint('Ses kalitesi tercihi yükleme uyarısı: $e');
-  }
-
-  // Ekolayzer (YouTube Music benzeri ses ayarı)
-  try {
-    await EqualizerService.instance.init();
-  } catch (e) {
-    debugPrint('Ekolayzer başlatma uyarısı: $e');
-  }
-
-  // Güncelleme kontrolü (ilk kareyi bloklamaz; arka planda çalışır)
-  UpdateService.instance.init();
-
-  // Tema tercihi (açık/koyu + vurgu rengi)
-  try {
-    await ThemeService.instance.init();
-  } catch (e) {
-    debugPrint('Tema başlatma uyarısı: $e');
-  }
-
-  // Son çalman oturumu geri yükle (kuyruk + konum)
-  try {
-    await PlayerService.instance.restoreSession();
-  } catch (e) {
-    debugPrint('Oturum geri yükleme uyarısı: $e');
-  }
-
-  FlutterError.onError = (details) {
-    FlutterError.presentError(details);
   };
 
-  await runZonedGuarded(() async {
+  // İlk kare asla engellenmez: servisler runApp sonrası arka planda kurulur.
+  runZonedGuarded(() {
     runApp(const MelodyApp());
+    _warmUpServices();
   }, (error, stack) {
     debugPrint('Yakalanmayan hata: $error\n$stack');
   });
+}
+
+/// Uygulama açıldıktan SONRA servisleri kurar.
+/// Her adım zaman aşımlı ve hata korumalıdır; hiçbiri çalışmayı engelleyemez.
+void _warmUpServices() {
+  _safe('Arka plan', () => JustAudioBackground.init(
+        androidNotificationChannelId: 'com.melody.app.playback',
+        androidNotificationChannelName: 'Melody Müzik Çalar',
+        androidNotificationOngoing: false,
+        androidStopForegroundOnPause: true,
+        preloadArtwork: true,
+      ));
+  _safe('Kitaplık', () => LibraryStore.instance.init());
+  _safe('Ses kalitesi', () => PlayerService.instance.loadQualityPref());
+  _safe('Ekolayzer', () => EqualizerService.instance.init());
+  _safe('Tema', () => ThemeService.instance.init());
+  UpdateService.instance.init();
+
+  // Son çalınan oturum ilk kare basıldıktan SONRA geri yüklenir.
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    _safe('Oturum', () => PlayerService.instance.restoreSession());
+  });
+}
+
+Future<void> _safe(String name, Future<void> Function() task) async {
+  try {
+    await task().timeout(const Duration(seconds: 4), onTimeout: () {});
+  } catch (e) {
+    debugPrint('$name başlatma uyarısı: $e');
+  }
 }
 
 class MelodyApp extends StatelessWidget {

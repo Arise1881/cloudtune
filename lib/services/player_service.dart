@@ -65,7 +65,7 @@ class PlayerService extends ChangeNotifier {
   final Map<String, String> _streamCache = {};
 
   // ─── YouTube Music benzeri özellikler ───
-  AudioQuality _quality = AudioQuality.auto;
+  AudioQuality _quality = AudioQuality.ultra;
   AudioQuality get quality => _quality;
 
   bool get crossfadeEnabled => _crossfadeEnabled;
@@ -563,7 +563,7 @@ throw StreamUnavailableException(
   // ─── Ses kalitesi ───
   Future<void> loadQualityPref() async {
     _prefs = await SharedPreferences.getInstance();
-    final idx = _prefs?.getInt('audio_quality') ?? AudioQuality.auto.index;
+    final idx = _prefs?.getInt('audio_quality') ?? AudioQuality.ultra.index;
     _quality = AudioQuality.values[idx.clamp(0, AudioQuality.values.length - 1)];
     _speed = (_prefs?.getDouble('playback_speed') ?? 1.0).clamp(0.5, 2.0);
     _crossfadeEnabled = _prefs?.getBool('crossfade_enabled') ?? true;
@@ -658,8 +658,20 @@ throw StreamUnavailableException(
       _prefs ??= await SharedPreferences.getInstance();
       final rawQueue = _prefs?.getString('session_queue') ?? '';
       if (rawQueue.isEmpty) return;
-      final saved = Song.listFromJson(rawQueue);
+      var saved = Song.listFromJson(rawQueue);
       if (saved.isEmpty) return;
+
+      // Çevrimdışıysa yalnızca cihazda indirilmiş şarkılardan devam et.
+      if (connectivity.isOffline) {
+        saved = saved.where((s) {
+          final dl = library.downloadedSong(s.id);
+          return dl != null &&
+              dl.localPath != null &&
+              File(dl.localPath!).existsSync();
+        }).toList();
+        if (saved.isEmpty) return;
+      }
+
       _queue = saved;
       _rebuildShuffled(0);
       _index = (_prefs?.getInt('session_index') ?? 0).clamp(0, saved.length - 1);
