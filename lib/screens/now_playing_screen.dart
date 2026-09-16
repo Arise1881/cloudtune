@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart' hide RepeatMode;
+import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
 
 import '../constants.dart';
@@ -267,6 +268,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                     AudioQuality.high => 'Yüksek',
                     AudioQuality.medium => 'Orta',
                     AudioQuality.low => 'Düşük',
+                    AudioQuality.ultra => 'Ultra',
                   },
                   style: const TextStyle(
                       color: AppColors.textPrimary,
@@ -565,13 +567,16 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
 
   Widget _footer(PlayerService player) => StreamBuilder<PlayerState>(
         stream: player.player.playerStateStream,
-        builder: (context, snap) => Padding(
-          padding: const EdgeInsets.only(bottom: 18, top: 6),
-          child: Icon(
-            (snap?.isPlaying ?? false) ? Icons.graphic_eq : Icons.music_note_outlined,
-            color: AppColors.accentBright.withValues(alpha: (snap?.isPlaying ?? false) ? 1 : .35),
-            size: 22,
-          ),
-        ),
+        builder: (context, snap) {
+          final playing = snap.data?.playing ?? false;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 18, top: 6),
+            child: Icon(
+              playing ? Icons.graphic_eq : Icons.music_note_outlined,
+              color: AppColors.accentBright.withValues(alpha: playing ? 1 : .35),
+              size: 22,
+            ),
+          );
+        },
       );
 }

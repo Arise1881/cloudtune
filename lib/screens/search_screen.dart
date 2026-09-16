@@ -119,21 +119,27 @@ class _SearchScreenState extends State<SearchScreen> {
                 hintStyle: const TextStyle(color: AppColors.textSecondary),
                 prefixIcon:
                     const Icon(Icons.search, color: AppColors.textSecondary),
-                 suffixIcon: _controller.text.isNotEmpty
-                      ? IconButton(
-                        icon: Icon(_isListening ? Icons.mic : Icons.mic_off,
-                            size: 20, color: _isListening ? AppColors.accent : AppColors.textSecondary),
-                        onPressed: _toggleListening,
-                      )
-                    ? IconButton(
-                        icon: const Icon(Icons.close,
-                            size: 20, color: AppColors.textSecondary),
-                        onPressed: () {
-                          _controller.clear();
-                          _onQueryChanged('');
-                        },
-                      )
-                    : null,
+                 suffixIcon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: Icon(_isListening ? Icons.mic : Icons.mic_off,
+                          size: 20,
+                          color: _isListening
+                              ? AppColors.accent
+                              : AppColors.textSecondary),
+                      onPressed: _toggleListening,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close,
+                          size: 20, color: AppColors.textSecondary),
+                      onPressed: () {
+                        _controller.clear();
+                        _onQueryChanged('');
+                      },
+                    ),
+                  ],
+                ),
                 filled: true,
                 fillColor: Colors.white,
                 border: OutlineInputBorder(
@@ -269,36 +275,17 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
       );
 
+  void _toggleListening() {
+    setState(() {
+      _isListening = !_isListening;
+    });
+  }
+
   @override
-  void _toggleListening() {
-    setState(() {
-      _isListening = !_isListening;
-    });
-  }
   void dispose() {
-  void _toggleListening() {
-    setState(() {
-      _isListening = !_isListening;
-    });
-  }
     _debounce?.cancel();
-  void _toggleListening() {
-    setState(() {
-      _isListening = !_isListening;
-    });
-  }
     _controller.dispose();
-  void _toggleListening() {
-    setState(() {
-      _isListening = !_isListening;
-    });
-  }
     _focus.dispose();
-  void _toggleListening() {
-    setState(() {
-      _isListening = !_isListening;
-    });
-  }
     super.dispose();
   }
 }

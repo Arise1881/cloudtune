@@ -9,6 +9,9 @@ class AppColors {
   static const accentBright = Color(0xFF1ED760);
   static const textPrimary = Colors.white;
   static const textSecondary = Color(0xFFB3B3B3);
+  static const textTertiary = Color(0xFF808080);
+  static const primary = Color(0xFF121212);
+  static const onPrimary = Color(0xFF1DB954);
   static const error = Color(0xFFCF6679);
 
   static const gradientTop = Color(0xFF1F3D2B);

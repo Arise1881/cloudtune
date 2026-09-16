@@ -1,72 +1,106 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../constants.dart';
-import '../models/song.dart';
 import '../services/connectivity_service.dart';
-import '../services/download_manager.dart';
-import '../services/library_store.dart';
-import '../services/music_service.dart';
-import 'package:audioplayers/audioplayers.dart';
-import 'library_screen.dart';
-import 'playlist_screen.dart';
-import 'now_playing_screen.dart';
+import '../services/equalizer_service.dart';
+import '../services/player_service.dart';
+import '../services/theme_service.dart';
+import 'equalizer_screen.dart';
 
-/// Ayarlar ekranı: tema, kalite, ekolayzer ve diğer ayarlar.
+/// Ayarlar ekranı: tema, vurgu rengi, kalite, ekolayzer, otomatik çalma.
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final themeService = context.watch<ThemeService>();
+    final player = context.watch<PlayerService>();
+    final eq = context.watch<EqualizerService>();
+    final connectivity = context.watch<ConnectivityService>();
+    final isDark = themeService.isDark;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Ayarlar'),
-        backgroundColor: AppColors.accent,
-        foregroundColor: AppColors.textPrimary,
+        backgroundColor: themeService.accent,
+        foregroundColor: Colors.white,
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSectionTitle('Genel'),
-            const SizedBox(height: 8),
-            _buildToggleSwitch(
-              context: context,
+            _sectionTitle('Görünüm'),
+            _toggleTile(
               title: 'Karanlık Mod',
-              subtitle: 'Uygulama renk şemasını değiştir',
+              subtitle: 'Açık/koyu tema arasında geçiş yap',
               value: isDark,
-              onChanged: (_) {},
+              onChanged: (_) => themeService.toggleMode(),
+            ),
+            const SizedBox(height: 8),
+            _sectionTitle('Vurgu Rengi'),
+            const SizedBox(height: 4),
+            _accentSelector(themeService),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: _toggleTile(
+                title: 'Emoji Desteği',
+                subtitle: 'Emoji ile şarkı isimlerini göster',
+                value: themeService.emojiEnabled,
+                onChanged: themeService.setEmojiEnabled,
+                showDivider: false,
+              ),
+            ),
+            const SizedBox(height: 8),
+            _sectionTitle('Çalma'),
+            _dropdownTile(
+              title: 'Ses Kalitesi',
+              subtitle: 'YouTube Music benzeri dinamik kalite',
+              value: player.qualityLabel(),
+              items: QualityItems.items,
+              onChanged: (label) =>
+                  player.setQuality(QualityItems.qualityFor(label)),
+            ),
+            const SizedBox(height: 8),
+            _toggleTile(
+              title: 'Otomatik Devam',
+              subtitle: 'Şarkı bitince benzer şarkılar otomatik çalsın',
+              value: player.autoplay,
+              onChanged: (_) => player.toggleAutoplay(),
+              showDivider: false,
             ),
             const SizedBox(height: 16),
-            _buildSectionTitle('Ses Kalitesi'),
-            const SizedBox(height: 8),
-            _buildQualityDropdown(context: context),
-            const SizedBox(height: 16),
-            _buildSectionTitle('Ekolayzer'),
-            const SizedBox(height: 8),
-            _buildEqualityPresetDropdown(context: context),
-            const SizedBox(height: 16),
-            _buildSectionTitle('Diğer'),
-            const SizedBox(height: 8),
-            _buildToggleSwitch(
-              context: context,
-              title: 'Emoji Desteği',
-              subtitle: 'Emoji ile şarkı isimlerini göster',
-              value: true,
-              onChanged: (_) {},
+            _sectionTitle('Ekolayzer'),
+            _dropdownTile(
+              title: 'Hazır Ayar',
+              subtitle: 'Ses karakterini değiştir',
+              value: eq.presetLabelFor(eq.preset),
+              items: EqPreset.values
+                  .map((p) => DropdownItem(eq.presetLabelFor(p), p.index))
+                  .toList(),
+              onChanged: (label) {
+                eq.setPreset(EqPreset.values.firstWhere(
+                    (p) => eq.presetLabelFor(p) == label));
+                Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const EqualizerScreen()));
+              },
             ),
             const SizedBox(height: 16),
-            _buildToggleSwitch(
-              context: context,
-              title: 'Çevrimdışı Mod',
-              subtitle: 'Çevrimdışı modu etkinleştir/kapat',
-              value: context.watch<ConnectivityService>().isOffline,
-              onChanged: (_) {},
+            _sectionTitle('Bağlantı'),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: _toggleTile(
+                title: 'Çevrimdışı Mod',
+                subtitle: 'Ağ kontrolünü yok say, yalnızca indirilenleri oynat',
+                value: connectivity.forceOffline || connectivity.isOffline,
+                onChanged: (v) {
+                  connectivity.setForceOffline(v);
+                  connectivity.retry();
+                },
+                showDivider: false,
+              ),
             ),
           ],
         ),
@@ -74,9 +108,9 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildSectionTitle(String title) {
+  Widget _sectionTitle(String title) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
+      padding: const EdgeInsets.only(top: 12, bottom: 4),
       child: Text(
         title,
         style: const TextStyle(
@@ -88,14 +122,81 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildToggleSwitch({
-    required BuildContext context,
+  Widget _accentSelector(ThemeService themeService) {
+    return Row(
+      children: List.generate(ThemeService.accentColors.length, (i) {
+        final color = ThemeService.accentColors[i];
+        final selected = themeService.accentIndex == i;
+        return Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: GestureDetector(
+            onTap: () => themeService.setAccentIndex(i),
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? Colors.white : Colors.transparent,
+                  width: 2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: color.withValues(alpha: .5),
+                    blurRadius: selected ? 8 : 2,
+                    spreadRadius: selected ? 1 : 0,
+                  ),
+                ],
+              ),
+              child: selected
+                  ? const Icon(Icons.check, color: Colors.white, size: 20)
+                  : null,
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _toggleTile({
     required String title,
     required String subtitle,
     required bool value,
     required ValueChanged<bool> onChanged,
+    bool showDivider = true,
   }) {
-    return SwitchListTile(
+    return Column(
+      children: [
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            title,
+            style: const TextStyle(color: AppColors.textPrimary),
+          ),
+          subtitle: Text(
+            subtitle,
+            style: const TextStyle(color: AppColors.textSecondary),
+          ),
+          value: value,
+          onChanged: onChanged,
+          activeThumbColor: AppColors.accent,
+        ),
+        if (showDivider)
+          const Divider(height: 1, color: Color(0x1FFFFFFF)),
+      ],
+    );
+  }
+
+  Widget _dropdownTile({
+    required String title,
+    required String subtitle,
+    required String value,
+    required List<DropdownItem> items,
+    required ValueChanged<String> onChanged,
+  }) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
       title: Text(
         title,
         style: const TextStyle(color: AppColors.textPrimary),
@@ -104,53 +205,42 @@ class SettingsScreen extends StatelessWidget {
         subtitle,
         style: const TextStyle(color: AppColors.textSecondary),
       ),
-      value: value,
-      onChanged: onChanged,
-      activeThumbColor: AppColors.accent,
-    );
-  }
-
-  Widget _buildQualityDropdown({
-    required BuildContext context,
-  }) {
-    return DropdownButton<String>(
-      value: 'Otomatik',
-      icon: const Icon(Icons.arrow_drop_down),
-      elevation: 16,
-      style: const TextStyle(color: AppColors.textPrimary),
-      underline: Container(
-        height: 2,
-        color: AppColors.accent,
+      trailing: DropdownButton<String>(
+        value: value,
+        icon: const Icon(Icons.arrow_drop_down, color: AppColors.textSecondary),
+        underline: const SizedBox.shrink(),
+        borderRadius: BorderRadius.circular(12),
+        style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+        items: items
+            .map((e) => DropdownMenuItem(value: e.label, child: Text(e.label)))
+            .toList(),
+        onChanged: (v) => onChanged(v ?? value),
       ),
-      onChanged: (_) {},
-      items: ['Otomatik', 'Yüksek (320kbps)', 'Orta (128kbps)', 'Düşük (48kbps)'].map((String quality) {
-        return DropdownMenuItem<String>(
-          value: quality,
-          child: Text(quality),
-        );
-      }).toList(),
     );
   }
+}
 
-  Widget _buildEqualityPresetDropdown({
-    required BuildContext context,
-  }) {
-    return DropdownButton<String>(
-      value: 'flat',
-      icon: const Icon(Icons.arrow_drop_down),
-      elevation: 16,
-      style: const TextStyle(color: AppColors.textPrimary),
-      underline: Container(
-        height: 2,
-        color: AppColors.accent,
-      ),
-      onChanged: (_) {},
-      items: ['flat', 'pop', 'rock', 'jazz', 'classical', 'bass boost', 'vocal'].map((String preset) {
-        return DropdownMenuItem<String>(
-          value: preset,
-          child: Text(preset[0].toUpperCase() + preset.substring(1)),
-        );
-      }).toList(),
-    );
-  }
+class DropdownItem {
+  final String label;
+  final int index;
+  const DropdownItem(this.label, this.index);
+}
+
+/// Ses kalitesi seçenekleri (etiketsiz değer eşlemesi).
+class QualityItems {
+  static const items = [
+    DropdownItem('Otomatik', 0),
+    DropdownItem('Ultra (lossless)', 1),
+    DropdownItem('Yüksek (320kbps)', 2),
+    DropdownItem('Orta (128kbps)', 3),
+    DropdownItem('Düşük (48kbps)', 4),
+  ];
+
+  static AudioQuality qualityFor(String label) => switch (label) {
+        'Ultra (lossless)' => AudioQuality.ultra,
+        'Yüksek (320kbps)' => AudioQuality.high,
+        'Orta (128kbps)' => AudioQuality.medium,
+        'Düşük (48kbps)' => AudioQuality.low,
+        _ => AudioQuality.auto,
+      };
 }

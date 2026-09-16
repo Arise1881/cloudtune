@@ -12,6 +12,7 @@ import 'services/player_service.dart';
 import 'services/equalizer_service.dart';
 import 'services/update_service.dart';
 import 'services/room_service.dart';
+import 'services/theme_service.dart';
 import 'screens/root_screen.dart';
 import 'screens/settings_screen.dart';
 
@@ -54,6 +55,13 @@ Future<void> main() async {
     debugPrint('Güncelleme kontrolü başlatma uyarısı: $e');
   }
 
+  // Tema tercihi (açık/koyu + vurgu rengi)
+  try {
+    await ThemeService.instance.init();
+  } catch (e) {
+    debugPrint('Tema başlatma uyarısı: $e');
+  }
+
   // Ekolayzer (YouTube Music benzeri ses ayarı)
   try {
     await EqualizerService.instance.init();
@@ -83,58 +91,91 @@ class MelodyApp extends StatelessWidget {
         ChangeNotifierProvider<EqualizerService>.value(
             value: EqualizerService.instance),
         ChangeNotifierProvider<RoomService>.value(value: RoomService.instance),
+        ChangeNotifierProvider<ThemeService>.value(value: ThemeService.instance),
       ],
-      child: MaterialApp(
-        title: AppStrings.appName,
-        debugShowCheckedModeBanner: false,
-        theme: _buildTheme(),
-        routes: {
-          '/settings': (_) => const SettingsScreen(),
-        },
-        home: const RootScreen(),
+      child: Consumer<ThemeService>(
+        builder: (context, themeService, _) => MaterialApp(
+          title: AppStrings.appName,
+          debugShowCheckedModeBanner: false,
+          theme: _buildTheme(themeService.accent, Brightness.light),
+          darkTheme: _buildTheme(themeService.accent, Brightness.dark),
+          themeMode: themeService.mode,
+          routes: {
+            '/settings': (_) => const SettingsScreen(),
+          },
+          home: const RootScreen(),
+        ),
       ),
     );
   }
 
-  ThemeData _buildTheme() {
-    final base = ThemeData.dark(useMaterial3: true);
+  ThemeData _buildTheme(Color accent, Brightness brightness) {
+    final dark = brightness == Brightness.dark;
+    final background = dark ? AppColors.background : const Color(0xFFF4F4F4);
+    final surface = dark ? AppColors.surface : const Color(0xFFFFFFFF);
+    final card = dark ? AppColors.card : const Color(0xFFFFFFFF);
+    final textPrimary = dark ? AppColors.textPrimary : const Color(0xFF111111);
+    final textSecondary =
+        dark ? AppColors.textSecondary : const Color(0xFF6B6B6B);
+    final accentBright =
+        dark ? AppColors.accentBright : Color.lerp(accent, Colors.white, 0.25)!;
+    final divider = dark ? const Color(0x1FFFFFFF) : const Color(0x14000000);
+
+    final base = ThemeData(
+        brightness: brightness, useMaterial3: true, fontFamily: 'Roboto');
+
     return base.copyWith(
-      scaffoldBackgroundColor: AppColors.background,
+      scaffoldBackgroundColor: background,
       colorScheme: base.colorScheme.copyWith(
-        brightness: Brightness.dark,
-        primary: AppColors.accent,
-        secondary: AppColors.accentBright,
-        surface: AppColors.surface,
+        brightness: brightness,
+        primary: accent,
+        secondary: accentBright,
+        surface: surface,
         error: AppColors.error,
       ),
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        systemOverlayStyle: SystemUiOverlayStyle.light,
+        systemOverlayStyle: dark
+            ? SystemUiOverlayStyle.light
+            : SystemUiOverlayStyle.dark,
       ),
       textTheme: const TextTheme(
         bodyMedium: TextStyle(color: AppColors.textPrimary),
       ),
-      sliderTheme: const SliderThemeData(
-        activeTrackColor: AppColors.textPrimary,
-        thumbColor: AppColors.textPrimary,
+      sliderTheme: SliderThemeData(
+        activeTrackColor: accent,
+        thumbColor: accent,
       ),
       snackBarTheme: SnackBarThemeData(
-        backgroundColor: AppColors.cardLight,
-        contentTextStyle:
-            const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+        backgroundColor: card,
+        contentTextStyle: TextStyle(color: textPrimary, fontSize: 14),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
-      dialogTheme: DialogThemeData(backgroundColor: AppColors.card),
+      dialogTheme: DialogThemeData(backgroundColor: card),
       listTileTheme: ListTileThemeData(
-        iconColor: AppColors.textSecondary,
-        titleTextStyle: const TextStyle(
-            color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w600),
-        subtitleTextStyle:
-            const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+        iconColor: textSecondary,
+        titleTextStyle: TextStyle(
+            color: textPrimary, fontSize: 15, fontWeight: FontWeight.w600),
+        subtitleTextStyle: TextStyle(color: textSecondary, fontSize: 13),
       ),
       dividerTheme: const DividerThemeData(color: Color(0x1FFFFFFF)),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStatePropertyAll(accent),
+        trackColor: WidgetStatePropertyAll(accent.withValues(alpha: .3)),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: surface.withValues(alpha: .92),
+        indicatorColor: accent.withValues(alpha: .2),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: surface,
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: divider)),
+      ),
     );
   }
 }

@@ -26,9 +26,30 @@ class ConnectivityService extends ChangeNotifier {
   bool _hasNetworkType = true;
   bool _isOnline = true;
   bool _checking = false;
+  bool _forceOffline = false;
 
-  bool get isOnline => _isOnline;
-  bool get isOffline => !_isOnline;
+  bool get _netOnline => !_forceOffline && _isOnline;
+  bool get isOnline => _netOnline;
+  bool get isOffline => !_netOnline;
+  bool get forceOffline => _forceOffline;
+
+  /// Kullanıcının manuel çevrimdışı tercihi (Ayarlar'da açılıp kapatılır).
+  /// Gerçek bağlantıdan bağımsız olarak uygulamayı çevrimdışı moda alır.
+  void setForceOffline(bool value) {
+    if (_forceOffline == value) return;
+    _forceOffline = value;
+    debugPrint('forceOffline => ${value ? "açık" : "kapalı"}');
+    notifyListeners();
+  }
+
+  /// Manuel çevrimdışı mod kapanınca / açılınca gerçek durumu yeniden yansıt.
+  void retry() {
+    if (!_hasNetworkType) {
+      _setOnline(false);
+      return;
+    }
+    _verifyReachability();
+  }
 
   /// Gerçek bir internete erişim kontrolü başlatır (arka planda).
   void _onTypeChanged(List<ConnectivityResult> results) {
@@ -76,16 +97,6 @@ class ConnectivityService extends ChangeNotifier {
     } finally {
       _checking = false;
     }
-  }
-
-  /// Ağ tipi bağlı ama gerçek erişim doğrulanmadıysa yeniden dener
-  /// (kullanıcı interneti açtığında/bağlandığında durumu algılamak için).
-  void retry() {
-    if (!_hasNetworkType) {
-      _setOnline(false);
-      return;
-    }
-    _verifyReachability();
   }
 
   void _setOnline(bool online) {
