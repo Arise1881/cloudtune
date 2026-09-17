@@ -141,22 +141,15 @@ class MusicService {
   Future<List<String>> _proxyStreamUrls(String videoId) async {
     final base = proxyUrl;
     if (base == null || base.isEmpty) return const [];
-    final data =
-        await _getJson('$base/api/v1/stream?video_id=$videoId',
-            timeout: const Duration(seconds: 20));
-    if (data is! Map || data['urls'] is! List) return const [];
-    final urls = <String>[
-      // Relay İLK: telefon hiç googlevideo CDN'ine bağlanmaz — akış kendi
-      // proxy sunucumuzdan gelir (operatör engelinden bağımsız, mobilde
-      // "Loading interrupted" yerine stabil başlangıç).
-      '$base/api/v1/relay?video_id=$videoId&format=140',
+    final b = base.replaceAll(RegExp(r'/$'), '');
+    // En hızlı yol: sunucunun kendi akışını direkt dene. stream URL
+    // çözümünü beklemek mobilde 5-10sn kaybettirirdi; üç format zinciri
+    // her şarkıda en az birinin olmasını garanti eder.
+    return [
+      '$b/api/v1/relay?video_id=$videoId&format=140',
+      '$b/api/v1/relay?video_id=$videoId&format=139',
+      '$b/api/v1/relay?video_id=$videoId&format=251',
     ];
-    for (final u in data['urls'] as List) {
-      if (u is Map && u['url'] is String && (u['url'] as String).isNotEmpty) {
-        urls.add(u['url'] as String);
-      }
-    }
-    return urls;
   }
 
   Future<T> _bounded<T>(Future<T> Function() task) {
