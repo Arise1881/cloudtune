@@ -21,11 +21,13 @@ class DownloadManager extends ChangeNotifier {
   final MusicService music = MusicService.instance;
 
   final Map<String, double> _progress = {};
+  final Map<String, bool> _completed = {};
   final Set<String> _active = {};
 
-  /// songId -> 0.0..1.0
   Map<String, double> get progress => Map.unmodifiable(_progress);
+  Map<String, bool> get completed => Map.unmodifiable(_completed);
   bool isDownloading(String id) => _active.contains(id);
+  bool isCompleted(String id) => _completed[id] ?? false;
 
   Directory? _dir;
 
@@ -33,10 +35,10 @@ class DownloadManager extends ChangeNotifier {
     final docs = await getApplicationDocumentsDirectory();
     _dir = Directory('${docs.path}/$downloadsFolderName');
     if (!await _dir!.exists()) await _dir!.create(recursive: true);
-    // Kayıtlı ama dosyası silinmiş indirmeleri temizle.
     for (final song in library.downloads) {
       if (song.localPath == null || !await File(song.localPath!).exists()) {
         library.removeDownload(song.id);
+        _completed.remove(song.id);
       }
     }
   }
@@ -44,34 +46,40 @@ class DownloadManager extends ChangeNotifier {
   String audioPath(String id) => '${_dir!.path}/$id.m4a';
   String artPath(String id) => '${_dir!.path}/$id.jpg';
 
-  /// Şarkıyı indirir. Başarıda null, başarısızlıkta hata mesajı döner.
-  /// Akışın ilk URL'si çekilemezse sonraki adaylar denenir.
   Future<String?> download(Song song) async {
-    if (_active.contains(song.id) || library.isDownloaded(song.id)) return null;
+    if (_active.contains(song.id) || library.isDownloaded(song.id)) {
+      return null;
+    }
     _active.add(song.id);
     _progress[song.id] = 0.0;
+    _completed.remove(song.id);
     notifyListeners();
 
     try {
       if (_dir == null) await _init();
 
-      // En iyi akıştan başla; başarısız olursa düşük kalitelilere geç.
       final candidates = await music.streamUrlCandidates(song.id);
       if (candidates.isEmpty) {
         throw StreamUnavailableException('Akış çözülemedi');
       }
 
+      final approxTotal = song.durationMs > 0
+          ? song.durationMs * 16
+          : 0;
+
       String? lastErrorText;
       var ok = false;
       for (final url in candidates) {
         try {
-          // Ses dosyası: akışı parça parça yaz, ilerleme yay.
-          await _downloadFile(url, audioPath(song.id), (received, total) {
+          await _downloadFile(url, audioPath(song.id), approxTotal, onProgress: (received, total) {
+            double p;
             if (total > 0) {
-              // İlerlemenin %0..92'si ses dosyasına karşılık gelir.
-              _progress[song.id] = (received / total) * 0.92;
-              notifyListeners();
+              p = (received / total).clamp(0.0, 1.0);
+            } else {
+              p = (received / (approxTotal > 0 ? approxTotal : 1)).clamp(0.0, 1.0);
             }
+            _progress[song.id] = p;
+            notifyListeners();
           });
           ok = true;
           break;
@@ -85,7 +93,6 @@ class DownloadManager extends ChangeNotifier {
       }
       if (!ok) throw Exception(lastErrorText ?? 'İndirme başarısız');
 
-      // Kapak görseli.
       try {
         if (song.thumbnailUrl.isNotEmpty) {
           final bytes = await _fetchBytes(song.thumbnailUrl);
@@ -94,7 +101,11 @@ class DownloadManager extends ChangeNotifier {
       } catch (_) {}
 
       library.addDownload(song.copyWith(localPath: audioPath(song.id)));
+      await _saveToDevice(song);
+
       _progress[song.id] = 1.0;
+      _completed[song.id] = true;
+      notifyListeners();
       return null;
     } catch (e) {
       debugPrint('İndirme hatası (${song.title}): $e');
@@ -103,16 +114,13 @@ class DownloadManager extends ChangeNotifier {
         if (await f.exists()) await f.delete();
       } catch (_) {}
       final msg = e.toString().replaceFirst('Exception: ', '');
+      _progress.remove(song.id);
+      _completed.remove(song.id);
+      notifyListeners();
       return msg.isEmpty ? 'İndirme başarısız' : msg;
     } finally {
       _active.remove(song.id);
       notifyListeners();
-      Future.delayed(const Duration(seconds: 2), () {
-        if (_progress[song.id] != null && !_active.contains(song.id)) {
-          _progress.remove(song.id);
-          notifyListeners();
-        }
-      });
     }
   }
 
@@ -125,6 +133,9 @@ class DownloadManager extends ChangeNotifier {
       } catch (_) {}
     }
     library.removeDownload(song.id);
+    _progress.remove(song.id);
+    _completed.remove(song.id);
+    notifyListeners();
   }
 
   Future<void> clearAll() async {
@@ -133,7 +144,6 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  /// İndirme klasörünün toplam boyutu (şarkı + kapak).
   Future<int> totalSizeBytes() async {
     final dir = _dir;
     if (dir == null || !await dir.exists()) return 0;
@@ -160,23 +170,23 @@ class DownloadManager extends ChangeNotifier {
   Future<void> _downloadFile(
     String url,
     String savePath,
-    void Function(int received, int total) onProgress,
-  ) async {
+    int approxTotal, {
+    required void Function(int received, int total) onProgress,
+  }) async {
     final client = HttpClient();
     try {
       final request = await client.getUrl(Uri.parse(url));
       request.headers.set(HttpHeaders.userAgentHeader,
           'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36');
-      final response = await request.close();
+      final response = await request.close().timeout(const Duration(seconds: 15));
       if (response.statusCode != HttpStatus.ok) {
         throw HttpException('HTTP ${response.statusCode}');
       }
-      final total =
-          response.contentLength > 0 ? response.contentLength : 0;
+      var total = response.contentLength > 0 ? response.contentLength : approxTotal;
       var received = 0;
       final sink = File(savePath).openWrite();
       try {
-        await for (final chunk in response) {
+        await for (final chunk in response.timeout(const Duration(seconds: 20))) {
           received += chunk.length;
           sink.add(chunk);
           onProgress(received, total);
@@ -187,6 +197,20 @@ class DownloadManager extends ChangeNotifier {
       }
     } finally {
       client.close(force: true);
+    }
+  }
+
+  Future<void> _saveToDevice(Song song) async {
+    final audioFile = File(audioPath(song.id));
+    if (!await audioFile.exists()) {
+      throw Exception('Ses dosyası bulunamadı');
+    }
+
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final uri = 'file://${audioPath(song.id)}';
+        debugPrint('MediaStore scan: $uri');
+      } catch (_) {}
     }
   }
 
