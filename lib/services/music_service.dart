@@ -38,6 +38,10 @@ class MusicService {
   static const List<String> _invidiousInstances = [
     'https://invidious.f5.si',
     'https://invidious.nerdvpn.de',
+    'https://invidious.kavin.rocks',
+    'https://inv.riverside.rocks',
+    'https://invidious.myoxy.de',
+    'https://invidious.projectsegfau.lt',
   ];
 
   /// Innertube player deneme sırası: bazı videolar için bazı istemciler
