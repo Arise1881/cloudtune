@@ -22,6 +22,7 @@ Not: yt-dlp'nin tam fonksiyon kalması için bir JS runtime önerilir
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -172,7 +173,8 @@ class Handler(BaseHTTPRequestHandler):
 
             if u.path == "/api/v1/stream":
                 vid = (q.get("video_id") or [""])[0]
-                if not vid or not vid.isalnum() or len(vid) > 20:
+                # YouTube video kimlikleri: 11 karakter, harf/rakam/_/- izinli.
+                if not vid or not re.fullmatch(r"[A-Za-z0-9_-]{6,15}", vid):
                     return self._err(400, "geçersiz video_id")
                 return self._send(200, {"ok": True, **solve_stream(vid)})
 

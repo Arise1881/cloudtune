@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
@@ -81,28 +82,43 @@ class MusicService {
 
   /// Ayarlanan proxy bulunamazsa LAN'da bilinen host adlarını dener.
   static const List<String> _knownProxyHosts = [
+    '10.0.2.2',
     '192.168.1.102',
     'melody-proxy.local',
   ];
 
   /// LAN proxy'sini sessizce arar; bulursa adresi döner, bulamazsa null.
+  /// Tüm hostlar PARALEL denenir — sıralı deneme 4sn uygulama açılış zaman
+  /// aşımını aşıyordu ve keşif yarıda ölüyordu.
   static Future<String?> _autoDiscover() async {
-    for (final host in _knownProxyHosts) {
-      final base = 'http://$host:8800';
+    final results = await Future.wait(_knownProxyHosts.map(_probeProxy));
+    for (final base in results) {
+      if (base != null) return base;
+    }
+    return null;
+  }
+
+  /// Tek host'a health ping atar. Başarılıysa base URL, değilse null döner.
+  static Future<String?> _probeProxy(String host) async {
+    final base = 'http://$host:8800';
+    try {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(milliseconds: 1200);
       try {
-        final client = HttpClient()
-          ..connectionTimeout = const Duration(seconds: 2);
-        try {
-          final req = await client
-              .getUrl(Uri.parse('$base/health'))
-              .timeout(const Duration(seconds: 4));
-          final res = await req.close().timeout(const Duration(seconds: 4));
-          await res.drain<void>().timeout(const Duration(seconds: 2));
-          if (res.statusCode == HttpStatus.ok) return base;
-        } finally {
-          client.close(force: true);
+        final req = await client
+            .getUrl(Uri.parse('$base/health'))
+            .timeout(const Duration(seconds: 2));
+        final res = await req.close().timeout(const Duration(seconds: 2));
+        await res.drain<void>().timeout(const Duration(seconds: 1));
+        if (res.statusCode == HttpStatus.ok) {
+          debugPrint('PROXY: otomatik keşif başarılı -> $base');
+          return base;
         }
-      } catch (_) {}
+      } finally {
+        client.close(force: true);
+      }
+    } catch (e) {
+      debugPrint('PROXY: $host bulunamadı ($e)');
     }
     return null;
   }
