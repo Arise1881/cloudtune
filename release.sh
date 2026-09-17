@@ -66,6 +66,8 @@ echo "── Artifact hazırlama ──"
 mkdir -p "$STAGING"
 cp -f build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "$STAGING/Melody.apk"
 cp -f build/app/outputs/flutter-apk/app-release.apk "$STAGING/Melody-universal.apk"
+cp -f build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk "$STAGING/Melody-armeabi-v7a.apk"
+cp -f build/app/outputs/flutter-apk/app-x86_64-release.apk "$STAGING/Melody-x86_64.apk"
 
 # Linux tar.gz
 cd build/linux/x64/release
@@ -149,7 +151,7 @@ done
 
 echo "── Yeni asset'leri yükle ──"
 UPLOAD="https://uploads.github.com/repos/Arise1881/melody-dist/releases/$RELEASE_ID/assets"
-for f in Melody.apk Melody-universal.apk Melody-linux.tar.gz; do
+for f in Melody.apk Melody-universal.apk Melody-armeabi-v7a.apk Melody-x86_64.apk Melody-linux.tar.gz; do
   MIME="application/octet-stream"
   [[ "$f" == *.apk ]] && MIME="application/vnd.android.package-archive"
   [[ "$f" == *.tar.gz ]] && MIME="application/gzip"
