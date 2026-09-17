@@ -140,7 +140,7 @@ ASSET_IDS=$(curl -s -H "Authorization: token $GH_TOKEN" \
   | python3 -c "
 import sys,json
 for a in json.load(sys.stdin)['assets']:
-    if a['name'] != 'Melody.ipa':
+    if a['name'] != 'Melody.ipa' and a['name'] != 'Melody-windows.zip':
         print(a['id'])
 ")
 for aid in $ASSET_IDS; do
