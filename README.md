@@ -50,7 +50,10 @@
 ### 📚 Kitaplık
 | | |
 |---|---|
-| ✅ Arama | Canlı arama, son aramalar |
+| ✅ Arama | Canlı arama, son aramalar, siyah metin + sesli arama (mikrofon) |
+| ✅ Arama sekmeleri | Şarkılar / Sanatçılar / Çalma listeleri ayrı sonuçlar |
+| ✅ Sanatçı sayfaları | Profil + şarkı listesi |
+| ✅ Playlist içe aktarma | YouTube/YTM URL kopyala → Kütüphane > İçe Aktar |
 | ✅ İndirmeler | Çevrimdışı dinleme + ilerleme göstergesi + boyut takibi |
 | ✅ Favoriler | Kalp ile beğen, tek listeden yönet |
 | ✅ Çalma listeleri | Oluştur, yeniden adlandır, sil, karıştır |
@@ -61,18 +64,39 @@
 ### 🌍 Bağlantılı Özellikler
 | | |
 |---|---|
-| ✅ Oda sistemi | Kodla katıl, senkronize dinle |
+| ✅ Gerçek zamanlı oda | MQTT tabanlı kur/katıl, avatar, aynı anda senkron çalar |
+| ✅ Sonsuz döngü | Trend bölümlerinden tek dokunuşla kesintisiz akış |
 | ✅ Çevrimdışı mod | Manuel kapat, yalnızca indirilenler |
-| ✅ OTA güncelleme | Açık kaynaktan anında cihazlara güncelleme |
+| ✅ Arka plan OTA | Güncelleme arka planda sessizce iner, kurulum onayı sendedir |
 
 ### 🎨 Arayüz
 | | |
 |---|---|
-| ✅ Karanlık / Açık tema | Tek dokunuşla geçiş |
+| ✅ Karanlık / Açık tema | Tek dokunuşla geçiş (varsayılan karanlık) |
 | ✅ 5 vurgu rengi | Yeşil, Mavi, Mor, Kırmızı, Turuncu |
-| ✅ Trend ana sayfa | Küratörlü yatay akışlar |
+| ✅ Trend ana sayfa | YouTube Müzik trendleri + küratörlü yatay akışlar |
 | ✅ Mini oynatıcı | Gezinirken bile şarkı kontrolü |
 | ✅ Uyku zamanlayıcısı | 5dk – 1sa arası otomatik durdur |
+
+### 📱 Özellik Paritesi
+| | Android | iOS | Windows 11 | Linux |
+|---|---|---|---|---|
+| Müzik + kuyruk | ✅ | ✅ | ✅ | ✅ |
+| Arama (metin/sesli) | ✅ | ✅ | ✅ | ✅* |
+| Sanatçı / playlist arama | ✅ | ✅ | ✅ | ✅ |
+| Çalma listeleri + favoriler | ✅ | ✅ | ✅ | ✅ |
+| Çevrimdışı indirme | ✅ | ✅ | ✅ | ✅ |
+| Ekolayzer | ✅ | ✅ | ✅ | ✅ |
+| Oda (MQTT senkron) | ✅ | ✅ | ✅ | ✅ |
+| Trend ana sayfa + sonsuz döngü | ✅ | ✅ | ✅ | ✅ |
+| Playlist içe aktarma (YTM) | ✅ | ✅ | ✅ | ✅ |
+| OTA güncelleme | ✅ | ⚠️ AltStore | ✅ | ✅ (deb) |
+
+*\* Linux'ta mikrofon girişi desteklenmez — sesli arama butonu gizli.*
+
+> 📲 **Otomatik güncelleme:** Uygulama arka planda `update.json` kontrol eder.
+> Android'de yeni APK sessizce indirilir, banner "Kuruluma hazır" der — tek
+> dokunuşla kurulur, müzik kesilmez. Linux'ta deb paketi indirilir.
 
 ---
 
@@ -83,14 +107,14 @@
 | **Android (arm64)** | [Melody.apk indir](https://github.com/Arise1881/melody-dist/releases/download/melody-latest/Melody.apk) · 21 MB |
 | **Android (evrensel)** | [Melody-universal.apk indir](https://github.com/Arise1881/melody-dist/releases/download/melody-latest/Melody-universal.apk) · 59 MB |
 | **iOS** | [AltStore kaynağı ekle](altstore://source?url=https://raw.githubusercontent.com/Arise1881/melody-dist/main/apps.json) veya [ipa](https://github.com/Arise1881/melody-dist/releases/download/melody-latest/Melody.ipa) |
-| **Linux (deb)** | `sudo apt install ./melody_2.1.3_amd64.deb` |
+| **Linux (deb)** | `sudo apt install ./melody_2.2.0_amd64.deb` |
 | **Linux (tar.gz)** | [Melody-linux.tar.gz](https://github.com/Arise1881/melody-dist/releases/download/melody-latest/Melody-linux.tar.gz) |
 | **Windows 11** | Kaynak + GitHub Actions ile derlenir → `Melody-windows.zip` (release) |
 | **Qt/Bağımsız** | `flutter run` (geliştirme) |
 
-> 📲 **Otomatik güncelleme:** Uygulama açıldığında `update.json` kontrol edilir.
-> Yeni sürüm varsa banner görünür → tek dokunuşla indir + kur. Arka planda müzik
-> kesilmez; güncelleme ayrı oturumda tamamlanır.
+> 📲 **Otomatik güncelleme:** Uygulama arka planda `update.json` kontrol eder.
+> Android'de yeni APK sessizce indirilir, banner "Kuruluma hazır" der — tek
+> dokunuşla kurulur, müzik kesilmez. Linux'ta deb paketi indirilir.
 
 ---
 
@@ -100,18 +124,19 @@
 lib/
 ├── constants.dart                # Tema token'ları, metinler, küratörlü bölümler
 ├── models/song.dart              # Şarkı modeli (JSON serileştirme)
+├── models/search_content.dart    # SearchArtist + PlaylistInfo
 ├── services/
-│   ├── music_service.dart        # youtube_explode_dart: arama + akış çözümleme
-│   ├── player_service.dart       # just_audio + arka plan oynatıcı (kuyruk/radyo/hız)
+│   ├── music_service.dart        # youtube_explode_dart: arama + akış + playlist
+│   ├── player_service.dart       # just_audio + arka plan oynatıcı (kuyruk/radyo/hız/oda)
 │   ├── download_manager.dart     # Parça parça indirme + formatBytes depolama
 │   ├── library_store.dart        # Favoriler / listeler / indirmeler (kalıcı)
 │   ├── connectivity_service.dart # Çevrimdışı izleme + manuel çevrimdışı
 │   ├── equalizer_service.dart    # 5 bant EQ → ses çarpanı
 │   ├── theme_service.dart        # Tema modu + 5 vurgu rengi (kalıcı)
-│   ├── room_service.dart         # Oda oluştur / katıl / senkronize çal
-│   ├── update_service.dart       # OTA manifest kontrolü + kurulum
+│   ├── room_service.dart         # MQTT (broker.emqx.io) — kur/katıl/senkron çal
+│   ├── update_service.dart       # OTA manifest + arka plan otomatik indirme
 │   └── download_manager.dart     # İndirme havuzu + önbellek temizleme
-├── screens/                      # Root, Home, Search, Library, NowPlaying…
+├── screens/                      # Root, Home, Search, Library, Room, NowPlaying…
 ├── widgets/                      # MiniPlayer, SongTile, Artwork, OfflineBanner
 └── .github/workflows/            # Windows 11 derleme pipeline
 ```
@@ -129,6 +154,21 @@ flutter build ipa                # iOS (macOS gerekir)
 flutter build linux --release    # Linux
 flutter build windows --release  # Windows 11
 ```
+
+## 🧪 Doğrulama
+
+```bash
+flutter analyze                  # sıfır uyarı hata
+./release.sh current             # mevcut sürümü 4 platforma yayınla
+```
+
+**Oda senkronu testi (2 cihaz):** Uygulamayı iki cihazda aç → bir cihazda
+**Oda sisteminden** oda kur → kodla diğeri katıl → ikisi de aynı şarkıyı
+senkron çalar. Play/skip/seek her iki tarafta da aynı andadır (MQTT + 400ms
+geri döngü susturma).
+
+**Sesli arama:** Arama sayfasında mikrofon simgesine dokun, konuş — 8 sn
+dinler, sonucu arar (Android/iOS/Windows/macOS; Linux gizli).
 
 ---
 
