@@ -343,8 +343,10 @@ class RoomService extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// Mevcut çalma durumunu odaya yayınlar (oynatma görevlisi çağırır).
+  /// Mevcut çalma durumunu odaya yayınlar (yalnız oda sahibi yayınlar;
+  /// üyeler yalnız dinler — aksi halde iki taraf birlikte durumu override eder).
   void publishFromPlayer() {
+    if (_role != RoomRole.owner) return;
     final topic = _topic;
     if (_mqtt == null || !_connected || topic.isEmpty) return;
     final player = PlayerService.instance;
@@ -358,12 +360,14 @@ class RoomService extends ChangeNotifier {
       'idx': player.index,
       'pos': player.position.inMilliseconds,
       'playing': player.isPlaying,
+      // Sahibin çözdüğü akış URL'si: üyeye ilet — üye akış çözemezse bile ses.
+      'stream': player.currentStreamUrl,
     }));
   }
 
   void _startHeartbeat() {
     _heartbeat?.cancel();
-    _heartbeat = Timer.periodic(const Duration(seconds: 14), (_) {
+    _heartbeat = Timer.periodic(const Duration(seconds: 6), (_) {
       publishFromPlayer();
     });
   }
@@ -448,6 +452,9 @@ class RoomService extends ChangeNotifier {
       index: idx,
       position: Duration(milliseconds: (msg['pos'] as num?)?.toInt() ?? 0),
       playing: (msg['playing'] as bool?) ?? false,
+      stream: (msg['stream'] as String?)?.isNotEmpty == true
+          ? (msg['stream'] as String)
+          : null,
     );
     // Yayın geri dönüşünü engelle: kısa süre mutik
     Future.delayed(const Duration(milliseconds: 400), () {

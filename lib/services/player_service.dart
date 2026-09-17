@@ -37,6 +37,10 @@ class PlayerService extends ChangeNotifier {
   final MusicService music = MusicService.instance;
   final RoomService room = RoomService.instance;
 
+  /// Son başarılı çözülen akış URL'si — oda ortaklarıyla paylaşılır.
+  String? _activeStreamUrl;
+  String? get currentStreamUrl => _activeStreamUrl;
+
   List<Song> _queue = const [];
   List<Song> _shuffledQueue = const [];
   int _index = -1;
@@ -170,7 +174,8 @@ class PlayerService extends ChangeNotifier {
   /// Her çağrıda o anki şarkı + crossfade için gerekli tek kaynak kurulur;
   /// geçişler `next()` ile manuel yönetilir (autoplay + crossfade için).
   /// [initialSource] veriliyorsa, stream URL çözme adımı atlanır ve oynatma hemen başlar.
-  /// Çözülemez/çalınamaz şarkılar sessizce atlanır; kuyruk kesintisiz devam eder.
+  /// Akış adayları SIRAYLA denenir: bozuk/engellenmiş URL "source error" verirse
+  /// bir sonraki adaya geçilir (mobil veride özellikle önemli).
   Future<void> _buildAndPlay({String? initialSource}) async {
     final songs = effectiveQueue;
     if (songs.isEmpty || _index < 0 || _index >= songs.length) return;
@@ -182,18 +187,74 @@ class PlayerService extends ChangeNotifier {
     while (true) {
       final q = effectiveQueue;
       if (_index < 0 || _index >= q.length) break;
+      final song = q[_index];
+      String? lastError;
       try {
         // Eski kaynağı tamamen kaldır: geçiş başarısız olursa eski şarkının
         // sesi sürpriz olarak devam etmesin; hata banner'ıyla dursun.
         await _player.stop();
-        final source = initialSource != null
-            ? await _buildSourceFromString(initialSource, q[_index])
-            : await _buildSource(q[_index]);
-        await _player.setAudioSource(source,
-            initialPosition: Duration.zero, preload: true);
-        await _player.setSpeed(_speed);
-        _applyEqualizer();
-        await _player.play();
+
+        // 1) İndirilmiş dosya varsa her zaman yerelden çal.
+        final downloaded = library.downloadedSong(song.id);
+        final localPath = downloaded?.localPath;
+        if (localPath != null && await File(localPath).exists()) {
+          await _player.setAudioSource(await _buildSource(song),
+              initialPosition: Duration.zero, preload: true);
+          await _player.setSpeed(_speed);
+          _applyEqualizer();
+          await _player.play();
+          _saveSession();
+          break;
+        }
+
+        // 2) Çevrimdışıysa ve kaynak yoksa: hata.
+        if (!connectivity.isOnline) {
+          throw StreamUnavailableException(
+              'Bu şarkı çevrimdışı kullanılamıyor.');
+        }
+
+        // 3) Akış adayları: odaya özel önceden çözülmüş URL veya kalite sıralı.
+        final candidates = initialSource != null
+            ? [initialSource]
+            : await music.streamCandidatesWithQuality(song.id,
+                quality: switch (_quality) {
+                  AudioQuality.high => 'high',
+                  AudioQuality.medium => 'medium',
+                  AudioQuality.low => 'low',
+                  AudioQuality.ultra => 'ultra',
+                  AudioQuality.auto => 'auto',
+                });
+
+        var started = false;
+        for (final url in candidates) {
+          try {
+            final source = await _buildSourceFromString(url, song);
+            await _player.setAudioSource(source,
+                initialPosition: Duration.zero, preload: true);
+            await _player.setSpeed(_speed);
+            _applyEqualizer();
+            await _player.play();
+
+            // Oynatıcı hata verirse (kırık/engelli URL) kısa beklemede
+            // "ready" olmaz ve sonraki adaya geçilir.
+            await _player.playerStateStream
+                .firstWhere((s) =>
+                    s.processingState == ProcessingState.ready ||
+                    s.processingState == ProcessingState.completed)
+                .timeout(const Duration(seconds: 12));
+            music.cacheStreamUrl(song.id, url);
+            started = true;
+            break;
+          } catch (e) {
+            lastError = e.toString();
+            try {
+              await _player.stop();
+            } catch (_) {}
+          }
+        }
+        if (!started) {
+          throw Exception(lastError ?? 'Akış başlatılamadı');
+        }
         _saveSession();
         break;
       } catch (e) {
@@ -211,6 +272,7 @@ class PlayerService extends ChangeNotifier {
 
   /// Verilen stream URL'ından doğrudan bir AudioSource oluşturur (cache'lenmiş URL için).
   Future<AudioSource> _buildSourceFromString(String streamUrl, Song song) async {
+    _activeStreamUrl = streamUrl;
     Duration? duration;
     Uri? artUri;
 
@@ -240,6 +302,7 @@ class PlayerService extends ChangeNotifier {
     String? streamUrl;
 
     if (useLocal) {
+      _activeStreamUrl = null;
       final art = File(DownloadManager.instance.artPath(song.id));
       artUri = art.existsSync() ? Uri.file(art.path) : null;
     } else if (connectivity.isOnline) {
@@ -252,6 +315,7 @@ class PlayerService extends ChangeNotifier {
                 AudioQuality.ultra => 'ultra',
                 AudioQuality.auto => 'auto',
               });
+      _activeStreamUrl = streamUrl;
       // Başarılı çözümü önbellekle; hızlı şarkı değiştirme için.
       _streamCache[song.id] = streamUrl;
       artUri = song.thumbnailUrl.isNotEmpty ? Uri.tryParse(song.thumbnailUrl) : null;
@@ -636,6 +700,7 @@ throw StreamUnavailableException(
     required int index,
     required Duration position,
     required bool playing,
+    String? stream,
   }) async {
     if (songs.isEmpty) return;
     if (index < 0 || index >= songs.length) index = 0;
@@ -647,6 +712,8 @@ throw StreamUnavailableException(
 
     // Kuyruk veya şarkı değiştiyse yeniden yükle
     if (!sameQueue || _index != index) {
+      // Oda sahibinin çözdüğü akış URL'si varsa onu kullan: üye kendi
+      // tarafında akış çözemese bile ses garanti olur.
       _queue = List.of(songs);
       _shuffledQueue = List.of(songs);
       _shuffle = false;
@@ -656,7 +723,7 @@ throw StreamUnavailableException(
       _crossfading = false;
       _player.setVolume(1.0);
       try {
-        await _buildAndPlay();
+        await _buildAndPlay(initialSource: stream);
       } catch (_) {}
     }
 
@@ -953,7 +1020,35 @@ throw StreamUnavailableException(
 
   // --- just_audio durum köprüleri ---
 
+  int _retryCount = 0;
+  bool _wasPlaying = false;
+
+  Future<void> _retryLoad() async {
+    _retryCount++;
+    _isLoading = true;
+    _lastError = null;
+    notifyListeners();
+    await Future.delayed(const Duration(milliseconds: 1200));
+    await _buildAndPlay().catchError((_) {});
+    _isLoading = false;
+    notifyListeners();
+    Future.delayed(const Duration(seconds: 10), () => _retryCount = 0);
+  }
+
   void _onPlayerState(PlayerState state) {
+    // Mobil veride bağlantı düşünce ExoPlayer "Loading interrupted" ile
+    // durur ve kendiliğinden geri dönmez. playing→idle geçişi kesintidir:
+    // otomatik yeniden yükle (max 2), bozuk kaynakta aday zinciri dener.
+    final wasPlaying = _wasPlaying;
+    _wasPlaying = state.playing;
+    if (wasPlaying &&
+        !state.playing &&
+        state.processingState == ProcessingState.idle &&
+        effectiveQueue.isNotEmpty &&
+        _retryCount < 2 &&
+        !_isLoading) {
+      _retryLoad();
+    }
     if (!state.playing && state.processingState == ProcessingState.completed) {
       // Oynatma bitti — odadaki kişiler için otomatik ilerle.
       // Yalnızca oda sahibi ilerletir; üyeler sahibin durumunu bekler.

@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:just_audio_background/just_audio_background.dart';
+import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'package:provider/provider.dart';
 
 import 'constants.dart';
@@ -20,6 +22,11 @@ import 'screens/settings_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Masaüstü (Windows/Linux/macOS) için media_kit tabanlı ses motoru.
+  // Mobilde native ExoPlayer/AVPlayer korunur.
+  if (!Platform.isAndroid && !Platform.isIOS) {
+    JustAudioMediaKit.ensureInitialized();
+  }
   try {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)
         .timeout(const Duration(seconds: 3), onTimeout: () {});
@@ -55,13 +62,17 @@ Future<void> main() async {
 /// Uygulama açıldıktan SONRA servisleri kurar.
 /// Her adım zaman aşımlı ve hata korumalıdır; hiçbiri çalışmayı engelleyemez.
 void _warmUpServices() {
-  _safe('Arka plan', () => JustAudioBackground.init(
-        androidNotificationChannelId: 'com.melody.app.playback',
-        androidNotificationChannelName: 'Melody Müzik Çalar',
-        androidNotificationOngoing: true,
-        androidStopForegroundOnPause: false,
-        preloadArtwork: true,
-      ));
+  // Arka plan bildirimi yalnız mobilde (just_audio_background desktop
+  // backend'i yok; masaüstünde media_kit kullanılıyor).
+  if (Platform.isAndroid || Platform.isIOS) {
+    _safe('Arka plan', () => JustAudioBackground.init(
+          androidNotificationChannelId: 'com.melody.app.playback',
+          androidNotificationChannelName: 'Melody Müzik Çalar',
+          androidNotificationOngoing: true,
+          androidStopForegroundOnPause: false,
+          preloadArtwork: true,
+        ));
+  }
   _safe('Kitaplık', () => LibraryStore.instance.init());
   _safe('Akış sunucusu', () => MusicService.loadPrefs());
   _safe('Ses kalitesi', () => PlayerService.instance.loadQualityPref());

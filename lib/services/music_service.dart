@@ -33,14 +33,11 @@ class MusicService {
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
   /// Halka açık Invidious örnekleri — biri kapanırsa diğeri kullanılır.
-  /// f5.si en güvenilir (ölçüldü: diğerleri sık yanıt vermiyor).
+  /// Canlılık 2026-09-17 ölçüldü: yalnız 200 dönen tutulur; ölü örnekler
+  /// mobil veride 7sn'lik timeout zinciri yaratıyordu.
   static const List<String> _invidiousInstances = [
     'https://invidious.f5.si',
-    'https://inv.nadeko.net',
     'https://invidious.nerdvpn.de',
-    'https://yewtu.be',
-    'https://invidious.jing.rocks',
-    'https://invidious.privacyredirect.com',
   ];
 
   /// Innertube player deneme sırası: bazı videolar için bazı istemciler
@@ -148,7 +145,12 @@ class MusicService {
         await _getJson('$base/api/v1/stream?video_id=$videoId',
             timeout: const Duration(seconds: 20));
     if (data is! Map || data['urls'] is! List) return const [];
-    final urls = <String>[];
+    final urls = <String>[
+      // Relay İLK: telefon hiç googlevideo CDN'ine bağlanmaz — akış kendi
+      // proxy sunucumuzdan gelir (operatör engelinden bağımsız, mobilde
+      // "Loading interrupted" yerine stabil başlangıç).
+      '$base/api/v1/relay?video_id=$videoId&format=140',
+    ];
     for (final u in data['urls'] as List) {
       if (u is Map && u['url'] is String && (u['url'] as String).isNotEmpty) {
         urls.add(u['url'] as String);
@@ -540,7 +542,7 @@ class MusicService {
   /// 251=opus). Redirect'i oynatıcı takip eder → doğrudan googlevideo akışı.
   Future<List<String>> _invidiousLatestWorking(String videoId) async {
     for (final base in _invidiousInstances) {
-      if (await _headOk('$base/latest_version?id=$videoId&itag=140')) {
+      if (await _rangeOk('$base/latest_version?id=$videoId&itag=140')) {
         return [
           '$base/latest_version?id=$videoId&itag=140',
           '$base/latest_version?id=$videoId&itag=139',
@@ -551,19 +553,24 @@ class MusicService {
     return const [];
   }
 
-  /// HEAD ile URL canlı mı (200/206 veya redirect 3xx).
-  Future<bool> _headOk(String url) async {
+  /// Range isteği — URL gerçek bir medya dosyası mı (206/Content-Range)?
+  /// HEAD yerine kısmi GET: bazı Invidious sunucuları HEAD'e 200/HTML dönüp
+  /// yanlış pozitif üretiyordu.
+  Future<bool> _rangeOk(String url) async {
     final t = const Duration(seconds: 5);
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
     try {
-      final req = await client.headUrl(Uri.parse(url));
+      final req = await client.getUrl(Uri.parse(url));
       req.headers.set(HttpHeaders.userAgentHeader, _webUa);
+      req.headers.set(HttpHeaders.rangeHeader, 'bytes=0-0');
       final res = await req.close().timeout(t);
       final code = res.statusCode;
+      final hasRange =
+          res.headers.value(HttpHeaders.contentRangeHeader) != null;
       await res.drain<void>().catchError((_) {});
-      return code == HttpStatus.ok ||
-          code == HttpStatus.partialContent ||
-          (code >= 300 && code < 400);
+      return (code == HttpStatus.ok ||
+              code == HttpStatus.partialContent) &&
+          hasRange;
     } catch (_) {
       return false;
     } finally {
@@ -661,6 +668,37 @@ class MusicService {
   }
 
   /// Belirtilen kalitede ses akış URL'sini çözer (YouTube Music benzeri).
+  void cacheStreamUrl(String videoId, String url) {
+    if (url.isNotEmpty) _streamUrlCache[videoId] = url;
+  }
+
+  /// Kaliteye göre sıralı akış adayları döner: çalma motoru bir aday
+  /// "source error" verirse sıradakini dener.
+  Future<List<String>> streamCandidatesWithQuality(String videoId,
+      {String quality = 'auto'}) async {
+    final candidates = await streamUrlCandidates(videoId);
+    if (candidates.isEmpty) {
+      throw StreamUnavailableException('Ses akışı bulunamadı');
+    }
+    switch (quality) {
+      case 'high':
+      case 'ultra':
+        return List.of(candidates);
+      case 'medium':
+        return [
+          candidates[candidates.length ~/ 2],
+          ...candidates,
+        ];
+      case 'low':
+        return [
+          candidates.last,
+          ...candidates,
+        ];
+      default:
+        return List.of(candidates);
+    }
+  }
+
   Future<String> resolveStreamUrlWithQuality(String videoId,
       {String quality = 'auto'}) async {
     final cached = _streamUrlCache[videoId];

@@ -431,7 +431,9 @@ class _StreamProxyTileState extends State<_StreamProxyTile> {
               style: TextStyle(color: AppColors.textPrimary)),
           const SizedBox(height: 2),
           const Text(
-            'Kendi yt-dlp proxy\'niz (melody-proxy). Boşsa Invidious/InnerTube kullanılır.',
+            'Kendi yt-dlp proxy\'niz (melody-proxy). Boşsa Invidious/InnerTube kullanılır. '
+            'Mobil veri + İndirme dahil her ağdan çalışması için genel adresi girin: '
+            'http://PUBLIC_IP:8800 (yönlendiricide TCP 8800 açık olmalı).',
             style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
           ),
           const SizedBox(height: 8),

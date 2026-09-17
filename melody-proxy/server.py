@@ -144,6 +144,37 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # sessiz log
         pass
 
+    def _relay(self, video_id, fmt):
+        """yt-dlp akışını sunucu üzerinden doğrudan ileter: telefon
+        googlevideo CDN'ine hiç bağlanmaz — operatör engelini aşar."""
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        proc = subprocess.Popen(
+            [
+                YTDLP, "--no-warnings", "--no-playlist", "-q",
+                "-f", fmt, "-o", "-", "--buffer-size", "2M", url,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=0,
+        )
+        self.send_response(200)
+        self.send_header(
+            "Content-Type", "audio/webm" if fmt == "251" else "audio/mp4")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        try:
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            proc.kill()
+
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode()
         self.send_response(code)
@@ -188,6 +219,16 @@ class Handler(BaseHTTPRequestHandler):
                 if not vid or not re.fullmatch(r"[A-Za-z0-9_-]{6,15}", vid):
                     return self._err(400, "geçersiz video_id")
                 return self._send(200, {"ok": True, **solve_stream(vid)})
+
+            if u.path == "/api/v1/relay":
+                vid = (q.get("video_id") or [""])[0]
+                if not vid or not re.fullmatch(r"[A-Za-z0-9_-]{6,15}", vid):
+                    return self._err(400, "geçersiz video_id")
+                fmt = (q.get("format") or ["140"])[0]
+                if fmt not in ("139", "140", "251"):
+                    fmt = "140"
+                self._relay(vid, fmt)
+                return
 
             if u.path == "/api/v1/stream_direct":
                 vid = (q.get("video_id") or [""])[0]
