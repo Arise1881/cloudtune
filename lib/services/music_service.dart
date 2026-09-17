@@ -143,6 +143,8 @@ class MusicService {
     Future<void> addBase(String? base) async {
       if (base == null || base.isEmpty) return;
       final b = base.replaceAll(RegExp(r'/$'), '');
+      // Hızlı sağlık kontrolü: tünel/proxy erişilebilir mi?
+      if (!await _baseReachable(b)) return;
       // En hızlı yol: sunucunun kendi akışını direkt dene. stream URL
       // çözümünü beklemek mobilde 5-10sn kaybettirirdi; üç format zinciri
       // her şarkıda en az birinin olmasını garanti eder.
@@ -157,6 +159,19 @@ class MusicService {
     await addBase(await _autoTunnelUrl());
     await addBase(proxyUrl);
     return urls;
+  }
+
+  Future<bool> _baseReachable(String base) async {
+    try {
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+      final req = await client.getUrl(Uri.parse('$base/api/v1/health')).timeout(const Duration(seconds: 4));
+      req.headers.set(HttpHeaders.userAgentHeader, _webUa);
+      final res = await req.close().timeout(const Duration(seconds: 4));
+      await res.drain();
+      return res.statusCode == HttpStatus.ok;
+    } catch (_) {
+      return false;
+    } finally {}
   }
 
   /// Genel tünel adresi (trycloudflare) — sunucu bunu melody-dist/tunnel.txt
