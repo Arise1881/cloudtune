@@ -139,17 +139,63 @@ class MusicService {
 
   /// Proxy üzerinden po_token destekli ses akış URL'leri. Dönmezse boş liste.
   Future<List<String>> _proxyStreamUrls(String videoId) async {
-    final base = proxyUrl;
-    if (base == null || base.isEmpty) return const [];
-    final b = base.replaceAll(RegExp(r'/$'), '');
-    // En hızlı yol: sunucunun kendi akışını direkt dene. stream URL
-    // çözümünü beklemek mobilde 5-10sn kaybettirirdi; üç format zinciri
-    // her şarkıda en az birinin olmasını garanti eder.
-    return [
-      '$b/api/v1/relay?video_id=$videoId&format=140',
-      '$b/api/v1/relay?video_id=$videoId&format=139',
-      '$b/api/v1/relay?video_id=$videoId&format=251',
-    ];
+    final urls = <String>[];
+    Future<void> addBase(String? base) async {
+      if (base == null || base.isEmpty) return;
+      final b = base.replaceAll(RegExp(r'/$'), '');
+      // En hızlı yol: sunucunun kendi akışını direkt dene. stream URL
+      // çözümünü beklemek mobilde 5-10sn kaybettirirdi; üç format zinciri
+      // her şarkıda en az birinin olmasını garanti eder.
+      urls.add('$b/api/v1/relay?video_id=$videoId&format=140');
+      urls.add('$b/api/v1/relay?video_id=$videoId&format=139');
+      urls.add('$b/api/v1/relay?video_id=$videoId&format=251');
+    }
+
+    // Önce otomatik bulunan genel tünel (mobil verideki asıl kurtarıcı),
+    // sonra kayıtlı LAN proxy'si. Yedek zincir ürettiği için adaylar
+    // sırayla denenir: bir tanesi çalışırsa dinleyici döner.
+    await addBase(await _autoTunnelUrl());
+    await addBase(proxyUrl);
+    return urls;
+  }
+
+  /// Genel tünel adresi (trycloudflare) — sunucu bunu melody-dist/tunnel.txt
+  /// dosyasında yayınlar; uygulama her ~6dk da bir tazeler. Böylece
+  /// kullanıcının eli hiç değmez: mobil veride akış otomatik başlar.
+  static String? _tunnelUrl;
+  static DateTime? _tunnelFetchedAt;
+  static bool _tunnelFetching = false;
+
+  static Future<String?> _autoTunnelUrl() async {
+    final now = DateTime.now();
+    if (_tunnelUrl != null &&
+        _tunnelFetchedAt != null &&
+        now.difference(_tunnelFetchedAt!) < const Duration(minutes: 6)) {
+      return _tunnelUrl;
+    }
+    if (_tunnelFetching) return _tunnelUrl;
+    _tunnelFetching = true;
+    try {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 6);
+      try {
+        final req = await client.getUrl(Uri.parse(
+            'https://raw.githubusercontent.com/Arise1881/melody-dist/main/tunnel.txt'));
+        final res = await req.close().timeout(const Duration(seconds: 8));
+        _tunnelFetchedAt = now;
+        if (res.statusCode == HttpStatus.ok) {
+          final body = await res.transform(utf8.decoder).join();
+          final u = body.trim();
+          if (u.startsWith('https://') || u.startsWith('http://')) {
+            _tunnelUrl = u;
+          }
+        }
+      } finally {
+        client.close(force: true);
+      }
+    } catch (_) {}
+    _tunnelFetching = false;
+    return _tunnelUrl;
   }
 
   Future<T> _bounded<T>(Future<T> Function() task) {
@@ -527,7 +573,16 @@ class MusicService {
     if (urls.isEmpty) {
       throw StreamUnavailableException('Akış çözülemedi');
     }
-    return urls;
+
+    // Türk mobil operatörleri googlevideo CDN bağlantısını IP düzeyinde
+    // kısıtlayabiliyor. Doğrudan CDN adayları her zaman en sona; relay /
+    // sunucu üzerinden giden adaylar (proxy, tünel, redirect) başa gelir.
+    final inline = <String>[];
+    final cdn = <String>[];
+    for (final u in urls) {
+      (u.contains('googlevideo') ? cdn : inline).add(u);
+    }
+    return [...inline, ...cdn];
   }
 
   /// Invidious `/latest_version` — her örnekte akış var mı diye HEAD atar,
