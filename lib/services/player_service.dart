@@ -109,7 +109,6 @@ class PlayerService extends ChangeNotifier {
 
   bool _isLoading = false;
   String? _lastError;
-  int _skipStreak = 0;
   bool get isLoading => _isLoading;
   String? get lastError => _lastError;
 
@@ -178,7 +177,6 @@ class PlayerService extends ChangeNotifier {
 
     _isLoading = true;
     _lastError = null;
-    _skipStreak = 0;
     notifyListeners();
 
     while (true) {
@@ -196,16 +194,11 @@ class PlayerService extends ChangeNotifier {
         _saveSession();
         break;
       } catch (e) {
+        // Çalınamayan şarkı SIRADAKİNE ATLANMAZ: kullanıcı hangi şarkıyı
+        // seçtiyse odur; şarkıda kalınır, hata banner'ıyla neden gösterilir.
+        // Manuel "sonraki/türbülans" ile geçilebilir.
         _lastError = e.toString().replaceFirst('Exception: ', '');
-        // En fazla 2 bozuk şarkı atla; sonra dur.
-        if (_skipStreak < 2 && _index < q.length - 1) {
-          _skipStreak++;
-          _index++;
-          library.pushRecent(q[_index]);
-          notifyListeners();
-        } else {
-          break;
-        }
+        break;
       }
     }
 

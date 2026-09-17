@@ -62,12 +62,49 @@ class MusicService {
   static const String _proxyKey = 'stream_proxy';
 
   /// Kayıtlı proxy adresini hafızadan yükler (uygulama açılışında çağrılır).
+  /// Hiç kaydedilmemişse LAN'daki bilinen proxy hostlarını otomatik arar.
   static Future<void> loadPrefs() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final v = prefs.getString(_proxyKey)?.trim();
-      proxyUrl = (v == null || v.isEmpty) ? null : _stripTrailingSlash(v);
+      final saved =
+          (v == null || v.isEmpty) ? null : _stripTrailingSlash(v);
+      proxyUrl = saved;
+      if (saved == null) {
+        proxyUrl = await _autoDiscover();
+        if (proxyUrl != null) {
+          await prefs.setString(_proxyKey, proxyUrl!);
+        }
+      }
     } catch (_) {}
+  }
+
+  /// Ayarlanan proxy bulunamazsa LAN'da bilinen host adlarını dener.
+  static const List<String> _knownProxyHosts = [
+    '192.168.1.102',
+    'melody-proxy.local',
+  ];
+
+  /// LAN proxy'sini sessizce arar; bulursa adresi döner, bulamazsa null.
+  static Future<String?> _autoDiscover() async {
+    for (final host in _knownProxyHosts) {
+      final base = 'http://$host:8800';
+      try {
+        final client = HttpClient()
+          ..connectionTimeout = const Duration(seconds: 2);
+        try {
+          final req = await client
+              .getUrl(Uri.parse('$base/health'))
+              .timeout(const Duration(seconds: 4));
+          final res = await req.close().timeout(const Duration(seconds: 4));
+          await res.drain<void>().timeout(const Duration(seconds: 2));
+          if (res.statusCode == HttpStatus.ok) return base;
+        } finally {
+          client.close(force: true);
+        }
+      } catch (_) {}
+    }
+    return null;
   }
 
   /// Proxy adresini ayarlar ve kalıcı kaydeder. Boş/geçersiz → proxy kapalı.

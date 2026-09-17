@@ -63,6 +63,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                     _topBar(context, player),
                     Expanded(child: _artwork(song)),
                     _titleRow(player, song),
+                    if (player.lastError != null) _errorBanner(player.lastError!),
                     _actionRow(context, player, song),
                     _progressBar(player, song),
                     _controls(player),
@@ -161,6 +162,33 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// Akış/çalma hatası şeridi: çalınamayan şarkıda kullanıcı sorunu görür.
+  Widget _errorBanner(String message) {
+    final msg = message.length > 160 ? '${message.substring(0, 157)}…' : message;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: .45),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline_rounded,
+              color: Color(0xFFFFB74D), size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              msg,
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+            ),
+          ),
+        ],
       ),
     );
   }
