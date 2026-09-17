@@ -144,7 +144,8 @@ class MusicService {
       if (base == null || base.isEmpty) return;
       final b = base.replaceAll(RegExp(r'/$'), '');
       // Hızlı sağlık kontrolü: tünel/proxy erişilebilir mi?
-      if (!await _baseReachable(b)) return;
+      // Geçici olarak her zaman ekle, sağlık kontrolü sorun yaratıyor olabilir
+      // if (!await _baseReachable(b)) return;
       // En hızlı yol: sunucunun kendi akışını direkt dene. stream URL
       // çözümünü beklemek mobilde 5-10sn kaybettirirdi; üç format zinciri
       // her şarkıda en az birinin olmasını garanti eder.
