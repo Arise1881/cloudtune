@@ -76,9 +76,19 @@ cd "$PROJECT"
 
 # DEB paketle
 DEB_DIR="/tmp/opencode/melody-deb"
-rm -rf "$DEB_DIR/usr/share/melody/"*
+mkdir -p "$DEB_DIR/usr/share/melody" "$DEB_DIR/DEBIAN"
+rm -rf "$DEB_DIR/usr/share/melody/"* 2>/dev/null || true
 cp -a build/linux/x64/release/bundle/. "$DEB_DIR/usr/share/melody/"
-sed -i "s/^Version:.*/Version: $NEW_VER/" "$DEB_DIR/DEBIAN/control"
+cat > "$DEB_DIR/DEBIAN/control" <<EOF
+Package: melody
+Version: $NEW_VER
+Section: sound
+Priority: optional
+Architecture: amd64
+Maintainer: Arise1881 <arise1881@users.noreply.github.com>
+Description: Melody — YouTube müzik çalar (reklamsız)
+ Installed-Size: $(du -sk "$DEB_DIR/usr/share/melody" | cut -f1)
+EOF
 
 # Masaüstü girişi (.desktop) + uygulama ikonu — DE menülerinde görünür
 mkdir -p "$DEB_DIR/usr/share/applications" \
