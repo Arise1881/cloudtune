@@ -167,7 +167,7 @@ Future<void> showSongActions(BuildContext context, Song song) async {
                   if (downloaded) {
                     await downloader.delete(library.downloadedSong(song.id)!);
                   } else {
-                    Navigator.pop(sheetCtx);
+                    // Bottom sheet açık kalır; indirme ilerlemesi gösterilir.
                     await downloadWithToast(context, song);
                   }
                 },
