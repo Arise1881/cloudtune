@@ -10,6 +10,17 @@ import 'artist_screen.dart';
 import 'lyrics_screen.dart';
 import 'now_playing_screen.dart';
 
+/// Şarkı indirir, sonucu bildirimle gösterir. Ekranlar arası ortak kullanım.
+Future<void> downloadWithToast(BuildContext context, Song song) async {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final error = await DownloadManager.instance.download(song);
+  messenger?.showSnackBar(SnackBar(
+    content: Text(error == null
+        ? '"${song.title}" indirildi'
+        : 'İndirme başarısız: $error'),
+  ));
+}
+
 /// Şarkı satırındaki ⋮ menüsünün açtığı aksiyon sayfası.
 Future<void> showSongActions(BuildContext context, Song song) async {
   final library = LibraryStore.instance;
@@ -156,17 +167,8 @@ Future<void> showSongActions(BuildContext context, Song song) async {
                   if (downloaded) {
                     await downloader.delete(library.downloadedSong(song.id)!);
                   } else {
-                    final messenger = ScaffoldMessenger.maybeOf(sheetCtx);
                     Navigator.pop(sheetCtx);
-                    try {
-                      await downloader.download(song);
-                      messenger?.showSnackBar(SnackBar(
-                          content:
-                              Text('"${song.title}" indirildi')));
-                    } catch (_) {
-                      messenger?.showSnackBar(const SnackBar(
-                          content: Text('İndirme başarısız oldu')));
-                    }
+                    await downloadWithToast(context, song);
                   }
                 },
               );

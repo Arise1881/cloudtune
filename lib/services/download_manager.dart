@@ -44,24 +44,46 @@ class DownloadManager extends ChangeNotifier {
   String audioPath(String id) => '${_dir!.path}/$id.m4a';
   String artPath(String id) => '${_dir!.path}/$id.jpg';
 
-  Future<void> download(Song song) async {
-    if (_active.contains(song.id) || library.isDownloaded(song.id)) return;
+  /// Şarkıyı indirir. Başarıda null, başarısızlıkta hata mesajı döner.
+  /// Akışın ilk URL'si çekilemezse sonraki adaylar denenir.
+  Future<String?> download(Song song) async {
+    if (_active.contains(song.id) || library.isDownloaded(song.id)) return null;
     _active.add(song.id);
     _progress[song.id] = 0.0;
     notifyListeners();
 
     try {
       if (_dir == null) await _init();
-      final streamUrl = await music.resolveStreamUrl(song.id);
 
-      // Ses dosyası: akışı parça parça yaz, ilerleme yay.
-      await _downloadFile(streamUrl, audioPath(song.id), (received, total) {
-        if (total > 0) {
-          // İlerlemenin %0..92'si ses dosyasına karşılık gelir.
-          _progress[song.id] = (received / total) * 0.92;
-          notifyListeners();
+      // En iyi akıştan başla; başarısız olursa düşük kalitelilere geç.
+      final candidates = await music.streamUrlCandidates(song.id);
+      if (candidates.isEmpty) {
+        throw StreamUnavailableException('Akış çözülemedi');
+      }
+
+      String? lastErrorText;
+      var ok = false;
+      for (final url in candidates) {
+        try {
+          // Ses dosyası: akışı parça parça yaz, ilerleme yay.
+          await _downloadFile(url, audioPath(song.id), (received, total) {
+            if (total > 0) {
+              // İlerlemenin %0..92'si ses dosyasına karşılık gelir.
+              _progress[song.id] = (received / total) * 0.92;
+              notifyListeners();
+            }
+          });
+          ok = true;
+          break;
+        } catch (e) {
+          lastErrorText = e.toString();
+          try {
+            final f = File(audioPath(song.id));
+            if (await f.exists()) await f.delete();
+          } catch (_) {}
         }
-      });
+      }
+      if (!ok) throw Exception(lastErrorText ?? 'İndirme başarısız');
 
       // Kapak görseli.
       try {
@@ -73,13 +95,15 @@ class DownloadManager extends ChangeNotifier {
 
       library.addDownload(song.copyWith(localPath: audioPath(song.id)));
       _progress[song.id] = 1.0;
+      return null;
     } catch (e) {
       debugPrint('İndirme hatası (${song.title}): $e');
       try {
         final f = File(audioPath(song.id));
         if (await f.exists()) await f.delete();
       } catch (_) {}
-      rethrow;
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      return msg.isEmpty ? 'İndirme başarısız' : msg;
     } finally {
       _active.remove(song.id);
       notifyListeners();

@@ -107,7 +107,7 @@
 | **Android (arm64)** | [Melody.apk indir](https://github.com/Arise1881/melody-dist/releases/download/melody-latest/Melody.apk) · 21 MB |
 | **Android (evrensel)** | [Melody-universal.apk indir](https://github.com/Arise1881/melody-dist/releases/download/melody-latest/Melody-universal.apk) · 59 MB |
 | **iOS** | [AltStore kaynağı ekle](altstore://source?url=https://raw.githubusercontent.com/Arise1881/melody-dist/main/apps.json) veya [ipa](https://github.com/Arise1881/melody-dist/releases/download/melody-latest/Melody.ipa) |
-| **Linux (deb)** | `sudo apt install ./melody_2.2.0_amd64.deb` |
+| **Linux (deb)** | `sudo apt install ./melody_2.2.1_amd64.deb` |
 | **Linux (tar.gz)** | [Melody-linux.tar.gz](https://github.com/Arise1881/melody-dist/releases/download/melody-latest/Melody-linux.tar.gz) |
 | **Windows 11** | Kaynak + GitHub Actions ile derlenir → `Melody-windows.zip` (release) |
 | **Qt/Bağımsız** | `flutter run` (geliştirme) |

@@ -46,6 +46,7 @@ class HomeScreen extends StatelessWidget {
                 child: _TrendSection(
                   title: entry.key,
                   query: entry.value,
+                  staggerMs: 250,
                 ),
               ),
             ],
@@ -210,10 +211,17 @@ class HomeScreen extends StatelessWidget {
 
 /// Küratörlü bölüm: sorguyla şarkıları çeker, yatay kart listesi gösterir.
 class _TrendSection extends StatefulWidget {
-  const _TrendSection({required this.title, required this.query});
+  const _TrendSection({
+    required this.title,
+    required this.query,
+    this.staggerMs = 0,
+  });
 
   final String title;
   final String query;
+
+  /// Aynı anda çok sorgu gitmesin — bölümler sırayla yüklenir.
+  final int staggerMs;
 
   @override
   State<_TrendSection> createState() => _TrendSectionState();
@@ -225,7 +233,21 @@ class _TrendSectionState extends State<_TrendSection> {
   @override
   void initState() {
     super.initState();
-    _future = MusicService.instance.search(widget.query, limit: 10);
+    _future = _delayedLoad();
+  }
+
+  Future<List<Song>> _delayedLoad() async {
+    if (widget.staggerMs > 0) {
+      await Future.delayed(Duration(milliseconds: widget.staggerMs));
+    }
+    if (!mounted) return const [];
+    return MusicService.instance.search(widget.query, limit: 12);
+  }
+
+  void _retry() {
+    setState(() {
+      _future = _delayedLoad();
+    });
   }
 
   @override
@@ -277,9 +299,28 @@ class _TrendSectionState extends State<_TrendSection> {
                 ConnectionState.waiting =>
                   const Center(child: CircularProgressIndicator()),
                 ConnectionState.done when snapshot.hasError => Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Bölüm yüklenemedi',
+                          style: TextStyle(color: AppColors.textSecondary),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton(
+                          onPressed: _retry,
+                          style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: AppColors.accent)),
+                          child: const Text('Tekrar Dene',
+                              style: TextStyle(color: AppColors.accent)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ConnectionState.done when songs.isEmpty => const Center(
                     child: Text(
-                      'Bölüm yüklenemedi',
-                      style: const TextStyle(color: AppColors.textSecondary),
+                      'Şarkı bulunamadı',
+                      style: TextStyle(color: AppColors.textSecondary),
                     ),
                   ),
                 _ => ListView.separated(
@@ -290,9 +331,8 @@ class _TrendSectionState extends State<_TrendSection> {
                     itemBuilder: (context, i) => _TrendCard(
                       song: songs[i],
                       onTap: () {
-                        context
-                            .read<PlayerService>()
-                            .playForever(songs, startIndex: i);
+                        final player = context.read<PlayerService>();
+                        player.playForever(songs, startIndex: i);
                         Navigator.push(context, NowPlayingScreen.route(context));
                       },
                     ),

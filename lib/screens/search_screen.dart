@@ -364,7 +364,7 @@ class _SearchScreenState extends State<SearchScreen> {
             if (isDownloaded) {
               _showDownloadedSnack();
             } else if (!downloads.isDownloading(song.id)) {
-              downloads.download(song).catchError((_) {});
+              downloadWithToast(context, song);
             }
           },
           onTap: () async {

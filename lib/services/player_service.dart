@@ -109,6 +109,7 @@ class PlayerService extends ChangeNotifier {
 
   bool _isLoading = false;
   String? _lastError;
+  int _skipStreak = 0;
   bool get isLoading => _isLoading;
   String? get lastError => _lastError;
 
@@ -170,33 +171,46 @@ class PlayerService extends ChangeNotifier {
   /// Her çağrıda o anki şarkı + crossfade için gerekli tek kaynak kurulur;
   /// geçişler `next()` ile manuel yönetilir (autoplay + crossfade için).
   /// [initialSource] veriliyorsa, stream URL çözme adımı atlanır ve oynatma hemen başlar.
+  /// Çözülemez/çalınamaz şarkılar sessizce atlanır; kuyruk kesintisiz devam eder.
   Future<void> _buildAndPlay({String? initialSource}) async {
     final songs = effectiveQueue;
     if (songs.isEmpty || _index < 0 || _index >= songs.length) return;
 
     _isLoading = true;
     _lastError = null;
+    _skipStreak = 0;
     notifyListeners();
 
-    try {
-      final source = initialSource != null
-          ? await _buildSourceFromString(initialSource, songs[_index])
-          : await _buildSource(songs[_index]);
-      await _player.setAudioSource(source, initialPosition: Duration.zero,
-          preload: true);
-      await _player.setSpeed(_speed);
-      _applyEqualizer();
-      await _player.play();
-      _saveSession();
-    } catch (e) {
-      _lastError = e.toString().replaceFirst('Exception: ', '');
-      _isLoading = false;
-      notifyListeners();
-      rethrow;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
+    while (true) {
+      final q = effectiveQueue;
+      if (_index < 0 || _index >= q.length) break;
+      try {
+        final source = initialSource != null
+            ? await _buildSourceFromString(initialSource, q[_index])
+            : await _buildSource(q[_index]);
+        await _player.setAudioSource(source,
+            initialPosition: Duration.zero, preload: true);
+        await _player.setSpeed(_speed);
+        _applyEqualizer();
+        await _player.play();
+        _saveSession();
+        break;
+      } catch (e) {
+        _lastError = e.toString().replaceFirst('Exception: ', '');
+        // En fazla 2 bozuk şarkı atla; sonra dur.
+        if (_skipStreak < 2 && _index < q.length - 1) {
+          _skipStreak++;
+          _index++;
+          library.pushRecent(q[_index]);
+          notifyListeners();
+        } else {
+          break;
+        }
+      }
     }
+
+    _isLoading = false;
+    notifyListeners();
   }
 
   /// Verilen stream URL'ından doğrudan bir AudioSource oluşturur (cache'lenmiş URL için).

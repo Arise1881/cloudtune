@@ -160,7 +160,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
                           : const NoDownloadState()),
                   onDownloadTap: () {
                     if (!isDownloaded && !downloads.isDownloading(song.id)) {
-                      downloads.download(song).catchError((_) {});
+                      downloadWithToast(context, song);
                     }
                   },
                   onTap: () {

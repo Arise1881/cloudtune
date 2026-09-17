@@ -6,7 +6,7 @@ class ThemeService extends ChangeNotifier {
   ThemeService._();
 
   static final ThemeService instance = ThemeService._();
-  static const _kMode = 'theme_mode';
+  static const _kMode = 'theme_mode_v2';
   static const _kAccent = 'theme_accent';
   static const _kEmoji = 'theme_emoji';
 
