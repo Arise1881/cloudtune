@@ -170,7 +170,7 @@ class MusicService {
     final now = DateTime.now();
     if (_tunnelUrl != null &&
         _tunnelFetchedAt != null &&
-        now.difference(_tunnelFetchedAt!) < const Duration(minutes: 6)) {
+        now.difference(_tunnelFetchedAt!) < const Duration(seconds: 60)) {
       return _tunnelUrl;
     }
     if (_tunnelFetching) return _tunnelUrl;
