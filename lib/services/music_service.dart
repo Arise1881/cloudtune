@@ -42,6 +42,10 @@ class MusicService {
     'https://inv.riverside.rocks',
     'https://invidious.myoxy.de',
     'https://invidious.projectsegfau.lt',
+    'https://invidious.osi.kr',
+    'https://invidious.fdn.fr',
+    'https://invidious.tiekoetter.com',
+    'https://invidious.slipfox.xyz',
   ];
 
   /// Innertube player deneme sırası: bazı videolar için bazı istemciler
