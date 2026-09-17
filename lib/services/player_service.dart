@@ -728,7 +728,13 @@ throw StreamUnavailableException(
     }
 
     try {
-      if (position > Duration.zero) await _player.seek(position);
+      // Senkron seek'leri zarif yap: RTT telafili hedefle aramız 250ms'den
+      // azsa atla (nota seviyesinde duyulmaz, sürekli seek takılmasını önler).
+      final cur = _player.position;
+      if (position > Duration.zero &&
+          (cur - position).abs() > const Duration(milliseconds: 250)) {
+        await _player.seek(position);
+      }
     } catch (_) {}
 
     if (playing && !_player.playing) {

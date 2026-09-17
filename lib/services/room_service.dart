@@ -359,6 +359,9 @@ class RoomService extends ChangeNotifier {
       'queue': player.queue.map((s) => s.toJson()).toList(),
       'idx': player.index,
       'pos': player.position.inMilliseconds,
+      // Gönderim anı (epoch ms): alıcı RTT gecikmesini telafi edip
+      // pos'a ekler — aksi halde üye hep broker gecikmesi kadar arkada kalır.
+      'ts': DateTime.now().millisecondsSinceEpoch,
       'playing': player.isPlaying,
       // Sahibin çözdüğü akış URL'si: üyeye ilet — üye akış çözemezse bile ses.
       'stream': player.currentStreamUrl,
@@ -367,7 +370,9 @@ class RoomService extends ChangeNotifier {
 
   void _startHeartbeat() {
     _heartbeat?.cancel();
-    _heartbeat = Timer.periodic(const Duration(seconds: 6), (_) {
+    // Sık yayın: üyeler akış başlangıcındaki tampon farklarını (+RTT) 2sn
+    // içinde kapatır; 6sn'de bir gelen state arkada kalma hissini büyütüyordu.
+    _heartbeat = Timer.periodic(const Duration(seconds: 2), (_) {
       publishFromPlayer();
     });
   }
@@ -446,11 +451,23 @@ class RoomService extends ChangeNotifier {
     } catch (_) {}
     if (song == null) return;
 
+    // RTT telafisi: 'pos' gönderim anındaki konum. Mesaj transit süresince
+    // sahip ilerlediği için: hedef = pos + (varış - gönderim). Telefonlar
+    // NTP ile ±100ms hassastır; saatsiz/esdişmiş cihazlarda uç değerler
+    // clamp ile sınırlanır (30sn üstü asla düzeltme yapmasın).
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final sentAt = (msg['ts'] as num?)?.toInt();
+    var rawPos = (msg['pos'] as num?)?.toInt() ?? 0;
+    if (sentAt != null) {
+      final elapsed = (now - sentAt).clamp(0, 30000);
+      rawPos += elapsed;
+    }
+
     _applyingRemote = true;
     PlayerService.instance.applyRoomState(
       songs: queue.isNotEmpty ? queue : [song],
       index: idx,
-      position: Duration(milliseconds: (msg['pos'] as num?)?.toInt() ?? 0),
+      position: Duration(milliseconds: rawPos),
       playing: (msg['playing'] as bool?) ?? false,
       stream: (msg['stream'] as String?)?.isNotEmpty == true
           ? (msg['stream'] as String)
