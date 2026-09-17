@@ -201,15 +201,25 @@ class MusicService {
       final client = HttpClient()
         ..connectionTimeout = const Duration(seconds: 6);
       try {
+        // raw.githubusercontent.com eski içeriği cache'liyor; GitHub API
+        // her zaman güncel içeriği döndürür (base64). Cache bypass için
+        // timestamp parametresi de eklenir.
+        final ts = DateTime.now().millisecondsSinceEpoch;
         final req = await client.getUrl(Uri.parse(
-            'https://raw.githubusercontent.com/Arise1881/melody-dist/main/tunnel.txt'));
+            'https://api.github.com/repos/Arise1881/melody-dist/contents/tunnel.txt?ts=$ts'));
+        req.headers.set(HttpHeaders.userAgentHeader, _webUa);
+        req.headers.set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
         final res = await req.close().timeout(const Duration(seconds: 8));
         _tunnelFetchedAt = now;
         if (res.statusCode == HttpStatus.ok) {
           final body = await res.transform(utf8.decoder).join();
-          final u = body.trim();
-          if (u.startsWith('https://') || u.startsWith('http://')) {
-            _tunnelUrl = u;
+          final decoded = jsonDecode(body);
+          final b64 = (decoded as Map<String, dynamic>)['content'] as String?;
+          if (b64 != null) {
+            final u = utf8.decode(base64.decode(b64.replaceAll('\n', ''))).trim();
+            if (u.startsWith('https://') || u.startsWith('http://')) {
+              _tunnelUrl = u;
+            }
           }
         }
       } finally {
