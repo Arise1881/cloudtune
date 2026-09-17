@@ -162,18 +162,6 @@ class MusicService {
     await addBase(proxyUrl);
     return urls;
   }
-    try {
-      final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
-      final req = await client.getUrl(Uri.parse('$base/')).timeout(const Duration(seconds: 4));
-      req.headers.set(HttpHeaders.userAgentHeader, _webUa);
-      final res = await req.close().timeout(const Duration(seconds: 4));
-      await res.drain();
-      // Herhangi bir HTTP yanıtı gelmesi yeterli, 404 de erişilebilir demektir
-      return res.statusCode >= 200 && res.statusCode < 600;
-    } catch (_) {
-      return false;
-    }
-  }
 
   /// Genel tünel adresi (trycloudflare) — sunucu bunu melody-dist/tunnel.txt
   /// dosyasında yayınlar; uygulama her ~6dk da bir tazeler. Böylece
