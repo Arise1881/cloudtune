@@ -177,12 +177,12 @@ class DownloadManager extends ChangeNotifier {
     while (true) {
       attempt++;
       final client = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 30);
+      client.connectionTimeout = const Duration(seconds: 60);
       try {
         final request = await client.getUrl(Uri.parse(url));
         request.headers.set(HttpHeaders.userAgentHeader,
             'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36');
-        final response = await request.close().timeout(const Duration(seconds: 30));
+        final response = await request.close().timeout(const Duration(seconds: 60));
         if (response.statusCode != HttpStatus.ok) {
           throw HttpException('HTTP ${response.statusCode}');
         }
@@ -190,7 +190,7 @@ class DownloadManager extends ChangeNotifier {
         var received = 0;
         final sink = File(savePath).openWrite();
         try {
-          await for (final chunk in response.timeout(const Duration(seconds: 30))) {
+          await for (final chunk in response.timeout(const Duration(seconds: 60))) {
             received += chunk.length;
             sink.add(chunk);
             onProgress(received, total);
