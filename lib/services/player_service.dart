@@ -183,6 +183,9 @@ class PlayerService extends ChangeNotifier {
       final q = effectiveQueue;
       if (_index < 0 || _index >= q.length) break;
       try {
+        // Eski kaynağı tamamen kaldır: geçiş başarısız olursa eski şarkının
+        // sesi sürpriz olarak devam etmesin; hata banner'ıyla dursun.
+        await _player.stop();
         final source = initialSource != null
             ? await _buildSourceFromString(initialSource, q[_index])
             : await _buildSource(q[_index]);
