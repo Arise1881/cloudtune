@@ -198,6 +198,19 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                 size: 26),
             onPressed: () => library.toggleFavorite(song),
           ),
+          IconButton(
+            icon: Icon(
+              library.isDownloaded(song.id)
+                  ? Icons.download_done
+                  : Icons.download_outlined,
+              color: library.isDownloaded(song.id)
+                  ? AppColors.accent
+                  : AppColors.textSecondary,
+              size: 26,
+            ),
+            tooltip: library.isDownloaded(song.id) ? 'İndirilenlerde' : 'İndir',
+            onPressed: () => downloadWithToast(context, song),
+          ),
         ],
       ),
     );

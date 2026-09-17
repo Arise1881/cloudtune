@@ -6,15 +6,18 @@ import 'package:provider/provider.dart';
 import '../constants.dart';
 import '../models/song.dart';
 import '../services/connectivity_service.dart';
+import '../services/download_manager.dart';
 import '../services/library_store.dart';
 import '../services/music_service.dart';
 import '../services/player_service.dart';
 import '../services/room_service.dart';
 import '../widgets/artwork.dart';
+import '../widgets/song_tile.dart';
 import 'library_screen.dart';
 import 'now_playing_screen.dart';
 import 'playlist_screen.dart';
 import 'room_screen.dart';
+import 'song_actions.dart';
 
 /// Ana sayfa: selamlama, hızlı erişim kutucukları ve küratörlü bölümler.
 class HomeScreen extends StatelessWidget {
@@ -346,24 +349,69 @@ class _TrendSectionState extends State<_TrendSection> {
   }
 }
 
-class _TrendCard extends StatelessWidget {
+class _TrendCard extends StatefulWidget {
   const _TrendCard({required this.song, required this.onTap});
 
   final Song song;
   final VoidCallback onTap;
 
   @override
+  State<_TrendCard> createState() => _TrendCardState();
+}
+
+class _TrendCardState extends State<_TrendCard> {
+  @override
+  void initState() {
+    super.initState();
+    DownloadManager.instance.addListener(_onDownloadChanged);
+  }
+
+  @override
+  void dispose() {
+    DownloadManager.instance.removeListener(_onDownloadChanged);
+    super.dispose();
+  }
+
+  void _onDownloadChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final song = widget.song;
+    final library = context.read<LibraryStore>();
+    final downloadState = downloadStateFor(
+        song, library, DownloadManager.instance);
+
     return GestureDetector(
-      onTap: onTap,
+      onTap: widget.onTap,
       child: SizedBox(
         width: 140,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Artwork(url: song.thumbnailUrl, size: 140, radius: 10),
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Artwork(url: song.thumbnailUrl, size: 140, radius: 10),
+                ),
+                Positioned(
+                  right: 4,
+                  top: 4,
+                  child: IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints:
+                        const BoxConstraints.tightFor(width: 34, height: 34),
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.black54,
+                      padding: EdgeInsets.zero,
+                    ),
+                    onPressed: () => downloadWithToast(context, song),
+                    icon: _downloadIcon(downloadState),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             Text(
@@ -390,6 +438,23 @@ class _TrendCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _downloadIcon(dynamic downloadState) {
+    if (downloadState is bool && downloadState == true) {
+      return const Icon(Icons.download_done,
+          size: 18, color: AppColors.accentBright);
+    }
+    if (downloadState is double) {
+      return SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(
+            value: downloadState, strokeWidth: 2.5),
+      );
+    }
+    return const Icon(Icons.download_outlined,
+        size: 18, color: AppColors.accentBright);
   }
 }
 

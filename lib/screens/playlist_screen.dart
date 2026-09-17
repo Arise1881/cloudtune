@@ -7,6 +7,7 @@ import '../services/library_store.dart';
 import '../services/player_service.dart';
 import '../widgets/artwork.dart';
 import 'now_playing_screen.dart';
+import 'song_actions.dart';
 
 /// Bir bölümün/çalma listesinin şarkı listesi ekranı.
 class PlaylistScreen extends StatelessWidget {
@@ -145,14 +146,31 @@ class PlaylistScreen extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: AppColors.textSecondary)),
-                  trailing: playlistName != null
-                      ? IconButton(
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          library.isDownloaded(song.id)
+                              ? Icons.download_done
+                              : Icons.download_outlined,
+                          size: 20,
+                          color: AppColors.textSecondary,
+                        ),
+                        tooltip: library.isDownloaded(song.id)
+                            ? 'İndirilenlerde'
+                            : 'İndir',
+                        onPressed: () => downloadWithToast(context, song),
+                      ),
+                      if (playlistName != null)
+                        IconButton(
                           icon: const Icon(Icons.remove_circle_outline,
                               size: 20, color: AppColors.textSecondary),
                           onPressed: () => library
                               .removeFromPlaylist(playlistName!, song.id),
-                        )
-                      : null,
+                        ),
+                    ],
+                  ),
                   onTap: () async {
                     try {
                       await player.playSmart(effective, i);

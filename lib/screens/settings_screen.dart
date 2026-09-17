@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -5,6 +7,7 @@ import '../constants.dart';
 import '../services/connectivity_service.dart';
 import '../services/download_manager.dart';
 import '../services/equalizer_service.dart';
+import '../services/music_service.dart';
 import '../services/player_service.dart';
 import '../services/theme_service.dart';
 import 'equalizer_screen.dart';
@@ -126,6 +129,7 @@ class SettingsScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             _sectionTitle('Bağlantı'),
+            const _StreamProxyTile(),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: _toggleTile(
@@ -355,6 +359,132 @@ class DropdownItem {
   final String label;
   final int index;
   const DropdownItem(this.label, this.index);
+}
+
+/// Kendi yt-dlp akış sunucusu (melody-proxy) ayarı.
+class _StreamProxyTile extends StatefulWidget {
+  const _StreamProxyTile();
+
+  @override
+  State<_StreamProxyTile> createState() => _StreamProxyTileState();
+}
+
+class _StreamProxyTileState extends State<_StreamProxyTile> {
+  late final TextEditingController _controller;
+  String _status = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: MusicService.proxyUrl ?? '');
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  String get _base => _controller.text.trim().replaceAll(RegExp(r'/+$'), '');
+
+  Future<void> _save() async {
+    await MusicService.setProxy(_base.isEmpty ? null : _base);
+    if (!mounted) return;
+    setState(() => _status = '');
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(MusicService.proxyUrl == null
+          ? 'Akış sunucusu kapatıldı — varsayılan kaynaklar kullanılacak'
+          : 'Akış sunucusu kaydedildi'),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
+  Future<void> _test() async {
+    if (_base.isEmpty) return;
+    setState(() => _status = 'Denetleniyor…');
+    try {
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+      try {
+        final req = await client.getUrl(Uri.parse('$_base/health'));
+        final res = await req.close().timeout(const Duration(seconds: 6));
+        await res.drain<void>().timeout(const Duration(seconds: 4));
+        if (!mounted) return;
+        setState(() => _status =
+            res.statusCode == 200 ? '✓ Sunucu erişilebilir' : '✗ Sunucu hatası ${res.statusCode}');
+      } finally {
+        client.close(force: true);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _status = '✗ Erişilemedi (adres/port hatalı mı?)');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Akış Sunucusu',
+              style: TextStyle(color: AppColors.textPrimary)),
+          const SizedBox(height: 2),
+          const Text(
+            'Kendi yt-dlp proxy\'niz (melody-proxy). Boşsa Invidious/InnerTube kullanılır.',
+            style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _controller,
+                  keyboardType: TextInputType.url,
+                  autocorrect: false,
+                  decoration: InputDecoration(
+                    hintText: 'http://192.168.1.10:8800',
+                    hintStyle: const TextStyle(
+                        color: AppColors.textSecondary, fontSize: 13),
+                    isDense: true,
+                    filled: true,
+                    fillColor: AppColors.card,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 10),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                tooltip: 'Denetle',
+                onPressed: _test,
+                color: AppColors.accent,
+                icon: const Icon(Icons.network_check),
+              ),
+              IconButton(
+                tooltip: 'Kaydet',
+                onPressed: _save,
+                color: AppColors.accent,
+                icon: const Icon(Icons.check),
+              ),
+            ],
+          ),
+          if (_status.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(_status,
+                  style: const TextStyle(
+                      color: AppColors.textSecondary, fontSize: 12)),
+            ),
+          const Divider(height: 12, color: Color(0x1FFFFFFF)),
+        ],
+      ),
+    );
+  }
 }
 
 /// Ses kalitesi seçenekleri (etiketsiz değer eşlemesi).

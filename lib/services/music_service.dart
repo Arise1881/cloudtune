@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import '../models/search_content.dart';
@@ -31,11 +32,12 @@ class MusicService {
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
   /// Halka açık Invidious örnekleri — biri kapanırsa diğeri kullanılır.
+  /// f5.si en güvenilir (ölçüldü: diğerleri sık yanıt vermiyor).
   static const List<String> _invidiousInstances = [
+    'https://invidious.f5.si',
     'https://inv.nadeko.net',
     'https://invidious.nerdvpn.de',
     'https://yewtu.be',
-    'https://invidious.f5.si',
     'https://invidious.jing.rocks',
     'https://invidious.privacyredirect.com',
   ];
@@ -51,6 +53,56 @@ class MusicService {
   ];
 
   final YoutubeExplode _yt = YoutubeExplode();
+
+  /// Ayarlanmış akış sunucusu (proxy) taban adresi, ör. http://192.168.1.10:8800.
+  /// YouTube 2025 sonrası tüm akışları po_token ile koruduğu için, kullanıcı
+  /// kendi yt-dlp proxy'sini (melody-proxy/) buraya yazar. Boşsa yalnızca
+  /// Invidious/InnerTube zinciri kullanılır.
+  static String? proxyUrl;
+  static const String _proxyKey = 'stream_proxy';
+
+  /// Kayıtlı proxy adresini hafızadan yükler (uygulama açılışında çağrılır).
+  static Future<void> loadPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final v = prefs.getString(_proxyKey)?.trim();
+      proxyUrl = (v == null || v.isEmpty) ? null : _stripTrailingSlash(v);
+    } catch (_) {}
+  }
+
+  /// Proxy adresini ayarlar ve kalıcı kaydeder. Boş/geçersiz → proxy kapalı.
+  static Future<void> setProxy(String? url) async {
+    final v = url?.trim() ?? '';
+    proxyUrl = v.isEmpty ? null : _stripTrailingSlash(v);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (proxyUrl == null) {
+        await prefs.remove(_proxyKey);
+      } else {
+        await prefs.setString(_proxyKey, proxyUrl!);
+      }
+    } catch (_) {}
+  }
+
+  static String _stripTrailingSlash(String v) =>
+      v.replaceAll(RegExp(r'/+$'), '');
+
+  /// Proxy üzerinden po_token destekli ses akış URL'leri. Dönmezse boş liste.
+  Future<List<String>> _proxyStreamUrls(String videoId) async {
+    final base = proxyUrl;
+    if (base == null || base.isEmpty) return const [];
+    final data =
+        await _getJson('$base/api/v1/stream?video_id=$videoId',
+            timeout: const Duration(seconds: 20));
+    if (data is! Map || data['urls'] is! List) return const [];
+    final urls = <String>[];
+    for (final u in data['urls'] as List) {
+      if (u is Map && u['url'] is String && (u['url'] as String).isNotEmpty) {
+        urls.add(u['url'] as String);
+      }
+    }
+    return urls;
+  }
 
   Future<T> _bounded<T>(Future<T> Function() task) {
     return task().timeout(_timeout, onTimeout: () {
@@ -157,6 +209,7 @@ class MusicService {
 
   // ─── Arama ───
 
+  /// Kapak: her zaman resmi YouTube CDN'i (invidious kapakları kararsız).
   String _thumbFallback(String videoId) =>
       'https://i.ytimg.com/vi/$videoId/hqdefault.jpg';
 
@@ -170,9 +223,7 @@ class MusicService {
       id: id,
       title: title,
       artist: author,
-      thumbnailUrl: (thumbnail == null || thumbnail.isEmpty)
-          ? _thumbFallback(id)
-          : thumbnail,
+      thumbnailUrl: _thumbFallback(id),
       durationMs: durationMs,
     );
   }
@@ -201,6 +252,37 @@ class MusicService {
   /// Tek bozuk sonuç listeyi çökertmez.
   Future<List<Song>> search(String query, {int limit = 25}) async {
     return _bounded(() async {
+      // 0) Akış sunucusu (proxy) araması: yt-dlp ytsearch, öncelikli.
+      final base = proxyUrl;
+      if (base != null && base.isNotEmpty) {
+        try {
+          final data = await _getJson(
+            '$base/api/v1/search?q=${Uri.encodeQueryComponent(query)}'
+            '&limit=$limit',
+            timeout: const Duration(seconds: 15),
+          );
+          if (data is Map && data['songs'] is List) {
+            final songs = <Song>[];
+            for (final it in data['songs'] as List) {
+              if (it is! Map) continue;
+              final id = it['videoId'];
+              if (id is! String || id.isEmpty) continue;
+              final secs = it['duration'] as num?;
+              songs.add(Song(
+                id: id,
+                title: (it['title'] as String?) ?? query,
+                artist: (it['channel'] as String?) ?? '',
+                durationMs:
+                    secs == null ? 0 : Duration(seconds: secs.toInt()).inMilliseconds,
+                thumbnailUrl: (it['thumbnail'] as String?) ?? '',
+              ));
+              if (songs.length >= limit) break;
+            }
+            if (songs.isNotEmpty) return songs;
+          }
+        } catch (_) {}
+      }
+
       // 1) Invidious arama (type=video — yalnızca şarkı)
       try {
         final data = await _invidious(
@@ -345,15 +427,29 @@ class MusicService {
   // ─── Akış URL'leri ───
 
   /// Video için denenebilir ses akış URL'leri (en iyi önce).
-  /// InnerTube + Invidious + youtube_explode tümü denenir; reklamsız
-  /// doğrudan googlevideo/invidious akışlarıdır.
+  /// 1) Invidious `/latest_version` redirect'leri (doğrudan googlevideo,
+  ///    reklamsız) — doğrulanmış çalışan örnek.
+  /// 2) InnerTube player.
+  /// 3) Invidious videos endpoint'i.
+  /// 4) youtube_explode manifest (son çare).
   Future<List<String>> streamUrlCandidates(String videoId) async {
+    // 0) Ayarlanmış akış sunucusu (proxy): yt-dlp po_token çözümü, öncelikli.
+    try {
+      final proxy = await _proxyStreamUrls(videoId);
+      if (proxy.isNotEmpty) return proxy;
+    } catch (_) {}
+
+    try {
+      final latest = await _invidiousLatestWorking(videoId);
+      if (latest.isNotEmpty) return latest;
+    } catch (_) {}
+
     final urls = <String>[];
     void add(String u) {
       if (u.isNotEmpty && !urls.contains(u)) urls.add(u);
     }
 
-    // 1) InnerTube player (en güncel; ses adaptif formatları)
+    // InnerTube player (en güncel; ses adaptif formatları)
     try {
       final p = await _innerTubePlayer(videoId);
       for (final u in _audioUrlsFromStreamingData(p?['streamingData'])) {
@@ -361,7 +457,7 @@ class MusicService {
       }
     } catch (_) {}
 
-    // 2) Invidious videos (adaptiveFormatStreams)
+    // Invidious videos (adaptiveFormats)
     try {
       final data = await _invidious(
           '/api/v1/videos/$videoId?fields=adaptiveFormats,formatStreams');
@@ -372,7 +468,7 @@ class MusicService {
       }
     } catch (_) {}
 
-    // 3) youtube_explode manifest (son çare)
+    // youtube_explode manifest (son çare)
     try {
       final audio = await _audioStreams(videoId);
       for (final s in audio) {
@@ -384,6 +480,42 @@ class MusicService {
       throw StreamUnavailableException('Akış çözülemedi');
     }
     return urls;
+  }
+
+  /// Invidious `/latest_version` — her örnekte akış var mı diye HEAD atar,
+  /// çalışan ilk örneğin itag URL'lerini döner (140=mp4, 139=düşük mp4,
+  /// 251=opus). Redirect'i oynatıcı takip eder → doğrudan googlevideo akışı.
+  Future<List<String>> _invidiousLatestWorking(String videoId) async {
+    for (final base in _invidiousInstances) {
+      if (await _headOk('$base/latest_version?id=$videoId&itag=140')) {
+        return [
+          '$base/latest_version?id=$videoId&itag=140',
+          '$base/latest_version?id=$videoId&itag=139',
+          '$base/latest_version?id=$videoId&itag=251',
+        ];
+      }
+    }
+    return const [];
+  }
+
+  /// HEAD ile URL canlı mı (200/206 veya redirect 3xx).
+  Future<bool> _headOk(String url) async {
+    final t = const Duration(seconds: 5);
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
+    try {
+      final req = await client.headUrl(Uri.parse(url));
+      req.headers.set(HttpHeaders.userAgentHeader, _webUa);
+      final res = await req.close().timeout(t);
+      final code = res.statusCode;
+      await res.drain<void>().catchError((_) {});
+      return code == HttpStatus.ok ||
+          code == HttpStatus.partialContent ||
+          (code >= 300 && code < 400);
+    } catch (_) {
+      return false;
+    } finally {
+      client.close(force: true);
+    }
   }
 
   /// streamingData'dan ses URL'lerini çıkarır (en iyi önce, mp4/m4a tercih).
