@@ -1,6 +1,7 @@
 
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
+import '../models/search_content.dart';
 import '../models/song.dart';
 
 // ─── İstisna sınıfı ───
@@ -120,6 +121,73 @@ class MusicService {
         .take(limit)
         .map(_videoToSong)
         .toList();
+  }
+
+  // ─── Sanatçı ve çalma listesi araması ───
+
+  /// Sanatçı (kanal) araması yapar.
+  Future<List<SearchArtist>> searchArtists(String query, {int limit = 15}) async {
+    try {
+      final results =
+          await _yt.search.search(query, filter: TypeFilters.channel);
+      return results.whereType<SearchChannel>().take(limit).map((ch) {
+        return SearchArtist(
+          id: ch.id.value,
+          name: ch.name,
+          thumbnailUrl: ch.thumbnails.isNotEmpty
+              ? ch.thumbnails.first.url.toString()
+              : '',
+        );
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Çalma listesi araması yapar.
+  Future<List<PlaylistInfo>> searchPlaylists(
+      String query, {int limit = 15}) async {
+    try {
+      final results =
+          await _yt.search.search(query, filter: TypeFilters.playlist);
+      return results.whereType<SearchPlaylist>().take(limit).map((pl) {
+        return PlaylistInfo(
+          id: pl.id.value,
+          title: pl.title,
+          videoCount: pl.videoCount,
+          thumbnailUrl: pl.thumbnails.isNotEmpty
+              ? pl.thumbnails.first.url.toString()
+              : '',
+        );
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Çalma listesi ID'sindeki şarkıları çözer.
+  Future<List<Song>> playlistSongs(String playlistId,
+      {int limit = 200}) async {
+    final songs = <Song>[];
+    await for (final video in _yt.playlists.getVideos(playlistId)) {
+      songs.add(_videoToSong(video));
+      if (songs.length >= limit) break;
+    }
+    return songs;
+  }
+
+  /// YouTube / YouTube Music çalma listesi URL'sinden şarkıları çözer.
+  /// Desteklenen formatlar:
+  ///   https://www.youtube.com/playlist?list=PLxxxx
+  ///   https://music.youtube.com/playlist?list=PLxxxx
+  ///   https://youtube.com/watch?v=...&list=PLxxxx (karma listeler)
+  Future<List<Song>> importPlaylistUrl(String url) async {
+    final listMatch = RegExp(r'[?&]list=([\w-]+)').firstMatch(url);
+    var id = listMatch?.group(1);
+    if (id == 'RDAM' || id == null || id.isEmpty) {
+      throw const FormatException('Geçerli bir çalma listesi bağlantısı değil');
+    }
+    return playlistSongs(id);
   }
 
   // ─── Söz ───

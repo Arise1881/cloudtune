@@ -1,21 +1,29 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 
 import '../constants.dart';
+import '../models/search_content.dart';
 import '../models/song.dart';
 import '../services/connectivity_service.dart';
 import '../services/download_manager.dart';
 import '../services/library_store.dart';
 import '../services/music_service.dart';
 import '../services/player_service.dart';
+import '../widgets/artwork.dart';
 import '../widgets/song_tile.dart';
+import 'artist_screen.dart';
 import 'now_playing_screen.dart';
+import 'playlist_screen.dart';
 import 'song_actions.dart';
 
-/// Arama ekranı: debounce'lu canlı arama + son aramalar.
+enum _SearchTab { songs, artists, playlists }
+
+/// Arama ekranı: debounce'lu canlı arama + sesli arama + kategoriler.
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
@@ -26,12 +34,27 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focus = FocusNode();
+
+  final SpeechToText _speech = SpeechToText();
   bool _isListening = false;
+  bool _speechInitialized = false;
+
   Timer? _debounce;
   List<Song> _results = [];
+  List<SearchArtist> _artists = [];
+  List<PlaylistInfo> _playlists = [];
+  _SearchTab _tab = _SearchTab.songs;
   bool _searching = false;
   String? _error;
   List<String> _recent = [];
+
+  bool get _micSupported {
+    if (kIsWeb) return true;
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+  }
 
   @override
   void initState() {
@@ -60,6 +83,8 @@ class _SearchScreenState extends State<SearchScreen> {
     if (q.trim().isEmpty) {
       setState(() {
         _results = [];
+        _artists = [];
+        _playlists = [];
         _error = null;
         _searching = false;
       });
@@ -69,21 +94,78 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _search(String q) async {
+    final query = q.trim();
     setState(() {
       _searching = true;
       _error = null;
     });
     try {
-      final results = await MusicService.instance.search(q.trim());
+      final results = await Future.wait([
+        MusicService.instance.search(query),
+        MusicService.instance.searchArtists(query),
+        MusicService.instance.searchPlaylists(query),
+      ]);
       if (!mounted) return;
-      setState(() => _results = results);
-      unawaited(_saveRecent(q.trim()));
+      setState(() {
+        _results = results[0] as List<Song>;
+        _artists = results[1] as List<SearchArtist>;
+        _playlists = results[2] as List<PlaylistInfo>;
+      });
+      unawaited(_saveRecent(query));
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = 'Arama başarısız oldu. Bağlantını kontrol et.');
     } finally {
       if (mounted) setState(() => _searching = false);
     }
+  }
+
+  Future<void> _toggleListening() async {
+    if (_isListening) {
+      await _speech.stop();
+      if (mounted) setState(() => _isListening = false);
+      return;
+    }
+    try {
+      if (!_speechInitialized) {
+        _speechInitialized = await _speech.initialize();
+      }
+      if (!_speechInitialized) {
+        _snack('Sesli arama bu cihazda kullanılamıyor.');
+        return;
+      }
+      setState(() => _isListening = true);
+      await _speech.listen(
+        listenOptions: SpeechListenOptions(
+          listenFor: const Duration(seconds: 8),
+        ),
+        onResult: (result) {
+          if (!mounted) return;
+          if (result.finalResult) {
+            final text = result.recognizedWords.trim();
+            if (text.isNotEmpty) {
+              _controller.text = text;
+              _search(text);
+              _focus.unfocus();
+            }
+            setState(() => _isListening = false);
+          }
+        },
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isListening = false);
+      _snack('Sesli arama başlatılamadı.');
+    }
+  }
+
+  void _snack(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+      ));
   }
 
   @override
@@ -113,23 +195,29 @@ class _SearchScreenState extends State<SearchScreen> {
               onChanged: _onQueryChanged,
               onSubmitted: (q) => _search(q),
               textInputAction: TextInputAction.search,
-              style: const TextStyle(color: AppColors.textPrimary),
+              style: const TextStyle(color: Colors.black87, fontSize: 15),
+              cursorColor: Colors.black54,
               decoration: InputDecoration(
-                hintText: offline ? 'Çevrimdışıyken arama kapalı' : AppStrings.searchHint,
+                hintText:
+                    offline ? 'Çevrimdışıyken arama kapalı' : AppStrings.searchHint,
                 hintStyle: const TextStyle(color: AppColors.textSecondary),
                 prefixIcon:
                     const Icon(Icons.search, color: AppColors.textSecondary),
-                 suffixIcon: Row(
+                suffixIcon: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    IconButton(
-                      icon: Icon(_isListening ? Icons.mic : Icons.mic_off,
-                          size: 20,
-                          color: _isListening
-                              ? AppColors.accent
-                              : AppColors.textSecondary),
-                      onPressed: _toggleListening,
-                    ),
+                    if (_micSupported)
+                      IconButton(
+                        tooltip: _isListening
+                            ? 'Dinleniyor…'
+                            : 'Sesli ara (mikrofon)',
+                        icon: Icon(_isListening ? Icons.mic : Icons.mic_none,
+                            size: 20,
+                            color: _isListening
+                                ? AppColors.accent
+                                : AppColors.textSecondary),
+                        onPressed: _toggleListening,
+                      ),
                     IconButton(
                       icon: const Icon(Icons.close,
                           size: 20, color: AppColors.textSecondary),
@@ -150,6 +238,22 @@ class _SearchScreenState extends State<SearchScreen> {
               ),
             ),
           ),
+          if (!offline && _controller.text.trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              child: Row(
+                children: [
+                  _tabChip(_SearchTab.songs, 'Şarkılar', Icons.music_note,
+                      _results.length),
+                  const SizedBox(width: 8),
+                  _tabChip(_SearchTab.artists, 'Sanatçılar', Icons.person,
+                      _artists.length),
+                  const SizedBox(width: 8),
+                  _tabChip(_SearchTab.playlists, 'Çalma listeleri',
+                      Icons.queue_music, _playlists.length),
+                ],
+              ),
+            ),
           Expanded(
             child: offline
                 ? _offlineState()
@@ -157,6 +261,22 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _tabChip(_SearchTab tab, String label, IconData icon, int count) {
+    final selected = _tab == tab;
+    return ChoiceChip(
+      selected: selected,
+      avatar: Icon(icon, size: 16, color: selected ? AppColors.background : null),
+      label: Text('$label ($count)'),
+      labelStyle: TextStyle(
+          fontSize: 12,
+          color: selected ? AppColors.background : AppColors.textSecondary),
+      selectedColor: AppColors.accent,
+      backgroundColor: AppColors.card,
+      showCheckmark: false,
+      onSelected: (_) => setState(() => _tab = tab),
     );
   }
 
@@ -207,10 +327,21 @@ class _SearchScreenState extends State<SearchScreen> {
         ],
       );
     }
+
+    switch (_tab) {
+      case _SearchTab.songs:
+        return _buildSongs();
+      case _SearchTab.artists:
+        return _buildArtists();
+      case _SearchTab.playlists:
+        return _buildPlaylists();
+    }
+  }
+
+  Widget _buildSongs() {
     if (_results.isEmpty) {
       return _message(icon: Icons.search_off, text: AppStrings.noResults);
     }
-
     final player = context.read<PlayerService>();
     final downloads = context.watch<DownloadManager>();
     final library = context.watch<LibraryStore>();
@@ -231,7 +362,7 @@ class _SearchScreenState extends State<SearchScreen> {
                   : const NoDownloadState()),
           onDownloadTap: () {
             if (isDownloaded) {
-              _showDownloadedSnack(context, song);
+              _showDownloadedSnack();
             } else if (!downloads.isDownloading(song.id)) {
               downloads.download(song).catchError((_) {});
             }
@@ -249,12 +380,105 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  void _showDownloadedSnack(BuildContext context, Song song) {
+  Widget _buildArtists() {
+    final artists = _artists;
+    if (artists.isEmpty) {
+      return _message(icon: Icons.person_search, text: 'Sanatçı bulunamadı');
+    }
+    return ListView.builder(
+      itemCount: artists.length,
+      itemBuilder: (_, i) {
+        final a = artists[i];
+        return ListTile(
+          leading: CircleAvatar(
+            radius: 22,
+            backgroundColor: AppColors.cardLight,
+            backgroundImage:
+                a.thumbnailUrl.isNotEmpty ? NetworkImage(a.thumbnailUrl) : null,
+            child: a.thumbnailUrl.isEmpty
+                ? const Icon(Icons.person, color: AppColors.textSecondary)
+                : null,
+          ),
+          title: Text(a.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
+          subtitle: const Text('Sanatçı',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+          onTap: () {
+            Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) =>
+                  ArtistScreen(name: a.name, thumbnailUrl: a.thumbnailUrl),
+            ));
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildPlaylists() {
+    final playlists = _playlists;
+    if (playlists.isEmpty) {
+      return _message(icon: Icons.queue_music, text: 'Çalma listesi bulunamadı');
+    }
+    return ListView.builder(
+      itemCount: playlists.length,
+      itemBuilder: (_, i) {
+        final p = playlists[i];
+        return ListTile(
+          leading: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: Artwork(url: p.thumbnailUrl, size: 44),
+            ),
+          ),
+          title: Text(p.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
+          subtitle: Text('${p.videoCount} şarkı',
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+          trailing: const Icon(Icons.play_circle_outline,
+              color: AppColors.textSecondary),
+          onTap: () async {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Çalma listesi yükleniyor…'),
+              duration: Duration(seconds: 1),
+            ));
+            try {
+              final songs = await MusicService.instance
+                  .playlistSongs(p.id)
+                  .timeout(const Duration(seconds: 30));
+              if (!mounted) return;
+              if (songs.isEmpty) {
+                _snack('Çalma listesi boş.');
+                return;
+              }
+              Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => PlaylistScreen(
+                  title: p.title,
+                  songs: songs,
+                ),
+              ));
+            } catch (_) {
+              if (mounted) _snack('Çalma listesi yüklenemedi.');
+            }
+          },
+        );
+      },
+    );
+  }
+
+  void _showDownloadedSnack() {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: const Text('Bu şarkı zaten indirildi.'),
-        duration: const Duration(seconds: 2),
+      ..showSnackBar(const SnackBar(
+        content: Text('Bu şarkı zaten indirildi.'),
+        duration: Duration(seconds: 2),
       ));
   }
 
@@ -275,17 +499,12 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
       );
 
-  void _toggleListening() {
-    setState(() {
-      _isListening = !_isListening;
-    });
-  }
-
   @override
   void dispose() {
     _debounce?.cancel();
     _controller.dispose();
     _focus.dispose();
+    _speech.stop();
     super.dispose();
   }
 }

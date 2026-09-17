@@ -14,6 +14,7 @@ import '../widgets/artwork.dart';
 import 'library_screen.dart';
 import 'now_playing_screen.dart';
 import 'playlist_screen.dart';
+import 'room_screen.dart';
 
 /// Ana sayfa: selamlama, hızlı erişim kutucukları ve küratörlü bölümler.
 class HomeScreen extends StatelessWidget {
@@ -35,10 +36,19 @@ class HomeScreen extends StatelessWidget {
             SliverToBoxAdapter(child: _quickAccess(context, library)),
             SliverToBoxAdapter(
               child: _TrendSection(
-                title: 'Türkçe Pop Hits',
-                query: 'türkçe pop 2026 hit şarkılar',
+                title: 'YouTube Müzik Trendleri',
+                query: 'youtube trending music today hits',
               ),
             ),
+            for (final entry in curatedSections.entries) ...[
+              const SliverToBoxAdapter(child: SizedBox(height: 4)),
+              SliverToBoxAdapter(
+                child: _TrendSection(
+                  title: entry.key,
+                  query: entry.value,
+                ),
+              ),
+            ],
             const SliverToBoxAdapter(child: SizedBox(height: 24)),
           ],
         ],
@@ -85,7 +95,7 @@ class HomeScreen extends StatelessWidget {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => const LibraryScreen(),
+                          builder: (_) => const RoomScreen(),
                         ),
                       );
                     },
@@ -280,7 +290,9 @@ class _TrendSectionState extends State<_TrendSection> {
                     itemBuilder: (context, i) => _TrendCard(
                       song: songs[i],
                       onTap: () {
-                        context.read<PlayerService>().playQueue([songs[i]]);
+                        context
+                            .read<PlayerService>()
+                            .playForever(songs, startIndex: i);
                         Navigator.push(context, NowPlayingScreen.route(context));
                       },
                     ),

@@ -54,6 +54,12 @@ class UpdateService extends ChangeNotifier {
   UpdateInfo? _latest;
   String _installedVersion = '0.0.0';
 
+  /// Arka planda sessizce indirilen APK yolu (Android'de otomatik güncelleme).
+  String? _preparedApkPath;
+  bool get prepared => _preparedApkPath != null;
+
+  Timer? _bgTimer;
+
   bool get checking => _checking;
   bool get downloading => _downloading;
   bool get updateAvailable => _updateAvailable;
@@ -64,7 +70,8 @@ class UpdateService extends ChangeNotifier {
 
   bool _initialized = false;
 
-  /// Uygulama açılışında bir kez; arka planda sessizce kontrol eder.
+  /// Uygulama açılışında bir kez; arka planda sessizce kontrol eder ve
+  /// sonraki güncellemeler için periyodik zamanlayıcı başlatır.
   Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
@@ -73,8 +80,45 @@ class UpdateService extends ChangeNotifier {
       _installedVersion = p.version;
     } catch (_) {}
     // Açılışı bloklamaz.
-    unawaited(checkForUpdate());
+    unawaited(_initCheck());
+    // Arka plan OTA: 2 saatte bir sessiz kontrol + otomatik indirme.
+    _bgTimer ??= Timer.periodic(const Duration(hours: 2), (_) {
+      unawaited(_backgroundCycle());
+    });
     notifyListeners();
+  }
+
+  Future<void> _initCheck() async {
+    await checkForUpdate();
+    if (_updateAvailable && _platform == UpdatePlatform.android) {
+      await prepareDownload();
+    }
+  }
+
+  /// Arka plan döngüsü: güncelleme varsa apk'yı sessizce indirir.
+  Future<void> _backgroundCycle() async {
+    await checkForUpdate();
+    if (_updateAvailable && _platform == UpdatePlatform.android) {
+      await prepareDownload();
+    }
+  }
+
+  /// Android APK'yı arka planda sessizce indirir (kurulum onayını kullanıcı verir).
+  Future<String?> prepareDownload() async {
+    if (_platform != UpdatePlatform.android) return null;
+    if (_preparedApkPath != null) return _preparedApkPath;
+    final info = _latest;
+    if (info == null) return null;
+    final url = info.androidArm64Url ?? info.androidUniversalUrl;
+    if (url == null) return null;
+    try {
+      final path = await _download(url, 'melody_update_${info.version}.apk');
+      _preparedApkPath = path;
+      notifyListeners();
+      return path;
+    } catch (_) {
+      return null;
+    }
   }
 
   UpdatePlatform get _platform {
@@ -142,6 +186,14 @@ class UpdateService extends ChangeNotifier {
 
     switch (_platform) {
       case UpdatePlatform.android:
+        // Arka planda indirilmiş APK varsa doğrudan kurulumu başlat.
+        if (_preparedApkPath != null) {
+          final res = await OpenFilex.open(_preparedApkPath!);
+          if (res.type != ResultType.done) {
+            return 'Kurulum başlatılamadı. Dosya: $_preparedApkPath';
+          }
+          return 'İndirildi. Kurulum izninizi verin.';
+        }
         final url = info.androidArm64Url ?? info.androidUniversalUrl;
         if (url == null) return 'Android için güncelleme bağlantısı yok.';
         final path = await _download(url, 'melody_update.apk');

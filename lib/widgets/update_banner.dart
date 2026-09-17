@@ -40,9 +40,11 @@ class UpdateBanner extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        update.downloading
-                            ? 'İndiriliyor… %${(update.downloadProgress * 100).toInt()}'
-                            : 'Güncellemek için dokun',
+                        update.prepared
+                            ? 'Kuruluma hazır — kurmak için dokun'
+                            : update.downloading
+                                ? 'İndiriliyor… %${(update.downloadProgress * 100).toInt()}'
+                                : 'Güncellemek için dokun',
                         style: const TextStyle(
                           color: Colors.black,
                           fontSize: 12,

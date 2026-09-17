@@ -107,7 +107,7 @@ Future<void> showSongActions(BuildContext context, Song song) async {
             onTap: () {
               Navigator.pop(sheetCtx);
               Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => ArtistScreen(artist: song.artist)));
+                  builder: (_) => ArtistScreen(name: song.artist)));
             },
           ),
           _ActionTile(

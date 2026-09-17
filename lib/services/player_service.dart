@@ -94,6 +94,19 @@ class PlayerService extends ChangeNotifier {
   RepeatMode get repeat => _repeat;
   AudioPlayer get player => _player;
 
+  bool get isPlaying => _player.playing;
+  Duration get position => _player.position;
+
+  Future<void> seekTo(Duration target) async {
+    if (_player.duration != null &&
+        target > (_player.duration ?? target)) {
+      target = _player.duration ?? target;
+    }
+    if (target.isNegative) target = Duration.zero;
+    await _player.seek(target);
+    _syncRoom();
+  }
+
   bool _isLoading = false;
   String? _lastError;
   bool get isLoading => _isLoading;
@@ -143,6 +156,7 @@ class PlayerService extends ChangeNotifier {
     library.pushRecent(current!);
     _buildAndPlay(initialSource: initialSource).catchError((_) {});
     notifyListeners();
+    _syncRoom();
   }
 
   void _rebuildShuffled(int firstIndex) {
@@ -277,6 +291,7 @@ throw StreamUnavailableException(
       }
       await _player.play();
     }
+    _syncRoom();
   }
 
   /// Sonraki şarkıya geç. Liste biterse ve autoplay açıksa rasgele şarkı getir.
@@ -302,6 +317,7 @@ throw StreamUnavailableException(
         await _buildAndPlay();
       } catch (_) {}
       notifyListeners();
+      _syncRoom();
       return;
     }
 
@@ -322,6 +338,7 @@ throw StreamUnavailableException(
       await _buildAndPlay();
     } catch (_) {}
     notifyListeners();
+    _syncRoom();
   }
 
   Future<void> previous() async {
@@ -344,6 +361,7 @@ throw StreamUnavailableException(
       await _buildAndPlay();
     } catch (_) {}
     notifyListeners();
+    _syncRoom();
   }
 
   Future<void> jumpTo(int i) async {
@@ -372,6 +390,13 @@ throw StreamUnavailableException(
       }
     }
     playQueue(list, startIndex: startIndex);
+  }
+
+  /// Sonsuz döngü: kuyruğu "tekrarla (tümü)" moduyla çalar.
+  /// Ana sayfa listeleri bu modu kullanır — liste bitince başa döner.
+  void playForever(List<Song> songs, {int startIndex = 0}) {
+    _repeat = RepeatMode.all;
+    playQueue(songs, startIndex: startIndex);
   }
 
   void toggleShuffle() {
@@ -586,9 +611,111 @@ throw StreamUnavailableException(
     notifyListeners();
   }
 
-  // ─── Oda senkronizasyonundan playback güncelleme ───
-  // (Oda senkronizasyonu tam implemented değil; çakışmayı önlemek için güvenli öntanımlı.)
-  void updateFromRoomSync() {}
+  // ─── Oda senkronizasyonu ───
+
+  /// Odadaki ortakların durumunu yayınlar (odadayken ve uzak uygulama değilken).
+  void _syncRoom() {
+    if (room.roomId != null && !room.applyingRemote) {
+      room.publishFromPlayer();
+    }
+  }
+
+  /// Uzak oda durumunu local playback'e uygular.
+  Future<void> applyRoomState({
+    required List<Song> songs,
+    required int index,
+    required Duration position,
+    required bool playing,
+  }) async {
+    if (songs.isEmpty) return;
+    if (index < 0 || index >= songs.length) index = 0;
+
+    final sameQueue = _queue.length == songs.length &&
+        _queue.isNotEmpty &&
+        _queue.first.id == songs.first.id &&
+        _queue.last.id == songs.last.id;
+
+    // Kuyruk veya şarkı değiştiyse yeniden yükle
+    if (!sameQueue || _index != index) {
+      _queue = List.of(songs);
+      _shuffledQueue = List.of(songs);
+      _shuffle = false;
+      _index = index;
+      _isRadioMode = false;
+      _crossfadeTimer?.cancel();
+      _crossfading = false;
+      _player.setVolume(1.0);
+      try {
+        await _buildAndPlay();
+      } catch (_) {}
+    }
+
+    try {
+      if (position > Duration.zero) await _player.seek(position);
+    } catch (_) {}
+
+    if (playing && !_player.playing) {
+      await _player.play();
+    } else if (!playing && _player.playing) {
+      await _player.pause();
+    }
+    notifyListeners();
+  }
+
+  /// Uzak oda komutlarını yürütür (mutik ederken yayın yapmaz).
+  Future<void> roomPlayPause({bool? play}) async {
+    if (play == null) {
+      if (_player.playing) {
+        await _player.pause();
+      } else {
+        if (_player.processingState == ProcessingState.idle && current != null) {
+          try {
+            await _buildAndPlay();
+          } catch (_) {}
+          return;
+        }
+        await _player.play();
+      }
+    } else if (play) {
+      if (_player.processingState == ProcessingState.idle && current != null) {
+        try {
+          await _buildAndPlay();
+        } catch (_) {}
+        return;
+      }
+      await _player.play();
+    } else {
+      await _player.pause();
+    }
+    _syncRoom();
+  }
+
+  Future<void> roomSkip({required bool forward}) {
+    if (forward) {
+      return next();
+    }
+    return previous();
+  }
+
+  Future<void> roomSeek(Duration target) => seekTo(target);
+
+  /// Odada herkes için komut yürütür (lokalde uygular, uzaklara yayınlar).
+  Future<void> localCommand(String op, {int positionMs = 0}) async {
+    switch (op) {
+      case 'play':
+        await roomPlayPause(play: true);
+      case 'pause':
+        await roomPlayPause(play: false);
+      case 'toggle':
+        await roomPlayPause();
+      case 'next':
+        await next();
+      case 'prev':
+        await previous();
+      case 'seek':
+        await seekTo(Duration(milliseconds: positionMs));
+    }
+  }
 
   String qualityLabel() => switch (_quality) {
         AudioQuality.auto => 'Otomatik',
@@ -818,13 +945,15 @@ throw StreamUnavailableException(
 
   void _onPlayerState(PlayerState state) {
     if (!state.playing && state.processingState == ProcessingState.completed) {
-      // Oynatma bitti — odadaki kişiler için otomatik ilerle
-      if (room.roomId != null) {
+      // Oynatma bitti — odadaki kişiler için otomatik ilerle.
+      // Yalnızca oda sahibi ilerletir; üyeler sahibin durumunu bekler.
+      if (room.roomId != null && room.role == RoomRole.owner) {
         _autoplayNextRoomSync();
-      } else {
+      } else if (room.roomId == null) {
         next(userTriggered: false);
       }
     }
+    _syncRoom();
     notifyListeners();
   }
 

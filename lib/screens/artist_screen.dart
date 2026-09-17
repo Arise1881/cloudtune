@@ -11,188 +11,167 @@ import '../widgets/song_tile.dart';
 import 'now_playing_screen.dart';
 import 'song_actions.dart';
 
-/// YouTube Music benzeri sanatçı sayfası.
+/// Sanatçı sayfası: sanatçı şarkılarını listeler.
 class ArtistScreen extends StatefulWidget {
-  const ArtistScreen({super.key, required this.artist});
+  const ArtistScreen({super.key, required this.name, this.thumbnailUrl});
 
-  final String artist;
+  final String name;
+  final String? thumbnailUrl;
 
   @override
   State<ArtistScreen> createState() => _ArtistScreenState();
 }
 
 class _ArtistScreenState extends State<ArtistScreen> {
-  late Future<List<Song>> _future;
-  String _stateTitle = '';
+  List<Song> _songs = [];
+  bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _stateTitle = widget.artist;
-    _future = MusicService.instance.artistSongs(widget.artist);
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final songs =
+          await MusicService.instance.artistSongs(widget.name, limit: 40);
+      if (!mounted) return;
+      setState(() => _songs = songs);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = 'Şarkılar yüklenemedi. Bağlantını kontrol et.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final artUrl = widget.thumbnailUrl;
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        foregroundColor: AppColors.textPrimary,
-        title: const Text('Sanatçı',
-            style: TextStyle(fontWeight: FontWeight.w800)),
-      ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 64,
-                      height: 64,
-                      decoration: BoxDecoration(
-                        color: AppColors.card,
-                        borderRadius: BorderRadius.circular(32),
-                      ),
-                      child: const Icon(Icons.person,
-                          size: 36, color: AppColors.accent),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(widget.artist,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  color: AppColors.textPrimary,
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w800)),
-                          const SizedBox(height: 4),
-                          Text(_stateTitle.isEmpty
-                              ? 'Diskografi'
-                              : widget.artist,
-                              style: const TextStyle(
-                                  color: AppColors.textSecondary,
-                                  fontSize: 13)),
-                        ],
-                      ),
-                    ),
-                  ],
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 200,
+            pinned: true,
+            backgroundColor: AppColors.gradientTop,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            flexibleSpace: FlexibleSpaceBar(
+              title: Text(widget.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800)),
+              centerTitle: true,
+              background: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [AppColors.gradientTop, AppColors.background],
+                  ),
                 ),
-              ],
+                child: Center(
+                  child: CircleAvatar(
+                    radius: 48,
+                    backgroundColor: AppColors.cardLight,
+                    backgroundImage:
+                        artUrl != null && artUrl.isNotEmpty
+                            ? NetworkImage(artUrl)
+                            : null,
+                    child: artUrl == null || artUrl.isEmpty
+                        ? const Icon(Icons.person,
+                            size: 48, color: AppColors.textSecondary)
+                        : null,
+                  ),
+                ),
+              ),
             ),
           ),
-          const Divider(color: Colors.white12, height: 1),
-          Expanded(
-            child: FutureBuilder<List<Song>>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState != ConnectionState.done) {
-                  return const Center(
-                    child: CircularProgressIndicator(color: AppColors.accent),
-                  );
-                }
-                if (snap.hasError || snap.data == null || snap.data!.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.person_off_outlined,
-                            size: 48, color: AppColors.textSecondary),
-                        const SizedBox(height: 12),
-                        const Text('Şarkı bulunamadı',
-                            style: TextStyle(color: AppColors.textSecondary)),
-                        const SizedBox(height: 16),
-                        OutlinedButton(
-                          onPressed: () => setState(() {
-                            _future =
-                                MusicService.instance.artistSongs(widget.artist);
-                          }),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.accent,
-                            side: const BorderSide(color: AppColors.accent),
-                          ),
-                          child: const Text('Tekrar dene'),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-                final songs = snap.data!;
-                final player = PlayerService.instance;
+          if (_loading)
+            const SliverFillRemaining(
+              child: Center(
+                child: CircularProgressIndicator(color: AppColors.accentBright),
+              ),
+            )
+          else if (_error != null)
+            SliverFillRemaining(
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.error_outline,
+                          size: 46, color: AppColors.textSecondary),
+                      const SizedBox(height: 12),
+                      Text(_error!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              color: AppColors.textSecondary, fontSize: 15)),
+                      const SizedBox(height: 16),
+                      OutlinedButton(
+                        onPressed: _load,
+                        child: const Text('Tekrar Dene'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          else if (_songs.isEmpty)
+            const SliverFillRemaining(
+              child: Center(
+                child: Text('Şarkı bulunamadı',
+                    style:
+                        TextStyle(color: AppColors.textSecondary, fontSize: 15)),
+              ),
+            )
+          else
+            SliverList.builder(
+              itemCount: _songs.length,
+              itemBuilder: (context, i) {
+                final song = _songs[i];
+                final player = context.read<PlayerService>();
+                final downloads = context.watch<DownloadManager>();
                 final library = context.watch<LibraryStore>();
-                final downloader = context.watch<DownloadManager>();
-                return ListView.separated(
-                  padding: const EdgeInsets.only(bottom: 20),
-                  itemCount: songs.length + 1,
-                  separatorBuilder: (_, _) =>
-                      const Divider(color: Colors.white12, height: 1),
-                  itemBuilder: (context, i) {
-                    if (i == 0) {
-                      return Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Row(
-                          children: [
-                            SizedBox(
-                              width: 48,
-                              height: 48,
-                              child: FilledButton(
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: AppColors.accent,
-                                  foregroundColor: Colors.black,
-                                  shape: const CircleBorder(),
-                                ),
-                                child: const Icon(Icons.play_arrow),
-                                onPressed: () {
-                                  player.playQueue(songs);
-                                  Navigator.of(context).push(
-                                      NowPlayingScreen.route(context));
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 14),
-                            Text('${songs.length} şarkı',
-                                style: const TextStyle(
-                                    color: AppColors.textSecondary,
-                                    fontSize: 14)),
-                          ],
-                        ),
-                      );
+                final isCurrent = player.current?.id == song.id;
+                final isDownloaded = library.isDownloaded(song.id);
+                final progress = downloads.progress[song.id];
+                return SongTile(
+                  song: song,
+                  selected: isCurrent,
+                  downloadState: isDownloaded
+                      ? true
+                      : (downloads.isDownloading(song.id)
+                          ? (progress ?? 0.0)
+                          : const NoDownloadState()),
+                  onDownloadTap: () {
+                    if (!isDownloaded && !downloads.isDownloading(song.id)) {
+                      downloads.download(song).catchError((_) {});
                     }
-                    final song = songs[i - 1];
-                    final isCurrent = player.current?.id == song.id;
-                    return SongTile(
-                      song: song,
-                      selected: isCurrent,
-                      downloadState: downloadStateFor(song, library, downloader),
-                      onDownloadTap: downloader.isDownloading(song.id)
-                          ? null
-                          : () {
-                              if (library.isDownloaded(song.id)) return;
-                              downloader.download(song).catchError((_) {});
-                            },
-                      onTap: () async {
-                        try {
-                          player.playQueue(songs, startIndex: i - 1);
-                          if (!context.mounted) return;
-                          Navigator.of(context)
-                              .push(NowPlayingScreen.route(context));
-                        } catch (_) {}
-                      },
-                      onMenuTap: () => showSongActions(context, song),
-                    );
                   },
+                  onTap: () {
+                    player.playQueue(_songs, startIndex: i);
+                    if (!context.mounted) return;
+                    Navigator.of(context).push(NowPlayingScreen.route(context));
+                  },
+                  onMenuTap: () => showSongActions(context, song),
                 );
               },
             ),
-          ),
         ],
       ),
     );

@@ -66,6 +66,7 @@ void _warmUpServices() {
   _safe('Ses kalitesi', () => PlayerService.instance.loadQualityPref());
   _safe('Ekolayzer', () => EqualizerService.instance.init());
   _safe('Tema', () => ThemeService.instance.init());
+  _safe('Oda', () => RoomService.instance.init());
   UpdateService.instance.init();
 
   // Son çalınan oturum ilk kare basıldıktan SONRA geri yüklenir.

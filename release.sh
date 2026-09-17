@@ -34,16 +34,18 @@ case "$BUMP" in
   major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
   minor) MINOR=$((MINOR+1)); PATCH=0 ;;
   patch) PATCH=$((PATCH+1)) ;;
-  *) echo "Geçersiz bump: $BUMP (major/minor/patch)"; exit 1 ;;
+  current) : ;;  # pubspec sürümünü aynen kullan, asset'leri yeniden yayınla
+  *) echo "Geçersiz bump: $BUMP (major/minor/patch/current)"; exit 1 ;;
 esac
 NEW_VER="$MAJOR.$MINOR.$PATCH"
 NEW_BUILD=$((BUILD+1))
+[[ "$BUMP" == "current" ]] && NEW_BUILD=$BUILD
 NEW_FULL="$NEW_VER+$NEW_BUILD"
 
 echo "Yeni: $NEW_FULL"
 
-# pubspec güncelle
-sed -i "s/^version:.*/version: $NEW_FULL/" pubspec.yaml
+# pubspec güncelle (bump=current ise sürüm aynen kalır)
+[[ "$BUMP" != "current" ]] && sed -i "s/^version:.*/version: $NEW_FULL/" pubspec.yaml
 
 # ─── 3. Analiz ───
 echo "── flutter analyze ──"

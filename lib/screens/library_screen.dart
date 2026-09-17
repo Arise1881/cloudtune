@@ -5,8 +5,10 @@ import 'package:provider/provider.dart';
 
 import '../constants.dart';
 import '../models/song.dart';
+import '../services/connectivity_service.dart';
 import '../services/download_manager.dart';
 import '../services/library_store.dart';
+import '../services/music_service.dart';
 import '../services/player_service.dart';
 import '../widgets/artwork.dart';
 import 'now_playing_screen.dart';
@@ -37,6 +39,105 @@ class _LibraryScreenState extends State<LibraryScreen>
     super.dispose();
   }
 
+  /// YouTube / YouTube Music çalma listesi URL'sini içe aktarır.
+  Future<void> _importPlaylist() async {
+    final urlCtrl = TextEditingController();
+    final nameCtrl = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: const Text('Çalma listesi içe aktar',
+            style: TextStyle(
+                color: AppColors.textPrimary, fontWeight: FontWeight.w700)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'YouTube veya YouTube Music çalma listesi bağlantısını yapıştır.',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: urlCtrl,
+              keyboardType: TextInputType.url,
+              style: const TextStyle(color: Colors.black87),
+              decoration: const InputDecoration(
+                labelText: 'Çalma listesi bağlantısı',
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: nameCtrl,
+              style: const TextStyle(color: Colors.black87),
+              decoration: const InputDecoration(
+                labelText: 'Çalma listesi adı (opsiyonel)',
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Vazgeç'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('İçe Aktar'),
+          ),
+        ],
+      ),
+    );
+    final url = urlCtrl.text.trim();
+    final desiredName = nameCtrl.text.trim();
+    urlCtrl.dispose();
+    nameCtrl.dispose();
+    if (confirmed != true || url.isEmpty) return;
+    if (!mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(const SnackBar(
+        content: Text('Çalma listesi içe aktarılıyor…'),
+        duration: Duration(seconds: 3)));
+    try {
+      final songs = await MusicService.instance.importPlaylistUrl(url);
+      if (!mounted) return;
+      if (songs.isEmpty) {
+        messenger.showSnackBar(
+            const SnackBar(content: Text('Çalma listesi boş.')));
+        return;
+      }
+      final library = context.read<LibraryStore>();
+      var name = desiredName.isEmpty ? 'İçe Aktarılan (${songs.length})' : desiredName;
+      var i = 1;
+      final base = name;
+      while (!library.createPlaylist(name)) {
+        name = '$base (${i++})';
+      }
+      for (final s in songs) {
+        library.addToPlaylist(name, s);
+      }
+      messenger.showSnackBar(
+          SnackBar(content: Text('"$name" içe aktarıldı: ${songs.length} şarkı')));
+      _tabs.index = 2;
+    } catch (_) {
+      if (!mounted) return;
+      messenger.showSnackBar(const SnackBar(
+          content: Text('İçe aktarma başarısız. Bağlantıyı kontrol et.')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -54,6 +155,13 @@ class _LibraryScreenState extends State<LibraryScreen>
                         fontSize: 24,
                         fontWeight: FontWeight.w800)),
                 const Spacer(),
+                if (context.watch<ConnectivityService>().isOnline)
+                  IconButton(
+                    tooltip: 'Playlist içe aktar',
+                    icon: const Icon(Icons.add_link,
+                        color: AppColors.textSecondary),
+                    onPressed: _importPlaylist,
+                  ),
                 IconButton(
                   icon: const Icon(Icons.settings_outlined,
                       color: AppColors.textSecondary),
