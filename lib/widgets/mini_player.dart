@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../constants.dart';
+import '../screens/now_playing_screen.dart';
 import '../services/download_manager.dart';
 import '../services/library_store.dart';
 import '../services/player_service.dart';
@@ -36,59 +37,65 @@ class MiniPlayer extends StatelessWidget {
         child: Column(
           children: [
             Expanded(
-              child: Row(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(7),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(5),
-                      child: _MiniArt(song: song),
-                    ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          song.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600),
-                        ),
-                        Text(
-                          song.artist,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              color: AppColors.textSecondary, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: StreamBuilder<bool>(
-                      stream: player.player.playerStateStream
-                          .map((s) => s.playing),
-                      initialData: player.player.playing,
-                      builder: (_, snap) => Icon(
-                        (snap.data ?? false) ? Icons.pause : Icons.play_arrow,
-                        color: AppColors.textPrimary,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () =>
+                    Navigator.push(context, NowPlayingScreen.route(context)),
+                child: Row(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(7),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(5),
+                        child: _MiniArt(song: song),
                       ),
                     ),
-                    onPressed: () {
-                      if (player.isLoading) return;
-                      player.togglePlayPause();
-                    },
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.skip_next, color: AppColors.textPrimary),
-                    onPressed: () => player.next(),
-                  ),
-                ],
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            song.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600),
+                          ),
+                          Text(
+                            song.artist,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: AppColors.textSecondary, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: StreamBuilder<bool>(
+                        stream: player.player.playerStateStream
+                            .map((s) => s.playing),
+                        initialData: player.player.playing,
+                        builder: (_, snap) => Icon(
+                          (snap.data ?? false) ? Icons.pause : Icons.play_arrow,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      onPressed: () {
+                        if (player.isLoading) return;
+                        player.togglePlayPause();
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.skip_next,
+                          color: AppColors.textPrimary),
+                      onPressed: () => player.next(),
+                    ),
+                  ],
+                ),
               ),
             ),
             // İnce ilerleme çizgisi.
