@@ -77,6 +77,36 @@ DEB_DIR="/tmp/opencode/melody-deb"
 rm -rf "$DEB_DIR/usr/share/melody/"*
 cp -a build/linux/x64/release/bundle/. "$DEB_DIR/usr/share/melody/"
 sed -i "s/^Version:.*/Version: $NEW_VER/" "$DEB_DIR/DEBIAN/control"
+
+# Masaüstü girişi (.desktop) + uygulama ikonu — DE menülerinde görünür
+mkdir -p "$DEB_DIR/usr/share/applications" \
+  "$DEB_DIR/usr/share/icons/hicolor/512x512/apps" \
+  "$DEB_DIR/DEBIAN"
+cat > "$DEB_DIR/usr/share/applications/melody.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Melody
+GenericName=Music Player
+Comment=Spotify tarzı müzik çalar (YouTube, reklamsız)
+Exec=/usr/share/melody/melody
+Icon=melody
+Terminal=false
+Categories=Audio;AudioVideo;Player;
+StartupWMClass=melody
+EOF
+cp -f "$DIST/icon.png" "$DEB_DIR/usr/share/icons/hicolor/512x512/apps/melody.png"
+cat > "$DEB_DIR/DEBIAN/postinst" <<'EOF'
+#!/bin/sh
+set -e
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
+fi
+exit 0
+EOF
+chmod 755 "$DEB_DIR/DEBIAN/postinst"
 dpkg-deb --build --root-owner-group "$DEB_DIR" "$STAGING/melody_${NEW_VER}_amd64.deb" 2>&1 | tail -1
 
 echo "Artifact'ler hazır:"
