@@ -21,6 +21,7 @@ Not: yt-dlp'nin tam fonksiyon kalması için bir JS runtime önerilir
 """
 
 import json
+import time
 import os
 import re
 import subprocess
@@ -30,7 +31,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 YTDLP = os.environ.get("YTDLP_PATH", "yt-dlp")
-AUDIO_FMT = "bestaudio[ext=m4a]/bestaudio"
+AUDIO_FMT = "140/bestaudio"
 
 _MAX_AUDIO = 6  # Tek video için en fazla döndürülecek akış adayı
 
@@ -72,7 +73,11 @@ def solve_stream(video_id):
     urls = []
     itag = info.get("format_id")
     for f in fmts:
-        if f.get("vcodec") != "none" and f.get("acodec") != "none":
+        vc = str(f.get("vcodec") or "none")
+        ac = str(f.get("acodec") or "none")
+        if vc != "none" or ac == "none":
+            continue
+        if f.get("protocol") not in ("https", "http"):
             continue
         url = f.get("url")
         if not url or "googlevideo" not in url:
@@ -85,9 +90,11 @@ def solve_stream(video_id):
             "url": url,
         })
     # itag eşleşen (çözülen) önce, sonra kaliteli m4a önce
-    urls.sort(key=lambda u: (u["itag"] == itag, u["ext"] == "m4a",
+    urls.sort(key=lambda u: (u["itag"] != itag, u["ext"] != "m4a",
                              -(u["abr"] or 0)))
     urls = urls[:_MAX_AUDIO]
+
+    print(f"[{time.strftime('%H:%M:%S')}] stream {video_id}: fmt={AUDIO_FMT} secilen={info.get('format_id')} nfmt={len(fmts)} urls={[u['itag'] for u in urls]}", flush=True)
 
     if not urls:
         raise RuntimeError("ses akışı bulunamadı")
@@ -158,8 +165,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        u = urllib.parse.urlparse(self.path)
-        q = urllib.parse.parse_qs(u.query)
+        try:
+            u = urllib.parse.urlparse(self.path)
+            q = urllib.parse.parse_qs(u.query)
+            print(f"[{time.strftime('%H:%M:%S')}] {self.client_address[0]} GET {u.path}", flush=True)
+        except Exception:
+            pass
         try:
             if u.path == "/health":
                 return self._send(200, {
@@ -177,6 +188,19 @@ class Handler(BaseHTTPRequestHandler):
                 if not vid or not re.fullmatch(r"[A-Za-z0-9_-]{6,15}", vid):
                     return self._err(400, "geçersiz video_id")
                 return self._send(200, {"ok": True, **solve_stream(vid)})
+
+            if u.path == "/api/v1/stream_direct":
+                vid = (q.get("video_id") or [""])[0]
+                if not vid or not re.fullmatch(r"[A-Za-z0-9_-]{6,15}", vid):
+                    return self._err(400, "geçersiz video_id")
+                data = solve_stream(vid)
+                urls = data.get("urls") or []
+                if not urls:
+                    return self._err(502, "akış URL'si yok")
+                self.send_response(302)
+                self.send_header("Location", urls[0]["url"])
+                self.end_headers()
+                return
 
             if u.path == "/api/v1/search":
                 query = (q.get("q") or [""])[0].strip()

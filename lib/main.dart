@@ -58,8 +58,8 @@ void _warmUpServices() {
   _safe('Arka plan', () => JustAudioBackground.init(
         androidNotificationChannelId: 'com.melody.app.playback',
         androidNotificationChannelName: 'Melody Müzik Çalar',
-        androidNotificationOngoing: false,
-        androidStopForegroundOnPause: true,
+        androidNotificationOngoing: true,
+        androidStopForegroundOnPause: false,
         preloadArtwork: true,
       ));
   _safe('Kitaplık', () => LibraryStore.instance.init());
