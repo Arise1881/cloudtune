@@ -173,30 +173,38 @@ class DownloadManager extends ChangeNotifier {
     int approxTotal, {
     required void Function(int received, int total) onProgress,
   }) async {
-    final client = HttpClient();
-    try {
-      final request = await client.getUrl(Uri.parse(url));
-      request.headers.set(HttpHeaders.userAgentHeader,
-          'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36');
-      final response = await request.close().timeout(const Duration(seconds: 15));
-      if (response.statusCode != HttpStatus.ok) {
-        throw HttpException('HTTP ${response.statusCode}');
-      }
-      var total = response.contentLength > 0 ? response.contentLength : approxTotal;
-      var received = 0;
-      final sink = File(savePath).openWrite();
+    int attempt = 0;
+    while (true) {
+      attempt++;
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 30);
       try {
-        await for (final chunk in response.timeout(const Duration(seconds: 20))) {
-          received += chunk.length;
-          sink.add(chunk);
-          onProgress(received, total);
+        final request = await client.getUrl(Uri.parse(url));
+        request.headers.set(HttpHeaders.userAgentHeader,
+            'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36');
+        final response = await request.close().timeout(const Duration(seconds: 30));
+        if (response.statusCode != HttpStatus.ok) {
+          throw HttpException('HTTP ${response.statusCode}');
         }
-        await sink.flush();
-      } finally {
-        await sink.close();
+        var total = response.contentLength > 0 ? response.contentLength : approxTotal;
+        var received = 0;
+        final sink = File(savePath).openWrite();
+        try {
+          await for (final chunk in response.timeout(const Duration(seconds: 30))) {
+            received += chunk.length;
+            sink.add(chunk);
+            onProgress(received, total);
+          }
+          await sink.flush();
+        } finally {
+          await sink.close();
+        }
+        break;
+      } catch (e) {
+        client.close(force: true);
+        if (attempt >= 3) rethrow;
+        await Future.delayed(Duration(seconds: attempt * 2));
       }
-    } finally {
-      client.close(force: true);
     }
   }
 

@@ -169,22 +169,38 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
 
   Widget _visualizer(PlayerService player) {
     return SizedBox(
-      height: 70,
+      height: 80,
       child: ListenableBuilder(
-        listenable: player.player,
+        listenable: player,
         builder: (context, _) {
           final playing = player.player.playing;
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(48, (i) {
-              final h = playing ? 8.0 + (i % 5) * 6.0 : 6.0;
+            children: List.generate(60, (i) {
+              final base = playing ? 12.0 + (i % 7) * 8.0 : 8.0;
               return Container(
-                width: 4,
-                height: h,
-                margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                width: 5,
+                height: base,
+                margin: const EdgeInsets.symmetric(horizontal: 2),
                 decoration: BoxDecoration(
-                  color: AppColors.accent.withValues(alpha: playing ? 0.9 : 0.25),
-                  borderRadius: BorderRadius.circular(2),
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [
+                      AppColors.accent.withValues(alpha: playing ? 0.9 : 0.15),
+                      AppColors.accentBright.withValues(alpha: playing ? 0.7 : 0.1),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(3),
+                  boxShadow: playing
+                      ? [
+                          BoxShadow(
+                            color: AppColors.accent.withValues(alpha: 0.4),
+                            blurRadius: 6,
+                            spreadRadius: 0,
+                          )
+                        ]
+                      : [],
                 ),
               );
             }),
