@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
@@ -145,6 +146,18 @@ class MusicService {
   static String _stripTrailingSlash(String v) =>
       v.replaceAll(RegExp(r'/+$'), '');
 
+  bool _isMobileNetwork = false;
+
+  Future<bool> _detectMobileNetwork() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      _isMobileNetwork =
+          results.contains(ConnectivityResult.mobile) &&
+              !results.contains(ConnectivityResult.wifi);
+    } catch (_) {}
+    return _isMobileNetwork;
+  }
+
   /// Proxy üzerinden po_token destekli ses akış URL'leri. Dönmezse boş liste.
   Future<List<String>> _proxyStreamUrls(String videoId) async {
     final urls = <String>[];
@@ -159,11 +172,12 @@ class MusicService {
       urls.add('$b/api/v1/relay?video_id=$videoId&format=251');
     }
 
-    // Önce otomatik bulunan genel tünel (mobil verideki asıl kurtarıcı),
-    // sonra kayıtlı LAN proxy'si. Yedek zincir ürettiği için adaylar
-    // sırayla denenir: bir tanesi çalışırsa dinleyici döner.
+    // Mobil veride LAN proxy'si (192.168.x.x) erişilemez olacağı için atlanır;
+    // sadece genel tünel denenir. Wi-Fi'de tam tersi: tünel de denenir ama
+    // LAN proxy önceliklidir (zaten en önce ekleniyor).
+    final mobile = _isMobileNetwork || await _detectMobileNetwork();
+    if (!mobile) await addBase(proxyUrl);
     await addBase(await _autoTunnelUrl());
-    await addBase(proxyUrl);
     return urls;
   }
 
