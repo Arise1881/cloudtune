@@ -57,11 +57,12 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                   stops: [0.0, 0.6],
                 ),
               ),
-              child: SafeArea(
+                child: SafeArea(
                 child: Column(
                   children: [
                     _topBar(context, player),
                     Expanded(child: _artwork(song)),
+                    _visualizer(player),
                     _titleRow(player, song),
                     if (player.lastError != null) _errorBanner(player.lastError!),
                     _actionRow(context, player, song),
@@ -162,6 +163,33 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _visualizer(PlayerService player) {
+    return SizedBox(
+      height: 70,
+      child: ListenableBuilder(
+        listenable: player.player,
+        builder: (context, _) {
+          final playing = player.player.playing;
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(48, (i) {
+              final h = playing ? 8.0 + (i % 5) * 6.0 : 6.0;
+              return Container(
+                width: 4,
+                height: h,
+                margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: playing ? 0.9 : 0.25),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              );
+            }),
+          );
+        },
       ),
     );
   }

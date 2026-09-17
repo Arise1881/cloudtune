@@ -256,6 +256,8 @@ class PlayerService extends ChangeNotifier {
           throw Exception(lastError ?? 'Akış başlatılamadı');
         }
         _saveSession();
+        // Ön yükleme: sıradaki şarkının stream URL'ini arka planda çöz
+        _prefetchNext();
         break;
       } catch (e) {
         // Çalınamayan şarkı SIRADAKİNE ATLANMAZ: kullanıcı hangi şarkıyı
@@ -1094,6 +1096,24 @@ throw StreamUnavailableException(
       final delay = remaining - _crossfadeDuration;
       _crossfadeTimer = Timer(delay, () => _startCrossfade());
     }
+  }
+
+  Future<void> _prefetchNext() async {
+    final q = effectiveQueue;
+    if (_index < 0 || _index + 1 >= q.length) return;
+    final nextSong = q[_index + 1];
+    if (_streamCache.containsKey(nextSong.id)) return;
+    try {
+      final url = await music.resolveStreamUrlWithQuality(nextSong.id,
+          quality: switch (_quality) {
+            AudioQuality.high => 'high',
+            AudioQuality.medium => 'medium',
+            AudioQuality.low => 'low',
+            AudioQuality.ultra => 'ultra',
+            AudioQuality.auto => 'auto',
+          });
+      _streamCache[nextSong.id] = url;
+    } catch (_) {}
   }
 
   @override
