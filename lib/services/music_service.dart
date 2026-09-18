@@ -41,6 +41,7 @@ class MusicService {
   /// dönmüyor, local kapalı.
   static const Map<String, bool> _invidiousInstances = {
     'https://invidious.darkness.services': true,
+    'https://invidious.ducks.party': true,
     'https://invidious.f5.si': false,
     'https://invidious.projectsegfau.lt': false,
   };
@@ -131,8 +132,15 @@ class MusicService {
 
   static bool _invidiousDead(String base) {
     final t = _deadInvidious[base];
-    return t != null &&
-        DateTime.now().difference(t) < const Duration(minutes: 10);
+    if (t == null) return false;
+    // Proxy (local=true) destekleyen örnekler yalnız rate-limit'e takılır:
+    // birkaç saniyede düzelir, uzun kara liste tüm akışları googlevideo'ya
+    // (engelli CDN) düşürür. Kısa pencere yeter.
+    final proxy = _invidiousInstances[base] == true;
+    final window = proxy
+        ? const Duration(seconds: 15)
+        : const Duration(minutes: 10);
+    return DateTime.now().difference(t) < window;
   }
 
   /// Negatif önbellek içinde OLMAYAN (kısa süre içinde canlı doğrulanmış) sayaç.
@@ -444,7 +452,11 @@ class MusicService {
       final base = entry.key;
       if (_invidiousDead(base)) continue;
       final local = entry.value ? '&local=true' : '';
-      for (var attempt = 0; attempt < 2; attempt++) {
+      final maxAttempts = entry.value ? 4 : 2;
+      for (var attempt = 0; attempt < maxAttempts; attempt++) {
+        if (attempt > 0) {
+          await Future.delayed(Duration(milliseconds: 350 * attempt));
+        }
         try {
           final data = await _getJson(
             '$base/api/v1/videos/$videoId?fields=adaptiveFormats$local',
