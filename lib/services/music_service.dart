@@ -159,11 +159,27 @@ class MusicService {
   }
 
   /// Proxy üzerinden po_token destekli ses akış URL'leri. Dönmezse boş liste.
+  /// Tünel bir BONUSTUR: PC/ sunucu kapalıysa ölü tünel 3sn'de elenir,
+  /// app tamamen bağımsız (Invidious/InnerTube) akışa düşer. Böylece
+  /// Melody hiçbir dış sunucuya bağımlı değildir.
   Future<List<String>> _proxyStreamUrls(String videoId) async {
     final urls = <String>[];
     Future<void> addBase(String? base) async {
       if (base == null || base.isEmpty) return;
       final b = base.replaceAll(RegExp(r'/$'), '');
+      // Canlılık kontrolü: ölü tünel 3sn'de elenir, 10 dk tekrar denenmez.
+      if (base != _lastCheckedBase ||
+          DateTime.now().difference(_lastBaseCheckAt) >
+              const Duration(minutes: 10)) {
+        _lastCheckedBase = base;
+        _lastBaseAlive = await _isBaseAlive(b);
+        _lastBaseCheckAt = DateTime.now();
+        if (_lastBaseAlive == false) {
+          _tunnelUrl = null; // ölü tüneli önbellekten at
+          debugPrint('Melody proxy ölü, bağımsız akışa geçiliyor: $b');
+        }
+      }
+      if (_lastBaseAlive != true) return;
       // En hızlı yol: sunucunun kendi akışını direkt dene. stream URL
       // çözümünü beklemek mobilde 5-10sn kaybettirirdi; üç format zinciri
       // her şarkıda en az birinin olmasını garanti eder.
@@ -179,6 +195,26 @@ class MusicService {
     if (!mobile) await addBase(proxyUrl);
     await addBase(await _autoTunnelUrl());
     return urls;
+  }
+
+  String? _lastCheckedBase;
+  bool? _lastBaseAlive;
+  DateTime _lastBaseCheckAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  Future<bool> _isBaseAlive(String base) async {
+    try {
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+      final req = await client.getUrl(Uri.parse('$base/'))
+          .timeout(const Duration(seconds: 3));
+      req.headers.set(HttpHeaders.userAgentHeader, _webUa);
+      final res = await req.close().timeout(const Duration(seconds: 3));
+      await res.drain<void>().catchError((_) {});
+      // Herhangi bir HTTP yanıtı var = canlı (404 dahil). DNS çözülmezse
+      // veya bağlantı kurulamazsa hata fırlar → false.
+      return res.statusCode >= 100 && res.statusCode < 600;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Genel tünel adresi (trycloudflare) — sunucu bunu melody-dist/tunnel.txt
