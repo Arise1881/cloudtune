@@ -355,21 +355,24 @@ class MusicService {
   // ─── Akış URL'leri ───
 
   /// Video için denenebilir ses akış URL'leri (en iyi önce).
-  /// 1) Invidious `/latest_version` redirect'leri (doğrudan googlevideo,
-  ///    reklamsız) — doğrulanmış çalışan örnek.
-  /// 2) InnerTube player.
-  /// 3) Invidious videos endpoint'i.
+  /// 1) Invidious videos API (adaptiveFormats) — birincil.
+  /// 2) InnerTube player (po_token bulunmuyorsa boş döner).
+  /// 3) Invidious videos endpoint'i (tekrar deneme).
   /// 4) youtube_explode manifest (son çare).
+  /// Sonuç: aracı (proxyless) adaylar başa, googlevideo CDN'leri en sona.
   Future<List<String>> streamUrlCandidates(String videoId) async {
-    try {
-      final latest = await _invidiousLatestWorking(videoId);
-      if (latest.isNotEmpty) return latest;
-    } catch (_) {}
-
     final urls = <String>[];
     void add(String u) {
       if (u.isNotEmpty && !urls.contains(u)) urls.add(u);
     }
+
+    // 1) Invidious videos API (adaptiveFormats) — doğrulanmış, en hızlı yol.
+    try {
+      final latest = await _invidiousLatestWorking(videoId);
+      for (final u in latest) {
+        add(u);
+      }
+    } catch (_) {}
 
     // InnerTube player (en güncel; ses adaptif formatları)
     try {
@@ -413,10 +416,7 @@ class MusicService {
     return [...inline, ...cdn];
   }
 
-  /// Invidious `/latest_version` — her örnekte akış var mı diye HEAD atar,
-  /// çalışan ilk örneğin itag URL'lerini döner (140=mp4, 139=düşük mp4,
-  /// 251=opus). Redirect'i oynatıcı takip eder → doğrudan googlevideo akışı.
-  /// Invidious: videos API'den gerçek ses akış URL'lerini alır. `/latest_version`
+  /// Invidious videos API'den gerçek ses akış URL'lerini alır. `/latest_version`
   /// endpoint'i artık çoğu örnekte bot-challenge/companion sayfasına (302 HTML)
   /// düşüyor, o yüzden doğrudan adaptiveFormats JSON'u tercih edilir.
   Future<List<String>> _invidiousLatestWorking(String videoId) async {
