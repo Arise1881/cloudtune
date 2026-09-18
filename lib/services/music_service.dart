@@ -62,6 +62,12 @@ class MusicService {
       ValueNotifier<String?>(null);
   static const String _kProxyUrl = 'stream_proxy_url';
 
+  /// Varsayılan ücretsiz proxy (kullanıcının Cloudflare Workers hesabı).
+  /// Kullanıcı ayarlardan silerse ayar `''` olarak saklanır ve proxy kapanır;
+  /// hiç kayıt yoksa bu varsayılan kullanılır.
+  static const String _defaultProxyUrl =
+      'https://melody-stream-proxy.yusufgunes06502002.workers.dev';
+
   static String? get proxyBaseUrl => proxyNotifier.value;
 
   /// Proxy URL'sini sabit biçime getirir (sonundaki `/` temizlenir).
@@ -71,26 +77,29 @@ class MusicService {
     return v.endsWith('/') ? v.substring(0, v.length - 1) : v;
   }
 
-  /// Uygulama açılışında kayıtlı proxy URL'sini yükler.
+  /// Uygulama açılışında kayıtlı proxy URL'sini yükler. Kayıt yoksa
+  /// varsayılan ücretsiz proxy kullanılır; `''` kayıtlıysa proxy kapalıdır.
   static Future<void> loadStreamProxy() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      if (!prefs.containsKey(_kProxyUrl)) {
+        proxyNotifier.value = _defaultProxyUrl;
+        return;
+      }
       final v = prefs.getString(_kProxyUrl);
       proxyNotifier.value = (v == null || v.trim().isEmpty) ? null : v.trim();
-    } catch (_) {}
+    } catch (_) {
+      proxyNotifier.value = _defaultProxyUrl;
+    }
   }
 
-  /// Proxy URL'sini kaydeder. Boş değer proxy'yi kapatır.
+  /// Proxy URL'sini kaydeder. Boş değer proxy'yi kapatır (`''` olarak saklanır).
   static Future<void> setStreamProxy(String? url) async {
     final v = (url == null || url.trim().isEmpty) ? null : url.trim();
     proxyNotifier.value = v;
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (v == null) {
-        await prefs.remove(_kProxyUrl);
-      } else {
-        await prefs.setString(_kProxyUrl, v);
-      }
+      await prefs.setString(_kProxyUrl, v ?? '');
     } catch (_) {}
   }
 
