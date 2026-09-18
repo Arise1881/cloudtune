@@ -41,6 +41,7 @@ NEW_VER="$MAJOR.$MINOR.$PATCH"
 NEW_BUILD=$((BUILD+1))
 [[ "$BUMP" == "current" ]] && NEW_BUILD=$BUILD
 NEW_FULL="$NEW_VER+$NEW_BUILD"
+NEW_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 echo "Yeni: $NEW_FULL"
 
@@ -165,6 +166,20 @@ with open('update.json', 'w') as f:
 print(f'update.json -> {d[\"version\"]} / {d[\"versionCode\"]}')
 "
 
+# ─── 6b. apps.json (iOS AltStore kaynağı) sürümünü güncelle ───
+python3 -c "
+import json
+p = 'apps.json'
+with open(p) as f:
+    a = json.load(f)
+app = a['apps'][0]
+app['version'] = '$NEW_VER'
+app['versionDate'] = '$NEW_DATE'
+with open(p, 'w') as f:
+    json.dump(a, f, indent=2, ensure_ascii=False)
+print(f'apps.json -> {app[\"version\"]} / {app[\"versionDate\"]}')
+"
+
 # ─── 7. GitHub release asset'lerini güncelle ───
 echo "── Eski asset'leri sil ──"
 RELEASE_ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
@@ -244,10 +259,27 @@ sed -i "s|melody_[0-9.]*_amd64.deb|$DEB_FILE|g" README.md
 
 # ─── 8. index.html + README + update.json push et ───
 echo "── Push ──"
-git add update.json index.html README.md
+git add update.json apps.json index.html README.md
 git -c user.name="Arise1881" -c user.email="arise1881@users.noreply.github.com" \
   commit -m "v$NEW_FULL: $BUMP bump, Pages manifest URL, release guncellemesi" 2>&1 | tail -1
 git push "https://x-access-token:${GH_TOKEN}@github.com/Arise1881/melody-dist.git" main 2>&1 | tail -1
+
+# ─── 8b. Kaynak repoyu push et (CI aynı sürümü derlesin) ───
+cd "$PROJECT"
+git add pubspec.yaml
+git -c user.name="Arise1881" -c user.email="arise1881@users.noreply.github.com" \
+  commit -m "chore: surum $NEW_FULL" 2>&1 | tail -1 || true
+git push "https://x-access-token:${GH_TOKEN}@github.com/Arise1881/melody.git" HEAD 2>&1 | tail -1
+
+# ─── 8c. iOS + Windows CI derlemelerini tetikle ───
+echo "── iOS + Windows derlemelerini tetikle ──"
+for wf in ios-build.yml windows-build.yml; do
+  curl -s -o /dev/null -w "$wf -> %{http_code}\n" -X POST \
+    -H "Authorization: token $GH_TOKEN" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/Arise1881/melody/actions/workflows/$wf/dispatches" \
+    -d '{"ref":"main"}'
+done
 
 # ─── 9. Son doğrulama ───
 echo "── Son doğrulama ──"
