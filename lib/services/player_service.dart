@@ -226,6 +226,7 @@ class PlayerService extends ChangeNotifier {
                 });
 
         var started = false;
+        final failed = <String>[];
         for (final url in candidates) {
           try {
             final source = await _buildSourceFromString(url, song);
@@ -247,13 +248,18 @@ class PlayerService extends ChangeNotifier {
             break;
           } catch (e) {
             lastError = e.toString();
+            failed.add('${Uri.tryParse(url)?.host ?? url} → $e');
             try {
               await _player.stop();
             } catch (_) {}
           }
         }
         if (!started) {
-          throw Exception(lastError ?? 'Akış başlatılamadı');
+          final brief = failed.take(3).join(' | ');
+          throw Exception(
+              lastError == null
+                  ? 'Akış başlatılamadı'
+                  : 'Akış başlatılamadı (${candidates.length} aday denendi: $brief)');
         }
         _saveSession();
         // Ön yükleme: sıradaki şarkının stream URL'ini arka planda çöz

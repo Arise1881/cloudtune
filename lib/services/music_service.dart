@@ -122,6 +122,10 @@ class MusicService {
         DateTime.now().difference(t) < const Duration(minutes: 10);
   }
 
+  /// Negatif önbellek içinde OLMAYAN (kısa süre içinde canlı doğrulanmış) sayaç.
+  static int _liveInvidiousCount() =>
+      _invidiousInstances.where((b) => !_invidiousDead(b)).length;
+
   /// InnerTube player: çoklu client dener, akış içeren ilk yanıtı döner.
   Future<Map<String, dynamic>?> _innerTubePlayer(String videoId) async {
     for (final client in _playerClients) {
@@ -402,7 +406,8 @@ class MusicService {
     } catch (_) {}
 
     if (urls.isEmpty) {
-      throw StreamUnavailableException('Akış çözülemedi');
+      throw StreamUnavailableException(
+          'Akış çözülemedi (Invidious: ${_liveInvidiousCount()}/${_invidiousInstances.length} kaynak canlı)');
     }
 
     // Türk mobil operatörleri googlevideo CDN bağlantısını IP düzeyinde
@@ -422,22 +427,25 @@ class MusicService {
   Future<List<String>> _invidiousLatestWorking(String videoId) async {
     for (final base in _invidiousInstances) {
       if (_invidiousDead(base)) continue;
-      try {
-        final data = await _getJson(
-          '$base/api/v1/videos/$videoId?fields=adaptiveFormats',
-          timeout: const Duration(seconds: 7),
-        );
-        if (data is Map<String, dynamic>) {
-          final urls = _audioUrlsFromInvidious(data);
-          if (urls.isNotEmpty) {
-            _deadInvidious.remove(base);
-            return urls;
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          final data = await _getJson(
+            '$base/api/v1/videos/$videoId?fields=adaptiveFormats',
+            timeout: const Duration(seconds: 7),
+          );
+          if (data is Map<String, dynamic>) {
+            final urls = _audioUrlsFromInvidious(data);
+            if (urls.isNotEmpty) {
+              // Başarılı: bu örneği canlı say, sıradaki aramalarda da dene.
+              _deadInvidious.remove(base);
+              return urls;
+            }
+            // Boş media: rate-limit'e takılmış olabilir — bir retry daha.
+            continue;
           }
-        }
-        _deadInvidious[base] = DateTime.now();
-      } catch (_) {
-        _deadInvidious[base] = DateTime.now();
+        } catch (_) {}
       }
+      _deadInvidious[base] = DateTime.now();
     }
     return const [];
   }
