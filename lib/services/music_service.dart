@@ -33,11 +33,17 @@ class MusicService {
   /// Halka açık Invidious örnekleri — biri kapanırsa diğeri kullanılır.
   /// Canlılık 2026-09-18 ölçüldü: yalnız kısıtsız JSON dönen tutulur; ölü
   /// örnekler mobil veride 7sn'lik timeout zinciri yaratıyordu.
-  static const List<String> _invidiousInstances = [
-    'https://invidious.f5.si',
-    'https://invidious.darkness.services',
-    'https://invidious.projectsegfau.lt',
-  ];
+  /// Instance → bu instance `local=true` (kendi CDN'i üzerinden proxy akış)
+  /// destekliyor mu? `local=true` googlevideo URL'sini instance'ın kendi
+  /// host'una çevirir: Türk operatörlerinin googlevideo IP engelini bypass
+  /// eder. darkness: EVET (206 audio/mp4 doğrulandı). f5.si: hayır (Anubis
+  /// bot-koruması videoplayback yolunu HTML'ye çeviriyor). segfau: JSON hiç
+  /// dönmüyor, local kapalı.
+  static const Map<String, bool> _invidiousInstances = {
+    'https://invidious.darkness.services': true,
+    'https://invidious.f5.si': false,
+    'https://invidious.projectsegfau.lt': false,
+  };
 
   /// Negatif önbellek: bir örnek son 10dk içinde yanıt vermediyse atlanır.
   static final Map<String, DateTime> _deadInvidious = {};
@@ -106,10 +112,17 @@ class MusicService {
   }
 
   /// Invidious: sırayla tüm örnekleri dener, ilk başarılı yanıtı döner.
+  /// `local=true` destekleyen örneklerde akış URL'leri instance üzerinden
+  /// proxy'lenir (googlevideo bypass). Sorgu-string path'lerde otomatik eklenir.
   Future<dynamic> _invidious(String path) async {
-    for (final base in _invidiousInstances) {
+    for (final entry in _invidiousInstances.entries) {
+      final base = entry.key;
       if (_invidiousDead(base)) continue;
-      final data = await _getJson('$base$path', timeout: const Duration(seconds: 7));
+      final local = entry.value
+          ? '${path.contains('?') ? '&' : '?'}local=true'
+          : '';
+      final data = await _getJson('$base$path$local',
+          timeout: const Duration(seconds: 7));
       if (data != null) return data;
       _deadInvidious[base] = DateTime.now();
     }
@@ -124,7 +137,7 @@ class MusicService {
 
   /// Negatif önbellek içinde OLMAYAN (kısa süre içinde canlı doğrulanmış) sayaç.
   static int _liveInvidiousCount() =>
-      _invidiousInstances.where((b) => !_invidiousDead(b)).length;
+      _invidiousInstances.keys.where((b) => !_invidiousDead(b)).length;
 
   /// InnerTube player: çoklu client dener, akış içeren ilk yanıtı döner.
   Future<Map<String, dynamic>?> _innerTubePlayer(String videoId) async {
@@ -424,13 +437,17 @@ class MusicService {
   /// Invidious videos API'den gerçek ses akış URL'lerini alır. `/latest_version`
   /// endpoint'i artık çoğu örnekte bot-challenge/companion sayfasına (302 HTML)
   /// düşüyor, o yüzden doğrudan adaptiveFormats JSON'u tercih edilir.
+  /// `local=true` destekleyen örneklerde (darkness) URL'ler instance'ın kendi
+  /// CDN'i üzerinden proxy'lenir: googlevideo IP engeli bypass edilir.
   Future<List<String>> _invidiousLatestWorking(String videoId) async {
-    for (final base in _invidiousInstances) {
+    for (final entry in _invidiousInstances.entries) {
+      final base = entry.key;
       if (_invidiousDead(base)) continue;
+      final local = entry.value ? '&local=true' : '';
       for (var attempt = 0; attempt < 2; attempt++) {
         try {
           final data = await _getJson(
-            '$base/api/v1/videos/$videoId?fields=adaptiveFormats',
+            '$base/api/v1/videos/$videoId?fields=adaptiveFormats$local',
             timeout: const Duration(seconds: 7),
           );
           if (data is Map<String, dynamic>) {
@@ -504,18 +521,26 @@ class MusicService {
         }
       }
     }
+    // itag bazı Invidious sürümlerinde sayı, bazılarında string gelir.
+    int? itagOf(Map<String, dynamic> f) {
+      final v = f['itag'];
+      if (v is String) return int.tryParse(v);
+      if (v is num) return v.toInt();
+      return null;
+    }
     final chosen = <Map<String, dynamic>>[];
     for (final f in all) {
       // Eski Invidious: mimeType. Yeni Invidious: type. İkisi de olabilir.
       final raw = (f['mimeType'] ?? f['type'] ?? '').toString().toLowerCase();
       final isMp4 = raw.contains('mp4') || raw.contains('m4a');
+      final itag = itagOf(f);
       final hasAudio = raw.contains('audio') ||
           (f['audioQuality'] as String?)?.isNotEmpty == true ||
           (f['audioChannels'] as num?) != null ||
-          (f['itag'] as num?) == 140 ||
-          (f['itag'] as num?) == 139 ||
-          (f['itag'] as num?) == 251 ||
-          (f['itag'] as num?) == 18;
+          itag == 140 ||
+          itag == 139 ||
+          itag == 251 ||
+          itag == 18;
       if (!hasAudio) continue;
       final url = f['url'] as String;
       if (!url.startsWith('https')) continue;
@@ -824,7 +849,8 @@ class MusicService {
 
   /// Invidious üzerinden altyazı (söz) metnini getirir.
   Future<String> _invidiousCaption(String videoId) async {
-    for (final base in _invidiousInstances) {
+    for (final entry in _invidiousInstances.entries) {
+      final base = entry.key;
       try {
         final data =
             await _getJson('$base/api/v1/captions/$videoId', timeout: const Duration(seconds: 7));
