@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.melody" "\0"
-            VALUE "FileDescription", "sonora" "\0"
+            VALUE "FileDescription", "Melody" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "sonora" "\0"
+            VALUE "InternalName", "Melody" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.melody. All rights reserved." "\0"
-            VALUE "OriginalFilename", "sonora.exe" "\0"
-            VALUE "ProductName", "sonora" "\0"
+            VALUE "OriginalFilename", "melody.exe" "\0"
+            VALUE "ProductName", "Melody" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
