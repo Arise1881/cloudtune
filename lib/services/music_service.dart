@@ -31,20 +31,16 @@ class MusicService {
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
   /// Halka açık Invidious örnekleri — biri kapanırsa diğeri kullanılır.
-  /// Canlılık 2026-09-17 ölçüldü: yalnız 200 dönen tutulur; ölü örnekler
-  /// mobil veride 7sn'lik timeout zinciri yaratıyordu.
+  /// Canlılık 2026-09-18 ölçüldü: yalnız kısıtsız JSON dönen tutulur; ölü
+  /// örnekler mobil veride 7sn'lik timeout zinciri yaratıyordu.
   static const List<String> _invidiousInstances = [
     'https://invidious.f5.si',
-    'https://invidious.nerdvpn.de',
-    'https://invidious.kavin.rocks',
-    'https://inv.riverside.rocks',
-    'https://invidious.myoxy.de',
+    'https://invidious.darkness.services',
     'https://invidious.projectsegfau.lt',
-    'https://invidious.osi.kr',
-    'https://invidious.fdn.fr',
-    'https://invidious.tiekoetter.com',
-    'https://invidious.slipfox.xyz',
   ];
+
+  /// Negatif önbellek: bir örnek son 10dk içinde yanıt vermediyse atlanır.
+  static final Map<String, DateTime> _deadInvidious = {};
 
   /// Innertube player deneme sırası: bazı videolar için bazı istemciler
   /// akış döndürmez, diğerleri döndürür.
@@ -112,10 +108,18 @@ class MusicService {
   /// Invidious: sırayla tüm örnekleri dener, ilk başarılı yanıtı döner.
   Future<dynamic> _invidious(String path) async {
     for (final base in _invidiousInstances) {
+      if (_invidiousDead(base)) continue;
       final data = await _getJson('$base$path', timeout: const Duration(seconds: 7));
       if (data != null) return data;
+      _deadInvidious[base] = DateTime.now();
     }
     throw StreamUnavailableException('Invidious örnekleri yanıt vermedi');
+  }
+
+  static bool _invidiousDead(String base) {
+    final t = _deadInvidious[base];
+    return t != null &&
+        DateTime.now().difference(t) < const Duration(minutes: 10);
   }
 
   /// InnerTube player: çoklu client dener, akış içeren ilk yanıtı döner.
@@ -412,42 +416,30 @@ class MusicService {
   /// Invidious `/latest_version` — her örnekte akış var mı diye HEAD atar,
   /// çalışan ilk örneğin itag URL'lerini döner (140=mp4, 139=düşük mp4,
   /// 251=opus). Redirect'i oynatıcı takip eder → doğrudan googlevideo akışı.
+  /// Invidious: videos API'den gerçek ses akış URL'lerini alır. `/latest_version`
+  /// endpoint'i artık çoğu örnekte bot-challenge/companion sayfasına (302 HTML)
+  /// düşüyor, o yüzden doğrudan adaptiveFormats JSON'u tercih edilir.
   Future<List<String>> _invidiousLatestWorking(String videoId) async {
     for (final base in _invidiousInstances) {
-      if (await _rangeOk('$base/latest_version?id=$videoId&itag=140')) {
-        return [
-          '$base/latest_version?id=$videoId&itag=140',
-          '$base/latest_version?id=$videoId&itag=139',
-          '$base/latest_version?id=$videoId&itag=251',
-        ];
+      if (_invidiousDead(base)) continue;
+      try {
+        final data = await _getJson(
+          '$base/api/v1/videos/$videoId?fields=adaptiveFormats',
+          timeout: const Duration(seconds: 7),
+        );
+        if (data is Map<String, dynamic>) {
+          final urls = _audioUrlsFromInvidious(data);
+          if (urls.isNotEmpty) {
+            _deadInvidious.remove(base);
+            return urls;
+          }
+        }
+        _deadInvidious[base] = DateTime.now();
+      } catch (_) {
+        _deadInvidious[base] = DateTime.now();
       }
     }
     return const [];
-  }
-
-  /// Range isteği — URL gerçek bir medya dosyası mı (206/Content-Range)?
-  /// HEAD yerine kısmi GET: bazı Invidious sunucuları HEAD'e 200/HTML dönüp
-  /// yanlış pozitif üretiyordu.
-  Future<bool> _rangeOk(String url) async {
-    final t = const Duration(seconds: 5);
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
-    try {
-      final req = await client.getUrl(Uri.parse(url));
-      req.headers.set(HttpHeaders.userAgentHeader, _webUa);
-      req.headers.set(HttpHeaders.rangeHeader, 'bytes=0-0');
-      final res = await req.close().timeout(t);
-      final code = res.statusCode;
-      final hasRange =
-          res.headers.value(HttpHeaders.contentRangeHeader) != null;
-      await res.drain<void>().catchError((_) {});
-      return (code == HttpStatus.ok ||
-              code == HttpStatus.partialContent) &&
-          hasRange;
-    } catch (_) {
-      return false;
-    } finally {
-      client.close(force: true);
-    }
   }
 
   /// streamingData'dan ses URL'lerini çıkarır (en iyi önce, mp4/m4a tercih).
@@ -506,21 +498,25 @@ class MusicService {
     }
     final chosen = <Map<String, dynamic>>[];
     for (final f in all) {
-      final type = (f['type'] as String? ?? '')
-          .toLowerCase()
-          .replaceAll('audio/mp4;', 'audio/mp4') // gürültü normalization
-          .contains('audio');
-      final hasAudio = type ||
+      // Eski Invidious: mimeType. Yeni Invidious: type. İkisi de olabilir.
+      final raw = (f['mimeType'] ?? f['type'] ?? '').toString().toLowerCase();
+      final isMp4 = raw.contains('mp4') || raw.contains('m4a');
+      final hasAudio = raw.contains('audio') ||
           (f['audioQuality'] as String?)?.isNotEmpty == true ||
-          (f['bitrate'] as num?) != null;
+          (f['audioChannels'] as num?) != null ||
+          (f['itag'] as num?) == 140 ||
+          (f['itag'] as num?) == 139 ||
+          (f['itag'] as num?) == 251 ||
+          (f['itag'] as num?) == 18;
       if (!hasAudio) continue;
       final url = f['url'] as String;
       if (!url.startsWith('https')) continue;
+      f['_isMp4'] = isMp4;
       chosen.add(f);
     }
     chosen.sort((a, b) {
-      final aMp4 = (a['type'] as String).contains('mp4');
-      final bMp4 = (b['type'] as String).contains('mp4');
+      final aMp4 = a['_isMp4'] == true;
+      final bMp4 = b['_isMp4'] == true;
       if (aMp4 != bMp4) return aMp4 ? -1 : 1;
       final aBr = (a['bitrate'] as num?) ?? 0;
       final bBr = (b['bitrate'] as num?) ?? 0;
