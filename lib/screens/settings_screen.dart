@@ -5,6 +5,7 @@ import '../constants.dart';
 import '../services/connectivity_service.dart';
 import '../services/download_manager.dart';
 import '../services/equalizer_service.dart';
+import '../services/music_service.dart';
 import '../services/player_service.dart';
 import '../services/theme_service.dart';
 import 'equalizer_screen.dart';
@@ -126,6 +127,10 @@ class SettingsScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             _sectionTitle('Bağlantı'),
+            ValueListenableBuilder<String?>(
+              valueListenable: MusicService.proxyNotifier,
+              builder: (context, proxy, _) => _proxyTile(context, proxy),
+            ),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: _toggleTile(
@@ -145,8 +150,78 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _speedSelector(PlayerService player) {
-    const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+  /// Akış proxy'si (Cloudflare Workers) ayar satırı.
+  Widget _proxyTile(BuildContext context, String? proxy) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.cloud_outlined, color: AppColors.textSecondary),
+      title: const Text(
+        'Akış Proxy URL',
+        style: TextStyle(color: AppColors.textPrimary),
+      ),
+      subtitle: Text(
+        proxy ??
+            'Kapalı — ücretsiz Cloudflare Workers proxy adresi girerek '
+                'googlevideo engelini aş',
+        style: const TextStyle(color: AppColors.textSecondary),
+      ),
+      trailing: proxy != null
+          ? IconButton(
+              icon: const Icon(Icons.delete_outline,
+                  color: AppColors.textSecondary),
+              tooltip: 'Proxy\'yi kaldır',
+              onPressed: () => MusicService.setStreamProxy(null),
+            )
+          : const Icon(Icons.edit, color: AppColors.textSecondary),
+      onTap: () => _editProxyDialog(context, proxy),
+    );
+  }
+
+  Future<void> _editProxyDialog(BuildContext context, String? current) async {
+    final controller = TextEditingController(text: current ?? '');
+    final result = await showDialog<String?>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: const Text('Akış Proxy URL'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Ücretsiz Cloudflare Workers proxy adresin. Boş bırakırsan '
+              'kapatılır.',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autocorrect: false,
+              keyboardType: TextInputType.url,
+              style: const TextStyle(color: AppColors.textPrimary),
+              decoration: const InputDecoration(
+                hintText: 'https://melody-stream.xxxx.workers.dev',
+                hintStyle: TextStyle(color: AppColors.textSecondary),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('İptal'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('Kaydet'),
+          ),
+        ],
+      ),
+    );
+    if (result != null) await MusicService.setStreamProxy(result);
+  }
+
+  Widget _speedSelector(PlayerService player) {    const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
     return Wrap(
       spacing: 8,
       children: speeds.map((s) {

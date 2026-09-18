@@ -74,6 +74,7 @@ void _warmUpServices() {
         ));
   }
   _safe('Kitaplık', () => LibraryStore.instance.init());
+  _safe('Akış proxy', () => MusicService.loadStreamProxy());
   _safe('Ses kalitesi', () => PlayerService.instance.loadQualityPref());
   _safe('Ekolayzer', () => EqualizerService.instance.init());
   _safe('Tema', () => ThemeService.instance.init());

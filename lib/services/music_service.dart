@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import '../models/search_content.dart';
@@ -48,6 +50,53 @@ class MusicService {
 
   /// Negatif önbellek: bir örnek son 10dk içinde yanıt vermediyse atlanır.
   static final Map<String, DateTime> _deadInvidious = {};
+
+  /// Kullanıcının kendi Cloudflare Workers akış proxy'si
+  /// (ör. `https://melody-stream.<kullanıcı>.workers.dev`). Boşsa devre dışı.
+  ///
+  /// Proxy iki iş yapar: (1) `/v1/stream/{videoId}` ile ses URL'sini
+  /// Cloudflare ağından çözer, (2) googlevideo akışını kendi üzerinden
+  /// aktarır. Böylece Türk operatörlerinin googlevideo CDN IP engeli aşılır
+  /// ve Invidious erişimi de gerektiğinde devreden çıkar.
+  static final ValueNotifier<String?> proxyNotifier =
+      ValueNotifier<String?>(null);
+  static const String _kProxyUrl = 'stream_proxy_url';
+
+  static String? get proxyBaseUrl => proxyNotifier.value;
+
+  /// Proxy URL'sini sabit biçime getirir (sonundaki `/` temizlenir).
+  static String? get _proxyBase {
+    final v = proxyNotifier.value?.trim();
+    if (v == null || v.isEmpty) return null;
+    return v.endsWith('/') ? v.substring(0, v.length - 1) : v;
+  }
+
+  /// Uygulama açılışında kayıtlı proxy URL'sini yükler.
+  static Future<void> loadStreamProxy() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final v = prefs.getString(_kProxyUrl);
+      proxyNotifier.value = (v == null || v.trim().isEmpty) ? null : v.trim();
+    } catch (_) {}
+  }
+
+  /// Proxy URL'sini kaydeder. Boş değer proxy'yi kapatır.
+  static Future<void> setStreamProxy(String? url) async {
+    final v = (url == null || url.trim().isEmpty) ? null : url.trim();
+    proxyNotifier.value = v;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (v == null) {
+        await prefs.remove(_kProxyUrl);
+      } else {
+        await prefs.setString(_kProxyUrl, v);
+      }
+    } catch (_) {}
+  }
+
+  /// googlevideo URL'sini `/stream/<base64url>` yoluna çevirir.
+  static String _proxyEncodedStreamUrl(String proxy, String url) =>
+      '$proxy/stream/${base64Url.encode(utf8.encode(url)).replaceAll('=', '')}';
 
   /// Innertube player deneme sırası: bazı videolar için bazı istemciler
   /// akış döndürmez, diğerleri döndürür.
@@ -387,8 +436,15 @@ class MusicService {
   /// Sonuç: aracı (proxyless) adaylar başa, googlevideo CDN'leri en sona.
   Future<List<String>> streamUrlCandidates(String videoId) async {
     final urls = <String>[];
+    final proxy = _proxyBase;
     void add(String u) {
       if (u.isNotEmpty && !urls.contains(u)) urls.add(u);
+    }
+
+    // 0) Kullanıcı Cloudflare Workers proxy'si tanımlıysa: tek adres hem
+    //    ses URL'sini çözer hem CDN'i proxy'ler. En hızlı ve en güvenilir yol.
+    if (proxy != null) {
+      add('$proxy/v1/stream/$videoId');
     }
 
     // 1) Invidious videos API (adaptiveFormats) — doğrulanmış, en hızlı yol.
@@ -432,14 +488,22 @@ class MusicService {
     }
 
     // Türk mobil operatörleri googlevideo CDN bağlantısını IP düzeyinde
-    // kısıtlayabiliyor. Doğrudan CDN adayları her zaman en sona; aracı
-    // (invidious/latest_version redirect) adaylar başa gelir.
+    // kısıtlayabiliyor. Sıralama:
+    //   1. Proxy'lenmiş googlevideo adayları (Cloudflare Workers üzerinden)
+    //   2. Aracı (invidious) inline adaylar
+    //   3. Doğrudan googlevideo CDN adayları (en son çare)
+    final proxied = <String>[];
     final inline = <String>[];
     final cdn = <String>[];
     for (final u in urls) {
-      (u.contains('googlevideo') ? cdn : inline).add(u);
+      if (u.contains('googlevideo')) {
+        cdn.add(u);
+        if (proxy != null) proxied.add(_proxyEncodedStreamUrl(proxy, u));
+      } else {
+        inline.add(u);
+      }
     }
-    return [...inline, ...cdn];
+    return [...proxied, ...inline, ...cdn];
   }
 
   /// Invidious videos API'den gerçek ses akış URL'lerini alır. `/latest_version`
