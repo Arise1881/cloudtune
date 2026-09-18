@@ -2,9 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import '../models/search_content.dart';
@@ -61,210 +58,6 @@ class MusicService {
 
   final YoutubeExplode _yt = YoutubeExplode();
 
-  /// Ayarlanmış akış sunucusu (proxy) taban adresi, ör. http://192.168.1.10:8800.
-  /// YouTube 2025 sonrası tüm akışları po_token ile koruduğu için, kullanıcı
-  /// kendi yt-dlp proxy'sini (melody-proxy/) buraya yazar. Boşsa yalnızca
-  /// Invidious/InnerTube zinciri kullanılır.
-  static String? proxyUrl;
-  static const String _proxyKey = 'stream_proxy';
-
-  /// Kayıtlı proxy adresini hafızadan yükler (uygulama açılışında çağrılır).
-  /// Hiç kaydedilmemişse LAN'daki bilinen proxy hostlarını otomatik arar.
-  static Future<void> loadPrefs() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final v = prefs.getString(_proxyKey)?.trim();
-      final saved =
-          (v == null || v.isEmpty) ? null : _stripTrailingSlash(v);
-      proxyUrl = saved;
-      if (saved == null) {
-        proxyUrl = await _autoDiscover();
-        if (proxyUrl != null) {
-          await prefs.setString(_proxyKey, proxyUrl!);
-        }
-      }
-    } catch (_) {}
-  }
-
-  /// Ayarlanan proxy bulunamazsa LAN'da bilinen host adlarını dener.
-  static const List<String> _knownProxyHosts = [
-    '10.0.2.2',
-    '192.168.1.102',
-    'melody-proxy.local',
-  ];
-
-  /// LAN proxy'sini sessizce arar; bulursa adresi döner, bulamazsa null.
-  /// Tüm hostlar PARALEL denenir — sıralı deneme 4sn uygulama açılış zaman
-  /// aşımını aşıyordu ve keşif yarıda ölüyordu.
-  static Future<String?> _autoDiscover() async {
-    final results = await Future.wait(_knownProxyHosts.map(_probeProxy));
-    for (final base in results) {
-      if (base != null) return base;
-    }
-    return null;
-  }
-
-  /// Tek host'a health ping atar. Başarılıysa base URL, değilse null döner.
-  static Future<String?> _probeProxy(String host) async {
-    final base = 'http://$host:8800';
-    try {
-      final client = HttpClient()
-        ..connectionTimeout = const Duration(milliseconds: 1200);
-      try {
-        final req = await client
-            .getUrl(Uri.parse('$base/health'))
-            .timeout(const Duration(seconds: 2));
-        final res = await req.close().timeout(const Duration(seconds: 2));
-        await res.drain<void>().timeout(const Duration(seconds: 1));
-        if (res.statusCode == HttpStatus.ok) {
-          debugPrint('PROXY: otomatik keşif başarılı -> $base');
-          return base;
-        }
-      } finally {
-        client.close(force: true);
-      }
-    } catch (e) {
-      debugPrint('PROXY: $host bulunamadı ($e)');
-    }
-    return null;
-  }
-
-  /// Proxy adresini ayarlar ve kalıcı kaydeder. Boş/geçersiz → proxy kapalı.
-  static Future<void> setProxy(String? url) async {
-    final v = url?.trim() ?? '';
-    proxyUrl = v.isEmpty ? null : _stripTrailingSlash(v);
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      if (proxyUrl == null) {
-        await prefs.remove(_proxyKey);
-      } else {
-        await prefs.setString(_proxyKey, proxyUrl!);
-      }
-    } catch (_) {}
-  }
-
-  static String _stripTrailingSlash(String v) =>
-      v.replaceAll(RegExp(r'/+$'), '');
-
-  bool _isMobileNetwork = false;
-
-  Future<bool> _detectMobileNetwork() async {
-    try {
-      final results = await Connectivity().checkConnectivity();
-      _isMobileNetwork =
-          results.contains(ConnectivityResult.mobile) &&
-              !results.contains(ConnectivityResult.wifi);
-    } catch (_) {}
-    return _isMobileNetwork;
-  }
-
-  /// Proxy üzerinden po_token destekli ses akış URL'leri. Dönmezse boş liste.
-  /// Tünel bir BONUSTUR: PC/ sunucu kapalıysa ölü tünel 3sn'de elenir,
-  /// app tamamen bağımsız (Invidious/InnerTube) akışa düşer. Böylece
-  /// Melody hiçbir dış sunucuya bağımlı değildir.
-  Future<List<String>> _proxyStreamUrls(String videoId) async {
-    final urls = <String>[];
-    Future<void> addBase(String? base) async {
-      if (base == null || base.isEmpty) return;
-      final b = base.replaceAll(RegExp(r'/$'), '');
-      // Canlılık kontrolü: ölü tünel 3sn'de elenir, 10 dk tekrar denenmez.
-      if (base != _lastCheckedBase ||
-          DateTime.now().difference(_lastBaseCheckAt) >
-              const Duration(minutes: 10)) {
-        _lastCheckedBase = base;
-        _lastBaseAlive = await _isBaseAlive(b);
-        _lastBaseCheckAt = DateTime.now();
-        if (_lastBaseAlive == false) {
-          _tunnelUrl = null; // ölü tüneli önbellekten at
-          debugPrint('Melody proxy ölü, bağımsız akışa geçiliyor: $b');
-        }
-      }
-      if (_lastBaseAlive != true) return;
-      // En hızlı yol: sunucunun kendi akışını direkt dene. stream URL
-      // çözümünü beklemek mobilde 5-10sn kaybettirirdi; üç format zinciri
-      // her şarkıda en az birinin olmasını garanti eder.
-      urls.add('$b/api/v1/relay?video_id=$videoId&format=140');
-      urls.add('$b/api/v1/relay?video_id=$videoId&format=139');
-      urls.add('$b/api/v1/relay?video_id=$videoId&format=251');
-    }
-
-    // Mobil veride LAN proxy'si (192.168.x.x) erişilemez olacağı için atlanır;
-    // sadece genel tünel denenir. Wi-Fi'de tam tersi: tünel de denenir ama
-    // LAN proxy önceliklidir (zaten en önce ekleniyor).
-    final mobile = _isMobileNetwork || await _detectMobileNetwork();
-    if (!mobile) await addBase(proxyUrl);
-    await addBase(await _autoTunnelUrl());
-    return urls;
-  }
-
-  String? _lastCheckedBase;
-  bool? _lastBaseAlive;
-  DateTime _lastBaseCheckAt = DateTime.fromMillisecondsSinceEpoch(0);
-
-  Future<bool> _isBaseAlive(String base) async {
-    try {
-      final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
-      final req = await client.getUrl(Uri.parse('$base/'))
-          .timeout(const Duration(seconds: 3));
-      req.headers.set(HttpHeaders.userAgentHeader, _webUa);
-      final res = await req.close().timeout(const Duration(seconds: 3));
-      await res.drain<void>().catchError((_) {});
-      // Herhangi bir HTTP yanıtı var = canlı (404 dahil). DNS çözülmezse
-      // veya bağlantı kurulamazsa hata fırlar → false.
-      return res.statusCode >= 100 && res.statusCode < 600;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /// Genel tünel adresi (trycloudflare) — sunucu bunu melody-dist/tunnel.txt
-  /// dosyasında yayınlar; uygulama her ~6dk da bir tazeler. Böylece
-  /// kullanıcının eli hiç değmez: mobil veride akış otomatik başlar.
-  static String? _tunnelUrl;
-  static DateTime? _tunnelFetchedAt;
-  static bool _tunnelFetching = false;
-
-  static Future<String?> _autoTunnelUrl() async {
-    final now = DateTime.now();
-    if (_tunnelUrl != null &&
-        _tunnelFetchedAt != null &&
-        now.difference(_tunnelFetchedAt!) < const Duration(seconds: 60)) {
-      return _tunnelUrl;
-    }
-    if (_tunnelFetching) return _tunnelUrl;
-    _tunnelFetching = true;
-    try {
-      final client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 6);
-      try {
-        // raw.githubusercontent.com eski içeriği cache'liyor; GitHub API
-        // her zaman güncel içeriği döndürür (base64). Cache bypass için
-        // timestamp parametresi de eklenir.
-        final ts = DateTime.now().millisecondsSinceEpoch;
-        final req = await client.getUrl(Uri.parse(
-            'https://api.github.com/repos/Arise1881/melody-dist/contents/tunnel.txt?ts=$ts'));
-        req.headers.set(HttpHeaders.userAgentHeader, _webUa);
-        req.headers.set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
-        final res = await req.close().timeout(const Duration(seconds: 8));
-        _tunnelFetchedAt = now;
-        if (res.statusCode == HttpStatus.ok) {
-          final body = await res.transform(utf8.decoder).join();
-          final decoded = jsonDecode(body);
-          final b64 = (decoded as Map<String, dynamic>)['content'] as String?;
-          if (b64 != null) {
-            final u = utf8.decode(base64.decode(b64.replaceAll('\n', ''))).trim();
-            if (u.startsWith('https://') || u.startsWith('http://')) {
-              _tunnelUrl = u;
-            }
-          }
-        }
-      } finally {
-        client.close(force: true);
-      }
-    } catch (_) {}
-    _tunnelFetching = false;
-    return _tunnelUrl;
-  }
 
   Future<T> _bounded<T>(Future<T> Function() task) {
     return task().timeout(_timeout, onTimeout: () {
@@ -414,37 +207,6 @@ class MusicService {
   /// Tek bozuk sonuç listeyi çökertmez.
   Future<List<Song>> search(String query, {int limit = 25}) async {
     return _bounded(() async {
-      // 0) Akış sunucusu (proxy) araması: yt-dlp ytsearch, öncelikli.
-      final base = proxyUrl;
-      if (base != null && base.isNotEmpty) {
-        try {
-          final data = await _getJson(
-            '$base/api/v1/search?q=${Uri.encodeQueryComponent(query)}'
-            '&limit=$limit',
-            timeout: const Duration(seconds: 15),
-          );
-          if (data is Map && data['songs'] is List) {
-            final songs = <Song>[];
-            for (final it in data['songs'] as List) {
-              if (it is! Map) continue;
-              final id = it['videoId'];
-              if (id is! String || id.isEmpty) continue;
-              final secs = it['duration'] as num?;
-              songs.add(Song(
-                id: id,
-                title: (it['title'] as String?) ?? query,
-                artist: (it['channel'] as String?) ?? '',
-                durationMs:
-                    secs == null ? 0 : Duration(seconds: secs.toInt()).inMilliseconds,
-                thumbnailUrl: (it['thumbnail'] as String?) ?? '',
-              ));
-              if (songs.length >= limit) break;
-            }
-            if (songs.isNotEmpty) return songs;
-          }
-        } catch (_) {}
-      }
-
       // 1) Invidious arama (type=video — yalnızca şarkı)
       try {
         final data = await _invidious(
@@ -595,12 +357,6 @@ class MusicService {
   /// 3) Invidious videos endpoint'i.
   /// 4) youtube_explode manifest (son çare).
   Future<List<String>> streamUrlCandidates(String videoId) async {
-    // 0) Ayarlanmış akış sunucusu (proxy): yt-dlp po_token çözümü, öncelikli.
-    try {
-      final proxy = await _proxyStreamUrls(videoId);
-      if (proxy.isNotEmpty) return proxy;
-    } catch (_) {}
-
     try {
       final latest = await _invidiousLatestWorking(videoId);
       if (latest.isNotEmpty) return latest;
@@ -643,8 +399,8 @@ class MusicService {
     }
 
     // Türk mobil operatörleri googlevideo CDN bağlantısını IP düzeyinde
-    // kısıtlayabiliyor. Doğrudan CDN adayları her zaman en sona; relay /
-    // sunucu üzerinden giden adaylar (proxy, tünel, redirect) başa gelir.
+    // kısıtlayabiliyor. Doğrudan CDN adayları her zaman en sona; aracı
+    // (invidious/latest_version redirect) adaylar başa gelir.
     final inline = <String>[];
     final cdn = <String>[];
     for (final u in urls) {
