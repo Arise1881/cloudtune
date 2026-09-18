@@ -60,6 +60,14 @@ flutter build apk --release 2>&1 | tail -3
 
 echo "── Linux ──"
 flutter build linux --release 2>&1 | tail -3
+echo "── Windows (yalnızca Windows makinede) ──"
+if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == CYGWIN* || "$(uname -s)" == MSYS* ]]; then
+  flutter build windows --release 2>&1 | tail -3
+fi
+echo "── iOS (yalnızca macOS makinede) ──"
+if [[ "$(uname -s)" == Darwin ]]; then
+  flutter build ios --release --no-codesign 2>&1 | tail -3
+fi
 
 # ─── 5. Artifact'leri hazırla ───
 echo "── Artifact hazırlama ──"
@@ -73,6 +81,24 @@ cp -f build/app/outputs/flutter-apk/app-x86_64-release.apk "$STAGING/Melody-x86_
 cd build/linux/x64/release
 tar -czf "$STAGING/Melody-linux.tar.gz" bundle
 cd "$PROJECT"
+
+# Windows zip (yalnızca Windows makinede build edilirse)
+if [[ -f build/windows/x64/runner/Release/melody.exe ]]; then
+  echo "── Windows paketle ──"
+  cd build/windows/x64/runner/Release
+  zip -qr "$STAGING/Melody-windows.zip" . -x "*.pdb" -x "flutter_windows.dll" -x "Darwin*"
+  cd "$PROJECT"
+fi
+
+# iOS ipa (yalnızca macOS makinede build edilirse)
+if [[ -d build/ios/iphoneos ]]; then
+  echo "── iOS paketle ──"
+  mkdir -p /tmp/opencode/ipa/Payload
+  cp -R build/ios/iphoneos/*.app /tmp/opencode/ipa/Payload/
+  cd /tmp/opencode/ipa
+  zip -qr "$STAGING/Melody.ipa" Payload
+  cd "$PROJECT"
+fi
 
 # DEB paketle
 DEB_DIR="/tmp/opencode/melody-deb"
@@ -148,9 +174,12 @@ RELEASE_ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
 ASSET_IDS=$(curl -s -H "Authorization: token $GH_TOKEN" \
   "https://api.github.com/repos/Arise1881/melody-dist/releases/tags/$RELEASE_TAG" \
   | python3 -c "
-import sys,json
+import sys,json,os.path
+skip = set()
+if os.path.exists('$STAGING/Melody.ipa'): skip.add('Melody.ipa')
+if os.path.exists('$STAGING/Melody-windows.zip'): skip.add('Melody-windows.zip')
 for a in json.load(sys.stdin)['assets']:
-    if a['name'] != 'Melody.ipa' and a['name'] != 'Melody-windows.zip':
+    if a['name'] not in skip:
         print(a['id'])
 ")
 for aid in $ASSET_IDS; do
@@ -179,6 +208,17 @@ curl -s -o /dev/null -w "$DEB_FILE -> %{http_code}\n" -X POST \
   -H "Content-Type: application/vnd.debian.binary-package" \
   --data-binary "@$STAGING/$DEB_FILE" \
   "$UPLOAD?name=$DEB_FILE"
+
+# Windows + iOS paketleri (yalnızca build edilen varsa yenilenir)
+for f in Melody-windows.zip Melody.ipa; do
+  if [[ -f "$STAGING/$f" ]]; then
+    curl -s -o /dev/null -w "$f -> %{http_code}\n" -X POST \
+      -H "Authorization: token $GH_TOKEN" \
+      -H "Content-Type: application/octet-stream" \
+      --data-binary "@$STAGING/$f" \
+      "$UPLOAD?name=$f"
+  fi
+done
 
 # Eski deb asset'ini sil (farklı isimde kalabilir)
 OLD_DEB_ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
