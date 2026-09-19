@@ -131,6 +131,20 @@ class SettingsScreen extends StatelessWidget {
               valueListenable: MusicService.proxyNotifier,
               builder: (context, proxy, _) => _proxyTile(context, proxy),
             ),
+            ValueListenableBuilder<bool>(
+              valueListenable: MusicService.youtubeEnabledNotifier,
+              builder: (context, enabled, _) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: _toggleTile(
+                  title: 'YouTube Kaynağı (Kişisel)',
+                  subtitle: enabled
+                      ? 'YouTube arama ve akış açık — proxy gerekebilir'
+                      : 'Kapalı — varsayılan Audius + Internet Archive (sunucusuz)',
+                  value: enabled,
+                  onChanged: MusicService.setYoutubeEnabled,
+                ),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: _toggleTile(

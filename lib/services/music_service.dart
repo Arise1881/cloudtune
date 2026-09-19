@@ -65,6 +65,34 @@ class MusicService {
       ValueNotifier<String?>(null);
   static const String _kProxyUrl = 'stream_proxy_url';
 
+  /// YouTube kişisel kaynağı açık mı? Varsayılan KAPALI — varsayılan katalog
+  /// Audius + Internet Archive (sunucusuz, keyless). Kullanıcı kişisel olarak
+  /// YouTube istiyorsa ayarlardan açar (proxy gerekebilir).
+  static final ValueNotifier<bool> youtubeEnabledNotifier =
+      ValueNotifier<bool>(false);
+  static const String _kYoutubeEnabled = 'youtube_enabled';
+
+  static bool get youtubeEnabled => youtubeEnabledNotifier.value;
+
+  /// Uygulama açılışında YouTube kaynak ayarını yükler.
+  static Future<void> loadYoutubeEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      youtubeEnabledNotifier.value = prefs.getBool(_kYoutubeEnabled) ?? false;
+    } catch (_) {
+      youtubeEnabledNotifier.value = false;
+    }
+  }
+
+  /// Kullanıcı tercihini kaydeder ve notifier'ı günceller.
+  static Future<void> setYoutubeEnabled(bool enabled) async {
+    youtubeEnabledNotifier.value = enabled;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kYoutubeEnabled, enabled);
+    } catch (_) {}
+  }
+
   /// Varsayılan ücretsiz proxy (kullanıcının Cloudflare Workers hesabı).
   /// Kullanıcı ayarlardan silerse ayar `''` olarak saklanır ve proxy kapanır;
   /// hiç kayıt yoksa bu varsayılan kullanılır.
@@ -332,6 +360,7 @@ class MusicService {
       final songs = await InternetArchiveSource().search(query, limit: limit);
       if (songs.isNotEmpty) return songs;
     } catch (_) {}
+    if (!youtubeEnabled) return const [];
     return _searchYoutube(query, limit: limit);
   }
 
@@ -749,6 +778,7 @@ class MusicService {
           return const [];
         }
       case MusicSourceType.youtube:
+        if (!youtubeEnabled) return const [];
         return streamCandidatesWithQuality(song.id, quality: quality);
     }
   }
@@ -830,6 +860,7 @@ class MusicService {
       }
     } catch (_) {}
 
+    if (!youtubeEnabled) return const [];
     final query = '${song.title} ${song.artist}';
     final songs = await search('$query benzerleri', limit: 20);
     if (songs.isNotEmpty) {
