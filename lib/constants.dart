@@ -18,7 +18,7 @@ class AppColors {
 }
 
 class AppStrings {
-  static const appName = 'Melody';
+  static const appName = 'CloudTune';
   static const offlineTitle = 'Çevrimdışı mod';
   static const offlineMessage = 'İnternet bağlantısı yok. İndirdiğin şarkılar çalmaya hazır.';
   static const searchHint = 'Şarkı, sanatçı veya albüm ara';

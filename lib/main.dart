@@ -13,6 +13,7 @@ import 'services/download_manager.dart';
 import 'services/library_store.dart';
 import 'services/music_service.dart';
 import 'services/player_service.dart';
+import 'services/repair_bot_service.dart';
 import 'services/equalizer_service.dart';
 import 'services/update_service.dart';
 import 'services/room_service.dart';
@@ -34,19 +35,14 @@ Future<void> main() async {
     debugPrint('Sistem UI modu uyarısı: $e');
   }
 
-  // Release modunda bile hatalar boş ekran yerine görünür olsun.
+  // Release modunda bile hatalar görünürsün ama kullanıcıya teknik detay
+  // gösterilmez — boş ekran yerine sakin, maskeli bir yüzey. Detay debug
+  // logundadır (onarım botu aynı hatadan otomatik döner).
   ErrorWidget.builder = (details) {
     return Container(
       color: const Color(0xFF121212),
       alignment: Alignment.center,
-      padding: const EdgeInsets.all(24),
-      child: Text(
-        'Melody hata yakaladı:\n${details.exception}',
-        textAlign: TextAlign.center,
-        maxLines: 6,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: Colors.white70, fontSize: 13),
-      ),
+      child: const Icon(Icons.music_note, size: 56, color: Colors.white24),
     );
   };
 
@@ -67,7 +63,7 @@ void _warmUpServices() {
   if (Platform.isAndroid || Platform.isIOS) {
     _safe('Arka plan', () => JustAudioBackground.init(
           androidNotificationChannelId: 'com.melody.app.playback',
-          androidNotificationChannelName: 'Melody Müzik Çalar',
+          androidNotificationChannelName: 'CloudTune Müzik Çalar',
           androidNotificationOngoing: true,
           androidStopForegroundOnPause: false,
           preloadArtwork: true,
@@ -80,6 +76,7 @@ void _warmUpServices() {
   _safe('Ekolayzer', () => EqualizerService.instance.init());
   _safe('Tema', () => ThemeService.instance.init());
   _safe('Oda', () => RoomService.instance.init());
+  _safe('Onarım botu', () => RepairBotService.instance.init());
   UpdateService.instance.init();
 
   // Son çalınan oturum ilk kare basıldıktan SONRA geri yüklenir.
@@ -116,6 +113,8 @@ class MelodyApp extends StatelessWidget {
             value: EqualizerService.instance),
         ChangeNotifierProvider<RoomService>.value(value: RoomService.instance),
         ChangeNotifierProvider<ThemeService>.value(value: ThemeService.instance),
+        ChangeNotifierProvider<RepairBotService>.value(
+            value: RepairBotService.instance),
       ],
       child: Consumer<ThemeService>(
         builder: (context, themeService, _) => MaterialApp(

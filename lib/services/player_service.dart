@@ -1041,6 +1041,19 @@ throw StreamUnavailableException(
   int _retryCount = 0;
   bool _wasPlaying = false;
 
+  /// Onarım botu API'si: akış önbelleğini boşaltır (aynı bozuk aday
+  /// tekrar denenmesin) ve mevcut şarkıyı farklı kaynak adaylarıyla çalar.
+  void clearStreamCache() {
+    _streamCache.clear();
+  }
+
+  /// Onarım botu API'si: oynatıcı kilitli/hatalıysa şarkıyı yeniden başlatır.
+  Future<void> retryCurrent() async {
+    if (_index < 0 || _index >= effectiveQueue.length) return;
+    _retryCount = 0;
+    await _retryLoad();
+  }
+
   Future<void> _retryLoad() async {
     _retryCount++;
     _isLoading = true;

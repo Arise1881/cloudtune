@@ -7,6 +7,7 @@ import '../services/download_manager.dart';
 import '../services/equalizer_service.dart';
 import '../services/music_service.dart';
 import '../services/player_service.dart';
+import '../services/repair_bot_service.dart';
 import '../services/theme_service.dart';
 import 'equalizer_screen.dart';
 
@@ -20,6 +21,7 @@ class SettingsScreen extends StatelessWidget {
     final player = context.watch<PlayerService>();
     final eq = context.watch<EqualizerService>();
     final connectivity = context.watch<ConnectivityService>();
+    final repairBot = context.watch<RepairBotService>();
     final isDark = themeService.isDark;
 
     return Scaffold(
@@ -27,6 +29,14 @@ class SettingsScreen extends StatelessWidget {
         title: const Text('Ayarlar'),
         backgroundColor: themeService.accent,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            tooltip: 'Ana ekrana dön',
+            icon: const Icon(Icons.home_outlined),
+            onPressed: () => Navigator.of(context)
+                .popUntil((r) => r.isFirst),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
@@ -105,6 +115,16 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+            const SizedBox(height: 16),
+            _sectionTitle('Destek'),
+            _toggleTile(
+              title: 'Onarım Botu',
+              subtitle: repairBot.enabled
+                  ? repairBot.statusLine()
+                  : 'Kapalı — arıza sırasında otomatik düzeltme durdurulur',
+              value: repairBot.enabled,
+              onChanged: repairBot.setEnabled,
             ),
             const SizedBox(height: 16),
             _sectionTitle('Depolama'),

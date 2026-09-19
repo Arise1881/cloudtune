@@ -73,22 +73,22 @@ class MusicService {
       ValueNotifier<String?>(null);
   static const String _kProxyUrl = 'stream_proxy_url';
 
-  /// YouTube kişisel kaynağı açık mı? Varsayılan KAPALI — varsayılan katalog
-  /// Audius + Internet Archive (sunucusuz, keyless). Kullanıcı kişisel olarak
-  /// YouTube istiyorsa ayarlardan açar (proxy gerekebilir).
+  /// YouTube kaynağı açık mı? Varsayılan AÇIK (05-2026 isteği): birincil ve
+  /// varsayılan kaynak YouTube; Audius + Internet Archive yedek kalır.
   static final ValueNotifier<bool> youtubeEnabledNotifier =
-      ValueNotifier<bool>(false);
+      ValueNotifier<bool>(true);
   static const String _kYoutubeEnabled = 'youtube_enabled';
 
   static bool get youtubeEnabled => youtubeEnabledNotifier.value;
 
   /// Uygulama açılışında YouTube kaynak ayarını yükler.
+  /// Varsayılan AÇIK (madde 7: YouTube birincil kaynak, kişisel kapatabilir).
   static Future<void> loadYoutubeEnabled() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      youtubeEnabledNotifier.value = prefs.getBool(_kYoutubeEnabled) ?? false;
+      youtubeEnabledNotifier.value = prefs.getBool(_kYoutubeEnabled) ?? true;
     } catch (_) {
-      youtubeEnabledNotifier.value = false;
+      youtubeEnabledNotifier.value = true;
     }
   }
 
@@ -240,6 +240,13 @@ class MusicService {
     return DateTime.now().difference(t) < window;
   }
 
+  /// Onarım botu API'si: negatif önbelleği boşaltıp Invidious örneklerini
+  /// yeniden denenebilir yapar (örnek kısa süre önce kapandıysa yeniden açar).
+  static void refreshDeadInvidious() {
+    if (_deadInvidious.isEmpty) return;
+    _deadInvidious.clear();
+  }
+
   /// Negatif önbellek içinde OLMAYAN (kısa süre içinde canlı doğrulanmış) sayaç.
   static int _liveInvidiousCount() =>
       _invidiousInstances.keys.where((b) => !_invidiousDead(b)).length;
@@ -366,9 +373,9 @@ class MusicService {
     return out;
   }
 
-  /// Kaynak bilinçli serbest arama. Varsayılan sıra: Audius (tek istek) →
-  /// Internet Archive → YouTube (kişisel yedek zincir). Amaç: sunucusuz
-  /// yasal katalog önce, hızlı yanıt; YouTube yalnızca yerel ayar açıksa.
+  /// Kaynak bilinçli serbest arama. YouTube birincil (varsayılan açık),
+  /// bulunamazsa Audius + Internet Archive yedek (paralel). YouTube kapalıysa
+  /// yalnızca yasal bulut katalog kullanılır.
   ///
   /// Audius ve Internet Archive PARALEL sorgulanır; ilk dolu sonuç kazanır.
   /// Sıralı 12s+15s beklemek yerine tek ağ turu süresiyle döner. Sonuçlar
@@ -381,20 +388,21 @@ class MusicService {
             _homeCacheTtl) {
       return cached;
     }
+    if (youtubeEnabled) {
+      final yt = await _searchYoutube(query, limit: limit);
+      if (yt.isNotEmpty) {
+        _homeCache[key] = yt;
+        _homeCacheAt[key] = DateTime.now();
+        return yt;
+      }
+    }
     final songs = await _firstFilled([
       AudiusSource.defaultHost().search(query, limit: limit),
       InternetArchiveSource().search(query, limit: limit),
     ]);
-    if (songs.isNotEmpty) {
-      _homeCache[key] = songs;
-      _homeCacheAt[key] = DateTime.now();
-      return songs;
-    }
-    if (!youtubeEnabled) return const [];
-    final yt = await _searchYoutube(query, limit: limit);
-    _homeCache[key] = yt;
+    _homeCache[key] = songs;
     _homeCacheAt[key] = DateTime.now();
-    return yt;
+    return songs;
   }
 
   /// Birden çok kaynağı aynı anda sorgular, ilk dolu sonucu döner.

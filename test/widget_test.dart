@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:sonora/main.dart';
+import 'package:cloudtune/main.dart';
 
 void main() {
   testWidgets('Uygulama basit smoke testi', (WidgetTester tester) async {
