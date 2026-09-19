@@ -58,7 +58,7 @@ class DownloadManager extends ChangeNotifier {
     try {
       if (_dir == null) await _init();
 
-      final candidates = await music.streamUrlCandidates(song.id);
+      final candidates = await music.streamCandidatesForSong(song);
       if (candidates.isEmpty) {
         throw StreamUnavailableException('Akış çözülemedi');
       }

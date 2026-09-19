@@ -6,8 +6,11 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
+import '../models/music_source.dart';
 import '../models/search_content.dart';
 import '../models/song.dart';
+import 'sources/audius_source.dart';
+import 'sources/internet_archive_source.dart';
 
 // ─── İstisna sınıfı ───
 class StreamUnavailableException implements Exception {
@@ -267,6 +270,7 @@ class MusicService {
       artist: author,
       thumbnailUrl: _thumbFallback(id),
       durationMs: durationMs,
+      source: MusicSourceType.youtube,
     );
   }
 
@@ -290,9 +294,49 @@ class MusicService {
     );
   }
 
-  /// Serbest video araması. InnerTube→Invidious→youtube_explode sırası.
-  /// Tek bozuk sonuç listeyi çökertmez.
+  /// Ana sayfa öne çıkanlar: Audius trending (güncel, keyless) önce,
+  /// Internet Archive ile tamamlanır. YouTube zincirine düşmez.
+  Future<List<Song>> trending({int limit = 24}) async {
+    final out = <Song>[];
+    try {
+      final songs =
+          await AudiusSource.defaultHost().trending(limit: limit);
+      for (final s in songs) {
+        if (out.length >= limit) break;
+        out.add(s);
+      }
+    } catch (_) {}
+    if (out.length < limit) {
+      try {
+        final songs =
+            await InternetArchiveSource().trending(limit: limit - out.length);
+        for (final s in songs) {
+          if (out.length >= limit) break;
+          out.add(s);
+        }
+      } catch (_) {}
+    }
+    return out;
+  }
+
+  /// Kaynak bilinçli serbest arama. Varsayılan sıra: Audius (tek istek) →
+  /// Internet Archive → YouTube (kişisel yedek zincir). Amaç: sunucusuz
+  /// yasal katalog önce, hızlı yanıt; YouTube yalnızca yerel ayar açıksa.
   Future<List<Song>> search(String query, {int limit = 25}) async {
+    try {
+      final songs =
+          await AudiusSource.defaultHost().search(query, limit: limit);
+      if (songs.isNotEmpty) return songs;
+    } catch (_) {}
+    try {
+      final songs = await InternetArchiveSource().search(query, limit: limit);
+      if (songs.isNotEmpty) return songs;
+    } catch (_) {}
+    return _searchYoutube(query, limit: limit);
+  }
+
+  /// Eski YouTube arama zinciri (Invidious → InnerTube → youtube_explode).
+  Future<List<Song>> _searchYoutube(String query, {int limit = 25}) async {
     return _bounded(() async {
       // 1) Invidious arama (type=video — yalnızca şarkı)
       try {
@@ -685,6 +729,49 @@ class MusicService {
     }
   }
 
+  /// Kaynak bilinçli akış adayları: Song.source'a göre doğru kaynağa
+  /// yönlendirir (Audius tek istek 302, Internet Archive metadata+seçim,
+  /// YouTube eski sıralı zincir).
+  Future<List<String>> streamCandidatesForSong(Song song,
+      {String quality = 'auto'}) async {
+    switch (song.source) {
+      case MusicSourceType.audius:
+        try {
+          final url = await AudiusSource.defaultHost().streamUrl(trackId: song.id);
+          return url.isEmpty ? const [] : [url];
+        } catch (_) {
+          return const [];
+        }
+      case MusicSourceType.internetArchive:
+        try {
+          return await InternetArchiveSource().streamCandidates(song);
+        } catch (_) {
+          return const [];
+        }
+      case MusicSourceType.youtube:
+        return streamCandidatesWithQuality(song.id, quality: quality);
+    }
+  }
+
+  /// Kaynak bilinçli tek URL çözümü: player ana girişi.
+  Future<String> resolveStreamUrlForSong(Song song,
+      {String quality = 'auto'}) async {
+    final cacheKey = '${song.source.name}:${song.id}';
+    final cached = _sourceStreamCache[cacheKey];
+    if (cached != null) return cached;
+
+    final candidates = await streamCandidatesForSong(song, quality: quality);
+    if (candidates.isEmpty) {
+      throw StreamUnavailableException('Ses akışı bulunamadı');
+    }
+    final url = switch (quality) {
+      'low' => candidates.last,
+      _ => candidates.first,
+    };
+    if (url.isNotEmpty) _sourceStreamCache[cacheKey] = url;
+    return url;
+  }
+
   Future<String> resolveStreamUrlWithQuality(String videoId,
       {String quality = 'auto'}) async {
     final cached = _streamUrlCache[videoId];
@@ -721,8 +808,28 @@ class MusicService {
 
   // ─── Radyo ───
 
-  /// Şarkı radyosu: mevcut şarkıya benzer şarkılar bulur (YouTube Music tarzı).
+  /// Şarkı radyosu: mevcut şarkıya benzer şarkılar bulur. Kaynak bilinçli:
+  /// Audius → relatedTracks (hızlı), Internet Archive → aynı koleksiyon,
+  /// YouTube → eski benzerlik araması.
   Future<List<Song>> radioFor(Song song) async {
+    try {
+      switch (song.source) {
+        case MusicSourceType.audius:
+          final related = await AudiusSource.defaultHost()
+              .relatedTracks(song.id, limit: 20);
+          if (related.isNotEmpty) {
+            return related.where((s) => s.id != song.id).toList();
+          }
+        case MusicSourceType.internetArchive:
+          final related = await InternetArchiveSource().radioForSong(song);
+          if (related.isNotEmpty) {
+            return related.where((s) => s.id != song.id).toList();
+          }
+        case MusicSourceType.youtube:
+          break;
+      }
+    } catch (_) {}
+
     final query = '${song.title} ${song.artist}';
     final songs = await search('$query benzerleri', limit: 20);
     if (songs.isNotEmpty) {
@@ -989,4 +1096,5 @@ class MusicService {
   // ─── Önbellek ───
 
   final Map<String, String> _streamUrlCache = {};
+  final Map<String, String> _sourceStreamCache = {};
 }

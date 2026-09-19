@@ -68,6 +68,10 @@ class PlayerService extends ChangeNotifier {
   // ─── Çözümlenen akış URL önbelleği (sıradaki şarkı önceden ısıtılır) ───
   final Map<String, String> _streamCache = {};
 
+  /// Stream önbelleği anahtarı: kaynak çakışmalarını önlemek için source
+  /// adı + id birleştirir (Audius track ID ile IA identifier aynı olabilir).
+  static String _cacheKey(Song song) => '${song.source.name}:${song.id}';
+
   // ─── YouTube Music benzeri özellikler ───
   AudioQuality _quality = AudioQuality.ultra;
   AudioQuality get quality => _quality;
@@ -216,7 +220,7 @@ class PlayerService extends ChangeNotifier {
         // 3) Akış adayları: odaya özel önceden çözülmüş URL veya kalite sıralı.
         final candidates = initialSource != null
             ? [initialSource]
-            : await music.streamCandidatesWithQuality(song.id,
+            : await music.streamCandidatesForSong(song,
                 quality: switch (_quality) {
                   AudioQuality.high => 'high',
                   AudioQuality.medium => 'medium',
@@ -314,8 +318,8 @@ class PlayerService extends ChangeNotifier {
       final art = File(DownloadManager.instance.artPath(song.id));
       artUri = art.existsSync() ? Uri.file(art.path) : null;
     } else if (connectivity.isOnline) {
-      streamUrl = _streamCache[song.id] ??
-          await music.resolveStreamUrlWithQuality(song.id,
+      streamUrl = _streamCache[_cacheKey(song)] ??
+          await music.resolveStreamUrlForSong(song,
               quality: switch (_quality) {
                 AudioQuality.high => 'high',
                 AudioQuality.medium => 'medium',
@@ -325,7 +329,7 @@ class PlayerService extends ChangeNotifier {
               });
       _activeStreamUrl = streamUrl;
       // Başarılı çözümü önbellekle; hızlı şarkı değiştirme için.
-      _streamCache[song.id] = streamUrl;
+      _streamCache[_cacheKey(song)] = streamUrl;
       artUri = song.thumbnailUrl.isNotEmpty ? Uri.tryParse(song.thumbnailUrl) : null;
       duration = song.durationMs > 0 ? Duration(milliseconds: song.durationMs) : null;
     } else {
@@ -855,7 +859,7 @@ throw StreamUnavailableException(
   void _warmNextTrack() {
     if (!connectivity.isOnline) return;
     final nextSong = _nextSongForWarm();
-    if (nextSong == null || _streamCache.containsKey(nextSong.id)) return;
+    if (nextSong == null || _streamCache.containsKey(_cacheKey(nextSong))) return;
     final q = switch (_quality) {
       AudioQuality.high => 'high',
       AudioQuality.medium => 'medium',
@@ -864,9 +868,9 @@ throw StreamUnavailableException(
       AudioQuality.auto => 'auto',
     };
     music
-        .resolveStreamUrlWithQuality(nextSong.id, quality: q)
+        .resolveStreamUrlForSong(nextSong, quality: q)
         .then((url) {
-          _streamCache[nextSong.id] = url;
+          _streamCache[_cacheKey(nextSong)] = url;
         }).catchError((_) {});
   }
 
@@ -1108,9 +1112,9 @@ throw StreamUnavailableException(
     final q = effectiveQueue;
     if (_index < 0 || _index + 1 >= q.length) return;
     final nextSong = q[_index + 1];
-    if (_streamCache.containsKey(nextSong.id)) return;
+    if (_streamCache.containsKey(_cacheKey(nextSong))) return;
     try {
-      final url = await music.resolveStreamUrlWithQuality(nextSong.id,
+      final url = await music.resolveStreamUrlForSong(nextSong,
           quality: switch (_quality) {
             AudioQuality.high => 'high',
             AudioQuality.medium => 'medium',
@@ -1118,7 +1122,7 @@ throw StreamUnavailableException(
             AudioQuality.ultra => 'ultra',
             AudioQuality.auto => 'auto',
           });
-      _streamCache[nextSong.id] = url;
+      _streamCache[_cacheKey(nextSong)] = url;
     } catch (_) {}
   }
 

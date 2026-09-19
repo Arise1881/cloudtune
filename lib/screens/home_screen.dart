@@ -39,8 +39,8 @@ class HomeScreen extends StatelessWidget {
             SliverToBoxAdapter(child: _quickAccess(context, library)),
             SliverToBoxAdapter(
               child: _TrendSection(
-                title: 'YouTube Müzik Trendleri',
-                query: 'youtube trending music today hits',
+                title: 'Açık Katalogda Öne Çıkanlar',
+                trending: true,
               ),
             ),
             for (final entry in curatedSections.entries) ...[
@@ -216,12 +216,18 @@ class HomeScreen extends StatelessWidget {
 class _TrendSection extends StatefulWidget {
   const _TrendSection({
     required this.title,
-    required this.query,
+    this.query,
+    this.trending = false,
     this.staggerMs = 0,
   });
 
   final String title;
-  final String query;
+
+  /// Sorgu tabanlı bölüm (boş olabilir).
+  final String? query;
+
+  /// true ise MusicService.trending() kullanır (query yerine).
+  final bool trending;
 
   /// Aynı anda çok sorgu gitmesin — bölümler sırayla yüklenir.
   final int staggerMs;
@@ -244,7 +250,10 @@ class _TrendSectionState extends State<_TrendSection> {
       await Future.delayed(Duration(milliseconds: widget.staggerMs));
     }
     if (!mounted) return const [];
-    return MusicService.instance.search(widget.query, limit: 12);
+    if (widget.trending) {
+      return MusicService.instance.trending(limit: 12);
+    }
+    return MusicService.instance.search(widget.query ?? '', limit: 12);
   }
 
   void _retry() {

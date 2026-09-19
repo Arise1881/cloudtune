@@ -1,11 +1,14 @@
 import 'dart:convert';
 
+import 'music_source.dart';
+
 class Song {
   final String id;
   final String title;
   final String artist;
   final String thumbnailUrl;
   final int durationMs;
+  final MusicSourceType source;
   final String? localPath;
   final int downloadedAtMs;
 
@@ -15,6 +18,7 @@ class Song {
     required this.artist,
     this.thumbnailUrl = '',
     this.durationMs = 0,
+    this.source = MusicSourceType.audius,
     this.localPath,
     this.downloadedAtMs = 0,
   });
@@ -27,6 +31,7 @@ class Song {
     String? artist,
     String? thumbnailUrl,
     int? durationMs,
+    MusicSourceType? source,
     String? localPath,
     int? downloadedAtMs,
   }) {
@@ -36,6 +41,7 @@ class Song {
       artist: artist ?? this.artist,
       thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
       durationMs: durationMs ?? this.durationMs,
+      source: source ?? this.source,
       localPath: localPath ?? this.localPath,
       downloadedAtMs: downloadedAtMs ?? this.downloadedAtMs,
     );
@@ -47,6 +53,7 @@ class Song {
         'artist': artist,
         'thumbnailUrl': thumbnailUrl,
         'durationMs': durationMs,
+        'source': source.code,
         'localPath': localPath,
         'downloadedAtMs': downloadedAtMs,
       };
@@ -57,6 +64,7 @@ class Song {
         artist: json['artist'] as String? ?? '',
         thumbnailUrl: json['thumbnailUrl'] as String? ?? '',
         durationMs: (json['durationMs'] as num?)?.toInt() ?? 0,
+        source: MusicSourceType.fromCode(json['source'] as String?),
         localPath: json['localPath'] as String?,
         downloadedAtMs: (json['downloadedAtMs'] as num?)?.toInt() ?? 0,
       );
