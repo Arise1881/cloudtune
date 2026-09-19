@@ -35,6 +35,14 @@ class MusicService {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
+  // ─── Ana sayfa önbelleği ───
+  // Audius/IA istekleri tekrarlanmasın: aynı sorgu 10dk içinde bellekteki
+  // sonucu döner. Ana sayfa açılışında (8+ küratör bölümü) ağ yükünü ve
+  // bekleme süresini düşürür.
+  static const Duration _homeCacheTtl = Duration(minutes: 10);
+  static final Map<String, List<Song>> _homeCache = {};
+  static final Map<String, DateTime> _homeCacheAt = {};
+
   /// Halka açık Invidious örnekleri — biri kapanırsa diğeri kullanılır.
   /// Canlılık 2026-09-18 ölçüldü: yalnız kısıtsız JSON dönen tutulur; ölü
   /// örnekler mobil veride 7sn'lik timeout zinciri yaratıyordu.
@@ -324,7 +332,16 @@ class MusicService {
 
   /// Ana sayfa öne çıkanlar: Audius trending (güncel, keyless) önce,
   /// Internet Archive ile tamamlanır. YouTube zincirine düşmez.
+  /// Sonuç 10dk önbellekte tutulur — ana sayfa her karede aynı isteği
+  /// tekrarlamaz (izleyici izlerken Home yeniden kurulabilir).
   Future<List<Song>> trending({int limit = 24}) async {
+    final key = 'trending:$limit';
+    final cached = _homeCache[key];
+    if (cached != null &&
+        DateTime.now().difference(_homeCacheAt[key] ?? DateTime(0)) <
+            _homeCacheTtl) {
+      return cached;
+    }
     final out = <Song>[];
     try {
       final songs =
@@ -344,24 +361,72 @@ class MusicService {
         }
       } catch (_) {}
     }
+    _homeCache[key] = out;
+    _homeCacheAt[key] = DateTime.now();
     return out;
   }
 
   /// Kaynak bilinçli serbest arama. Varsayılan sıra: Audius (tek istek) →
   /// Internet Archive → YouTube (kişisel yedek zincir). Amaç: sunucusuz
   /// yasal katalog önce, hızlı yanıt; YouTube yalnızca yerel ayar açıksa.
+  ///
+  /// Audius ve Internet Archive PARALEL sorgulanır; ilk dolu sonuç kazanır.
+  /// Sıralı 12s+15s beklemek yerine tek ağ turu süresiyle döner. Sonuçlar
+  /// ana sayfa önbelleğinde 10dk tutulur.
   Future<List<Song>> search(String query, {int limit = 25}) async {
-    try {
-      final songs =
-          await AudiusSource.defaultHost().search(query, limit: limit);
-      if (songs.isNotEmpty) return songs;
-    } catch (_) {}
-    try {
-      final songs = await InternetArchiveSource().search(query, limit: limit);
-      if (songs.isNotEmpty) return songs;
-    } catch (_) {}
+    final key = 'search:$query:$limit';
+    final cached = _homeCache[key];
+    if (cached != null &&
+        DateTime.now().difference(_homeCacheAt[key] ?? DateTime(0)) <
+            _homeCacheTtl) {
+      return cached;
+    }
+    final songs = await _firstFilled([
+      AudiusSource.defaultHost().search(query, limit: limit),
+      InternetArchiveSource().search(query, limit: limit),
+    ]);
+    if (songs.isNotEmpty) {
+      _homeCache[key] = songs;
+      _homeCacheAt[key] = DateTime.now();
+      return songs;
+    }
     if (!youtubeEnabled) return const [];
-    return _searchYoutube(query, limit: limit);
+    final yt = await _searchYoutube(query, limit: limit);
+    _homeCache[key] = yt;
+    _homeCacheAt[key] = DateTime.now();
+    return yt;
+  }
+
+  /// Birden çok kaynağı aynı anda sorgular, ilk dolu sonucu döner.
+  /// Tümü boş/hata ise boş liste. İstekleri iptal etmez ama caller'ı
+  /// en yavaş kaynak kadar beklemez.
+  Future<List<Song>> _firstFilled(
+      List<Future<List<Song>>> futures) async {
+    final completer = Completer<List<Song>>();
+    var pending = futures.length;
+    void settle(Future<List<Song>> f) {
+      f.then((songs) {
+        if (!completer.isCompleted && songs.isNotEmpty) {
+          completer.complete(songs);
+          return songs;
+        }
+        pending--;
+        if (pending == 0 && !completer.isCompleted) {
+          completer.complete(const []);
+        }
+        return songs;
+      }, onError: (_) {
+        pending--;
+        if (pending == 0 && !completer.isCompleted) {
+          completer.complete(const []);
+        }
+      });
+    }
+
+    for (final f in futures) {
+      settle(f);
+    }
+    return completer.future;
   }
 
   /// Eski YouTube arama zinciri (Invidious → InnerTube → youtube_explode).

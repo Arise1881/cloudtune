@@ -31,14 +31,14 @@ class AppStrings {
 /// Ana sayfa vitrinindeki küratörlü bölümler.
 /// Her bölüm bir arama sorgusuna karşılık gelir.
 const Map<String, String> curatedSections = {
-  'Türkçe Pop Hits': 'türkçe pop 2026 hit şarkılar',
-  'Yabancı Listeler': 'top hits 2026 playlist',
-  'Rock Klasikleri': 'classic rock greatest hits',
-  'Lo-Fi & Odak': 'lofi hip hop study beats',
-  'Rap & Hip-Hop': 'rap türkçe 2026',
-  'Elektronik': 'electronic dance music mix 2026',
-  'Akustik': 'acoustic covers playlist',
-  '90\'lar Nostalji': '90s hits playlist',
+  'Türkçe Pop Hits': 'türkçe pop',
+  'Yabancı Listeler': 'pop hits',
+  'Rock Klasikleri': 'classic rock',
+  'Lo-Fi & Odak': 'lofi',
+  'Rap & Hip-Hop': 'rap hip hop',
+  'Elektronik': 'electronic',
+  'Akustik': 'acoustic',
+  '90\'lar Nostalji': '90s',
 };
 
 const String downloadsFolderName = 'sonora_downloads';

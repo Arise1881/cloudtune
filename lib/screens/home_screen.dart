@@ -268,6 +268,13 @@ class _TrendSectionState extends State<_TrendSection> {
       future: _future,
       builder: (context, snapshot) {
         final songs = snapshot.data ?? const <Song>[];
+        // Kaynaklarda sonuç yoksa tüm bölümü gizle (başlık + kutu) —
+        // "Şarkı bulunamadı" dolu ana sayfa hissi vermez, boşluk bırakmaz.
+        if (snapshot.connectionState == ConnectionState.done &&
+            !snapshot.hasError &&
+            songs.isEmpty) {
+          return const SizedBox.shrink();
+        }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
