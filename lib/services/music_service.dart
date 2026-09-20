@@ -1120,33 +1120,34 @@ class MusicService {
   }
 
   /// Çalma listesi ID'sindeki şarkıları çözer. Invidious→youtube_explode.
+  /// Invidious tek istekte ~100 şarkıda kesilebilir; eksik kalan şarkılar
+  /// youtube_explode'un sürekli sayfalamasıyla tamamlanır (continuation).
   Future<List<Song>> playlistSongs(String playlistId,
       {int limit = 200}) async {
+    final songs = <Song>[];
     try {
       final data = await _invidious('/api/v1/playlists/$playlistId');
-      if (data is Map<String, dynamic>) {
-        final videos = data['videos'];
-        if (videos is List) {
-          final songs = _songFromInvidiousList(videos)
-              .where((s) => s.id.isNotEmpty)
-              .take(limit)
-              .toList();
-          if (songs.isNotEmpty) return songs;
-        }
+      if (data is Map<String, dynamic> && data['videos'] is List) {
+        songs.addAll(_songFromInvidiousList(data['videos'] as List)
+            .where((s) => s.id.isNotEmpty));
       }
     } catch (_) {}
 
-    return _bounded(() async {
-      final songs = <Song>[];
+    if (songs.length >= limit) return songs.sublist(0, limit);
+
+    // Continuation fallback: Invidious sonu verdiği yerde devam edilir.
+    final known = songs.map((s) => s.id).toSet();
+    await _bounded(() async {
       await for (final video in _yt.playlists.getVideos(playlistId)) {
         if (video.isLive) continue;
         try {
-          songs.add(_videoToSong(video));
+          final song = _videoToSong(video);
+          if (known.add(song.id)) songs.add(song);
         } catch (_) {}
         if (songs.length >= limit) break;
       }
-      return songs;
     });
+    return songs;
   }
 
   /// YouTube / YouTube Music çalma listesi URL'sinden şarkıları çözer.
