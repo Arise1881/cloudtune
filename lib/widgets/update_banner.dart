@@ -32,7 +32,7 @@ class UpdateBanner extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Melody ${update.latestVersion} yayınlandı',
+                        'CloudTune ${update.latestVersion} yayınlandı',
                         style: const TextStyle(
                           color: Colors.black,
                           fontWeight: FontWeight.w800,
@@ -72,7 +72,7 @@ class UpdateBanner extends StatelessWidget {
         title: const Text('Güncelleme mevcut',
             style: TextStyle(color: AppColors.textPrimary)),
         content: Text(
-          'Melody ${update.latestVersion} sürümü yayınlandı.\n\nGüncellemek istiyor musun?',
+          'CloudTune ${update.latestVersion} sürümü yayınlandı.\n\nGüncellemek istiyor musun?',
           style: const TextStyle(color: AppColors.textSecondary, height: 1.4),
         ),
         actions: [

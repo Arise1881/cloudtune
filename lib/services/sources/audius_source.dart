@@ -26,7 +26,7 @@ class AudiusSource {
 
   final String _host;
 
-  static const String _appName = 'melody';
+  static const String _appName = 'cloudtune';
 
   Future<dynamic> _getJson(String path,
       {Map<String, String>? query, Duration? timeout}) async {

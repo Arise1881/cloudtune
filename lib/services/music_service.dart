@@ -63,7 +63,7 @@ class MusicService {
   static final Map<String, DateTime> _deadInvidious = {};
 
   /// Kullanıcının kendi Cloudflare Workers akış proxy'si
-  /// (ör. `https://melody-stream.<kullanıcı>.workers.dev`). Boşsa devre dışı.
+  /// (ör. `https://cloudtune-stream.<kullanıcı>.workers.dev`). Boşsa devre dışı.
   ///
   /// Proxy iki iş yapar: (1) `/v1/stream/{videoId}` ile ses URL'sini
   /// Cloudflare ağından çözer, (2) googlevideo akışını kendi üzerinden
@@ -105,7 +105,7 @@ class MusicService {
   /// Kullanıcı ayarlardan silerse ayar `''` olarak saklanır ve proxy kapanır;
   /// hiç kayıt yoksa bu varsayılan kullanılır.
   static const String _defaultProxyUrl =
-      'https://melody-stream-proxy.yusufgunes06502002.workers.dev';
+      'https://23d9da7b-178f-424a-8f7d-671c7708445b.cfargotunnel.com';
 
   static String? get proxyBaseUrl => proxyNotifier.value;
 
@@ -250,6 +250,54 @@ class MusicService {
   /// Negatif önbellek içinde OLMAYAN (kısa süre içinde canlı doğrulanmış) sayaç.
   static int _liveInvidiousCount() =>
       _invidiousInstances.keys.where((b) => !_invidiousDead(b)).length;
+
+  /// Onarım botu API'si: Invidious örneklerinden birine hızlı ping.
+  /// Döner: yanıt süresi (ms), örneklerin tümü erişilemezse -1.
+  Future<int> pingInvidious() async {
+    final sw = Stopwatch()..start();
+    for (final base in _invidiousInstances.keys) {
+      if (_invidiousDead(base)) continue;
+      final data = await _getJson(
+          '$base/api/v1/search?q=test&type=video',
+          timeout: const Duration(seconds: 5));
+      if (data != null) {
+        _deadInvidious.remove(base);
+        sw.stop();
+        return sw.elapsedMilliseconds;
+      }
+      _deadInvidious[base] = DateTime.now();
+    }
+    return -1;
+  }
+
+  /// Onarım botu API'si: mevcut ana sayfa önbellek boyutu (giriş sayısı).
+  static int get homeCacheSize => _homeCache.length;
+
+  /// Onarım botu API'si: süresi dolmuş ana sayfa önbellek girişlerini temizler,
+  /// silinen giriş sayısını döner. Önbellek zaten doluysa bot eskileri atar.
+  static int pruneHomeCache() {
+    final now = DateTime.now();
+    final keysToRemove = <String>[];
+    _homeCacheAt.forEach((key, time) {
+      if (now.difference(time) > _homeCacheTtl) {
+        keysToRemove.add(key);
+      }
+    });
+    for (final key in keysToRemove) {
+      _homeCache.remove(key);
+      _homeCacheAt.remove(key);
+    }
+    return keysToRemove.length;
+  }
+
+  /// Onarım botu API'si: akış URL önbelleği boyutu.
+  int get streamUrlCacheSize => _streamUrlCache.length;
+
+  /// Onarım botu API'si: akış URL önbelleğini boşaltır (şiştiğinde).
+  void clearStreamUrlCache() {
+    _streamUrlCache.clear();
+    _sourceStreamCache.clear();
+  }
 
   /// InnerTube player: çoklu client dener, akış içeren ilk yanıtı döner.
   Future<Map<String, dynamic>?> _innerTubePlayer(String videoId) async {

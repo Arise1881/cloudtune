@@ -6,18 +6,27 @@ import '../models/song.dart';
 import '../services/download_manager.dart';
 import '../services/library_store.dart';
 import '../services/player_service.dart';
+import '../services/repair_bot_service.dart';
 import 'artist_screen.dart';
 import 'lyrics_screen.dart';
 import 'now_playing_screen.dart';
 
 /// Şarkı indirir, sonucu bildirimle gösterir. Ekranlar arası ortak kullanım.
+/// Başarısızlık sessiz onarılır: teknik hata kullanıcıya gösterilmez,
+/// onarım botu kaydeder ve kaynak/fallback sırasını yeniler.
 Future<void> downloadWithToast(BuildContext context, Song song) async {
   final messenger = ScaffoldMessenger.maybeOf(context);
   final error = await DownloadManager.instance.download(song);
+  if (error != null) {
+    await RepairBotService.instance.reportEvent(
+        RepairEventType.downloadFailed,
+        'İndirme başarısız: ${song.title}',
+        {'song_id': song.id, 'detail': error});
+  }
   messenger?.showSnackBar(SnackBar(
     content: Text(error == null
         ? '"${song.title}" indirildi'
-        : 'İndirme başarısız: $error'),
+        : 'İndirme başarısız. Arka planda tekrar denenecek.'),
   ));
 }
 

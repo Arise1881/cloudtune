@@ -1,6 +1,6 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Arise1881/melody-dist/main/icon.png" width="120" height="120" alt="Melody">
-  <h1 align="center">🎵 Melody</h1>
+  <img src="https://raw.githubusercontent.com/Arise1881/melody-dist/main/icon.png" width="120" height="120" alt="CloudTune">
+  <h1 align="center">🎵 CloudTune</h1>
   <p align="center"><b>Spotify temalı, açık kaynak, YouTube destekli müzik çalar</b></p>
   <p align="center">
     <a href="#-özellikler"><img src="https://img.shields.io/badge/özellikler-40%2B-1DB954?style=flat-square"></a>
@@ -10,16 +10,17 @@
   </p>
 </p>
 
-> 🚀 **Melody**, YouTube üzerinden şarkı çalan, indiren ve **arka planda** durmaksızın
-> müzik dinleten premium arayüzlü bir müzik uygulamasıdır. Karanlık/açık tema,
-> 5 vurgu rengi, ekolayzer, oda sistemi ve daha fazlası kutudan çıkar.
+> 🚀 **CloudTune** (eski adıyla Melody), YouTube üzerinden şarkı çalan, indiren
+> ve **arka planda** durmaksızın müzik dinleten premium arayüzlü bir müzik
+> uygulamasıdır. Karanlık/açık tema, 10 vurgu rengi, ekolayzer, oda sistemi ve
+> daha fazlası kutudan çıkar.
 
 ---
 
 ## ✨ Ekran Görüntüleri
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/Arise1881/melody-dist/main/video-poster.png" width="600" alt="Melody tanıtım">
+  <img src="https://raw.githubusercontent.com/Arise1881/melody-dist/main/video-poster.png" width="600" alt="CloudTune tanıtım">
   <br><br>
   <img src="https://raw.githubusercontent.com/Arise1881/melody-dist/main/apk-qr.png" width="180" alt="Android QR kod">
   <img src="https://raw.githubusercontent.com/Arise1881/melody-dist/main/ipa-qr.png" width="180" alt="iOS QR kod">
@@ -33,6 +34,7 @@
 | | |
 |---|---|
 | ✅ Sonsuz otomatik çalma | Şarkı bitince benzer şarkılar otomatik gelir, hiç susmaz |
+| ✅ Sonsuz Karışık | Saatlerce tekrarsız karışık akış (çalınan şarkıları atlar) |
 | ✅ Arka plan çalma | Ekran kilitliyken / uygulama kapalıyken devam eder |
 | ✅ Kilit ekranı kontrolleri | Bildirim + medya butonları (play/pause/skip) |
 | ✅ Oynatma hızı | 0.5x – 2x arası 6 kademe |
@@ -60,11 +62,14 @@
 | ✅ Dinleme geçmişi | Son çalınanlar otomatik kaydedilir |
 | ✅ Radyo | Bir şarkıdan sonsuz benzer şarkı akışı |
 | ✅ Şarkı sözleri | Eşzamanlı vurgulu (pseudo-sync) |
+| ✅ Senin İçin | Son dinlenen sanatçıdan taze öneriler, tekrar yok |
+| ✅ Ruh haline göre keşfet | Mutlu/Enerjik/Sakin… modlara göre hazır listeler |
 
 ### 🌍 Bağlantılı Özellikler
 | | |
 |---|---|
-| ✅ Gerçek zamanlı oda | MQTT tabanlı kur/katıl, avatar, aynı anda senkron çalar |
+| ✅ Gerçek zamanlı oda | MQTT tabanlı kur/katıl, avatar (fotoğraf dahil), aynı anda senkron çalar |
+| ✅ Onarım botu | Arızaları sessizce tespit eder, otomatik düzeltir, durum paneli ayarlarda |
 | ✅ Sonsuz döngü | Trend bölümlerinden tek dokunuşla kesintisiz akış |
 | ✅ Çevrimdışı mod | Manuel kapat, yalnızca indirilenler |
 | ✅ Arka plan OTA | Güncelleme arka planda sessizce iner, kurulum onayı sendedir |
@@ -73,7 +78,7 @@
 | | |
 |---|---|
 | ✅ Karanlık / Açık tema | Tek dokunuşla geçiş (varsayılan karanlık) |
-| ✅ 5 vurgu rengi | Yeşil, Mavi, Mor, Kırmızı, Turuncu |
+| ✅ 10 vurgu rengi | Yeşil, Mavi, Mor, Kırmızı, Turuncu, Pembe, Turkuaz, İndigo, Açık Yeşil, Kahve |
 | ✅ Trend ana sayfa | YouTube Müzik trendleri + küratörlü yatay akışlar |
 | ✅ Mini oynatıcı | Gezinirken bile şarkı kontrolü |
 | ✅ Uyku zamanlayıcısı | 5dk – 1sa arası otomatik durdur |
@@ -84,6 +89,7 @@
 | Müzik + kuyruk | ✅ | ✅ | ✅ | ✅ |
 | Arama (metin/sesli) | ✅ | ✅ | ✅ | ✅* |
 | Sanatçı / playlist arama | ✅ | ✅ | ✅ | ✅ |
+| Liste devamı ("Daha Fazla") | ✅ | ✅ | ✅ | ✅ |
 | Çalma listeleri + favoriler | ✅ | ✅ | ✅ | ✅ |
 | Çevrimdışı indirme | ✅ | ✅ | ✅ | ✅ |
 | Ekolayzer | ✅ | ✅ | ✅ | ✅ |
@@ -131,9 +137,10 @@ lib/
 │   ├── download_manager.dart     # Parça parça indirme + formatBytes depolama
 │   ├── library_store.dart        # Favoriler / listeler / indirmeler (kalıcı)
 │   ├── connectivity_service.dart # Çevrimdışı izleme + manuel çevrimdışı
-│   ├── equalizer_service.dart    # 5 bant EQ → ses çarpanı
-│   ├── theme_service.dart        # Tema modu + 5 vurgu rengi (kalıcı)
+│   ├── equalizer_service.dart    # 7 bant EQ → ses çarpanı
+│   ├── theme_service.dart        # Tema modu + 10 vurgu rengi (kalıcı)
 │   ├── room_service.dart         # MQTT (broker.emqx.io) — kur/katıl/senkron çal
+│   ├── repair_bot_service.dart   # Arıza tespiti + otomatik onarım + worker
 │   ├── update_service.dart       # OTA manifest + arka plan otomatik indirme
 │   └── download_manager.dart     # İndirme havuzu + önbellek temizleme
 ├── screens/                      # Root, Home, Search, Library, Room, NowPlaying…

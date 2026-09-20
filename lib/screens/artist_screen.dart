@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,6 +9,7 @@ import '../services/download_manager.dart';
 import '../services/library_store.dart';
 import '../services/music_service.dart';
 import '../services/player_service.dart';
+import '../services/repair_bot_service.dart';
 import '../widgets/song_tile.dart';
 import 'now_playing_screen.dart';
 import 'song_actions.dart';
@@ -25,7 +28,9 @@ class ArtistScreen extends StatefulWidget {
 class _ArtistScreenState extends State<ArtistScreen> {
   List<Song> _songs = [];
   bool _loading = true;
+  bool _loadingMore = false;
   String? _error;
+  int _limit = 40;
 
   @override
   void initState() {
@@ -45,9 +50,41 @@ class _ArtistScreenState extends State<ArtistScreen> {
       setState(() => _songs = songs);
     } catch (_) {
       if (!mounted) return;
-      setState(() => _error = 'Şarkılar yüklenemedi. Bağlantını kontrol et.');
+      // Kullanıcıya hata metni gösterilmez — onarım botu kaydeder, MusicService
+      // sonraki istekte farklı kaynak/ağ yolu dener.
+      unawaited(RepairBotService.instance.reportEvent(
+          RepairEventType.networkTimeout,
+          'Sanatçı şarkıları yüklenemedi: ${widget.name}',
+          {'artist': widget.name}));
+      setState(() => _error = null);
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Daha fazla şarkı: limit büyür, yalnızca yeni şarkılar eklenir.
+  Future<void> _loadMore() async {
+    if (_loadingMore) return;
+    setState(() => _loadingMore = true);
+    try {
+      final more = await MusicService.instance
+          .artistSongs(widget.name, limit: _limit)
+          .timeout(const Duration(seconds: 30));
+      final known = _songs.map((s) => s.id).toSet();
+      final fresh = more.where((s) => !known.contains(s.id)).toList();
+      if (!mounted) return;
+      setState(() {
+        _songs = [..._songs, ...fresh];
+        _limit = (_limit * 2).clamp(40, 600);
+        _loadingMore = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      unawaited(RepairBotService.instance.reportEvent(
+          RepairEventType.artistParseFailed,
+          'Sanatçı için daha fazla şarkı alınamadı: ${widget.name}',
+          {'artist': widget.name, 'limit': _limit}));
+      setState(() => _loadingMore = false);
     }
   }
 
@@ -141,8 +178,25 @@ class _ArtistScreenState extends State<ArtistScreen> {
             )
           else
             SliverList.builder(
-              itemCount: _songs.length,
+              itemCount: _songs.length + 1,
               itemBuilder: (context, i) {
+                if (i == _songs.length) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    child: Center(
+                      child: _loadingMore
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : OutlinedButton.icon(
+                              onPressed: _loadMore,
+                              icon: const Icon(Icons.keyboard_arrow_down),
+                              label: const Text('Daha Fazla'),
+                            ),
+                    ),
+                  );
+                }
                 final song = _songs[i];
                 final player = context.read<PlayerService>();
                 final downloads = context.watch<DownloadManager>();

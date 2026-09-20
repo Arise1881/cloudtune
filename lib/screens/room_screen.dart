@@ -1,5 +1,10 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../constants.dart';
@@ -39,6 +44,7 @@ class _RoomScreenState extends State<RoomScreen> {
   final _codeCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   String _avatarId = kRoomAvatarPresets.first.id;
+  String? _avatarPath;
   bool _createMode = true;
   bool _busy = false;
 
@@ -58,7 +64,28 @@ class _RoomScreenState extends State<RoomScreen> {
   }
 
   String get _profilePhotoValue =>
-      '$kRoomAvatarPrefix$_avatarId';
+      _avatarPath ?? '$kRoomAvatarPrefix$_avatarId';
+
+  /// Galeriden avatar seçer; fotoğraf uygulama klasörüne kopyalanır ve oda
+  /// adresi olarak yerel dosya yolu kullanılır (preset simgesi yerine).
+  Future<void> _pickAvatar() async {
+    if (kIsWeb) return; // Yerel dosya yolu yalnız mobil/masaüstü
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+      if (picked == null) return;
+      final dir = await getApplicationDocumentsDirectory();
+      final ext = picked.path.split('.').last.toLowerCase();
+      final dest = File('${dir.path}/avatar.${ext == 'jpg' ? 'jpg' : 'png'}');
+      await picked.saveTo(dest.path);
+      if (!mounted) return;
+      setState(() => _avatarPath = dest.path);
+    } catch (_) {}
+  }
 
   Future<void> _submit() async {
     if (_busy) return;
@@ -198,9 +225,12 @@ class _RoomScreenState extends State<RoomScreen> {
             spacing: 10,
             runSpacing: 10,
             children: kRoomAvatarPresets.map((a) {
-              final selected = a.id == _avatarId;
+              final selected = a.id == _avatarId && _avatarPath == null;
               return GestureDetector(
-                onTap: () => setState(() => _avatarId = a.id),
+                onTap: () => setState(() {
+                  _avatarPath = null;
+                  _avatarId = a.id;
+                }),
                 child: CircleAvatar(
                   radius: 26,
                   backgroundColor: selected ? AppColors.accent : AppColors.cardLight,
@@ -210,6 +240,21 @@ class _RoomScreenState extends State<RoomScreen> {
               );
             }).toList(),
           ),
+          const SizedBox(height: 10),
+          if (!kIsWeb)
+            OutlinedButton.icon(
+              onPressed: _pickAvatar,
+              icon: Icon(_avatarPath == null
+                  ? Icons.photo_library_outlined
+                  : Icons.photo_library),
+              label: Text(_avatarPath == null
+                  ? 'Kendi fotoğrafını yükle'
+                  : 'Fotoğraf seçildi — değiştir'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.accent,
+                side: BorderSide(color: AppColors.accent),
+              ),
+            ),
           const SizedBox(height: 24),
           if (room.status == RoomStatus.connecting)
             const Center(child: CircularProgressIndicator())
@@ -458,10 +503,15 @@ Widget roomAvatarWidget(String? photo,
     );
   }
   if (value.isNotEmpty) {
+    // Yerel dosya yolu avatar fotoğrafı; aksi halde URL.
+    final isFile = value.startsWith('/') || value.startsWith('file://');
+    final ImageProvider<Object> provider =
+        isFile ? FileImage(File(value)) : NetworkImage(value);
     return CircleAvatar(
       radius: radius,
       backgroundColor: fallback,
-      backgroundImage: NetworkImage(value),
+      foregroundImage: provider,
+      child: const Icon(Icons.person, color: AppColors.textSecondary),
     );
   }
   return CircleAvatar(

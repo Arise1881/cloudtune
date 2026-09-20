@@ -120,12 +120,14 @@ class SettingsScreen extends StatelessWidget {
             _sectionTitle('Destek'),
             _toggleTile(
               title: 'Onarım Botu',
-              subtitle: repairBot.enabled
-                  ? repairBot.statusLine()
+              subtitle: repairBot.isActive
+                  ? 'Aktif — ${repairBot.status.fixedCount} onarım, '
+                      '${repairBot.status.escalatedCount} el değmesi'
                   : 'Kapalı — arıza sırasında otomatik düzeltme durdurulur',
-              value: repairBot.enabled,
-              onChanged: repairBot.setEnabled,
+              value: repairBot.isActive,
+              onChanged: repairBot.setActive,
             ),
+            if (repairBot.isActive) _RepairBotStatusPanel(status: repairBot.status),
             const SizedBox(height: 16),
             _sectionTitle('Depolama'),
             _StorageTile(),
@@ -234,7 +236,7 @@ class SettingsScreen extends StatelessWidget {
               keyboardType: TextInputType.url,
               style: const TextStyle(color: AppColors.textPrimary),
               decoration: const InputDecoration(
-                hintText: 'https://melody-stream.xxxx.workers.dev',
+                hintText: 'https://cloudtune-stream.xxxx.workers.dev',
                 hintStyle: TextStyle(color: AppColors.textSecondary),
               ),
             ),
@@ -464,6 +466,127 @@ class DropdownItem {
   final String label;
   final int index;
   const DropdownItem(this.label, this.index);
+}
+
+/// Onarım botunun canlı durumu: son tarama, onarımlar, el değmesi olayları.
+class _RepairBotStatusPanel extends StatelessWidget {
+  const _RepairBotStatusPanel({required this.status});
+  final RepairBotStatus status;
+
+  String _typeLabel(RepairEventType type) => switch (type) {
+        RepairEventType.networkTimeout => 'Ağ zaman aşımı',
+        RepairEventType.streamError => 'Akış hatası',
+        RepairEventType.downloadFailed => 'İndirme hatası',
+        RepairEventType.cacheCorrupted => 'Önbellek hatası',
+        RepairEventType.proxyFailed => 'Proxy hatası',
+        RepairEventType.searchEmpty => 'Boş arama',
+        RepairEventType.playlistParseFailed => 'Çalma listesi hatası',
+        RepairEventType.artistParseFailed => 'Sanatçı hatası',
+      };
+
+  String _time(DateTime t) {
+    final local = t.toLocal();
+    final hh = local.hour.toString().padLeft(2, '0');
+    final mm = local.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final lastScan = status.lastScan;
+    final events = status.recentEvents;
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.cardLight,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF3A3A3A)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.troubleshoot,
+                  size: 18, color: AppColors.textSecondary),
+              const SizedBox(width: 8),
+              Text(
+                lastScan == null
+                    ? 'Son tarama: henüz yapılmadı'
+                    : 'Son tarama: ${_time(lastScan)} (${lastScan.day}/${lastScan.month})',
+                style: const TextStyle(
+                    color: AppColors.textPrimary, fontSize: 13),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _stat('Onarım', status.fixedCount),
+              const SizedBox(width: 16),
+              _stat('El değmesi', status.escalatedCount),
+            ],
+          ),
+          if (status.lastError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Son hata: ${status.lastError}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  color: AppColors.textSecondary, fontSize: 12),
+            ),
+          ],
+          if (events.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ...events.take(4).map((e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('${_time(e.timestamp)}  ',
+                          style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12)),
+                      Expanded(
+                        child: Text(
+                          '${_typeLabel(e.type)} — ${e.message}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: AppColors.textPrimary, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+          ],
+          if (events.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text('Henüz arıza bildirilmedi — her şey yolunda.',
+                  style: TextStyle(
+                      color: AppColors.textSecondary, fontSize: 12)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stat(String label, int value) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('$value',
+              style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold)),
+          Text(label,
+              style: const TextStyle(
+                  color: AppColors.textSecondary, fontSize: 11)),
+        ],
+      );
 }
 
 

@@ -49,3 +49,6 @@ app.*.map.json
 
 # Melody proxy (yt-dlp) sanal ortam
 melody-proxy/venv/
+
+# Android Gradle build (Flutter alt dizini)
+/android/build/

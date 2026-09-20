@@ -8,7 +8,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// Bu uygulamanın (Melody) kendi dağıtım manifest'i.
+/// Bu uygulamanın (CloudTune) kendi dağıtım manifest'i.
 /// Musify ile hiçbir bağlantısı yoktur; yalnızca kendi repo'sundan beslenir.
 // Manifest GitHub Pages üzerinden sunulur (raw.githubusercontent CDN'i birkaç
 // dakika eski içerik dönebildiği için Pages daha güvenilirdir).
@@ -112,7 +112,7 @@ class UpdateService extends ChangeNotifier {
     final url = info.androidArm64Url ?? info.androidUniversalUrl;
     if (url == null) return null;
     try {
-      final path = await _download(url, 'melody_update_${info.version}.apk');
+      final path = await _download(url, 'cloudtune_update_${info.version}.apk');
       _preparedApkPath = path;
       notifyListeners();
       return path;
@@ -196,7 +196,7 @@ class UpdateService extends ChangeNotifier {
         }
         final url = info.androidArm64Url ?? info.androidUniversalUrl;
         if (url == null) return 'Android için güncelleme bağlantısı yok.';
-        final path = await _download(url, 'melody_update.apk');
+        final path = await _download(url, 'cloudtune_update.apk');
         final res = await OpenFilex.open(path);
         if (res.type != ResultType.done) {
           return 'Kurulum başlatılamadı. Dosya: $path';
@@ -205,7 +205,7 @@ class UpdateService extends ChangeNotifier {
       case UpdatePlatform.linux:
         final url = info.linuxDebUrl;
         if (url == null) return 'Linux için güncelleme bağlantısı yok.';
-        final path = await _download(url, 'melody_update.deb');
+        final path = await _download(url, 'cloudtune_update.deb');
         return 'İndirildi: $path — kurmak için:\nsudo apt install ./$path';
       case UpdatePlatform.ios:
         return 'iOS güncellemesi SideStore/AltStore üzerinden yapılır:\n$kSourceUrl';

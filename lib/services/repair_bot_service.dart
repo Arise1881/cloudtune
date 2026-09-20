@@ -1,144 +1,577 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:developer' as dev;
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:workmanager/workmanager.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import 'music_service.dart';
 import 'player_service.dart';
+import 'download_manager.dart';
 
-/// Gizli onarım botu.
+/// Onarım botu olay türleri.
+enum RepairEventType {
+  streamError,
+  searchEmpty,
+  downloadFailed,
+  playlistParseFailed,
+  artistParseFailed,
+  cacheCorrupted,
+  networkTimeout,
+  proxyFailed,
+}
+
+/// Onarım botu olay verisi.
+class RepairEvent {
+  final RepairEventType type;
+  final String message;
+  final Map<String, dynamic> context;
+  final DateTime timestamp;
+  final int retryCount;
+
+  const RepairEvent({
+    required this.type,
+    required this.message,
+    required this.context,
+    required this.timestamp,
+    this.retryCount = 0,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'type': type.name,
+        'message': message,
+        'context': context,
+        'timestamp': timestamp.toIso8601String(),
+        'retryCount': retryCount,
+      };
+}
+
+/// Onarım botu durumu.
+class RepairBotStatus {
+  final bool isActive;
+  final DateTime? lastScan;
+  final int fixedCount;
+  final int escalatedCount;
+  final String? lastError;
+  final List<RepairEvent> recentEvents;
+
+  const RepairBotStatus({
+    required this.isActive,
+    this.lastScan,
+    required this.fixedCount,
+    required this.escalatedCount,
+    this.lastError,
+    required this.recentEvents,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'isActive': isActive,
+        'lastScan': lastScan?.toIso8601String(),
+        'fixedCount': fixedCount,
+        'escalatedCount': escalatedCount,
+        'lastError': lastError,
+        'recentEvents': recentEvents.map((e) => e.toJson()).toList(),
+      };
+
+  static RepairBotStatus fromJson(Map<String, dynamic> json) => RepairBotStatus(
+        isActive: json['isActive'] as bool? ?? true,
+        lastScan: json['lastScan'] != null ? DateTime.parse(json['lastScan'] as String) : null,
+        fixedCount: json['fixedCount'] as int? ?? 0,
+        escalatedCount: json['escalatedCount'] as int? ?? 0,
+        lastError: json['lastError'] as String?,
+        recentEvents: (json['recentEvents'] as List<dynamic>?)
+                ?.map((e) => RepairEvent(
+                      type: RepairEventType.values.firstWhere(
+                          (t) => t.name == e['type'],
+                          orElse: () => RepairEventType.streamError),
+                      message: e['message'] as String? ?? '',
+                      context: Map<String, dynamic>.from(e['context'] as Map? ?? {}),
+                      timestamp: DateTime.tryParse(e['timestamp'] as String? ?? '') ?? DateTime.now(),
+                      retryCount: e['retryCount'] as int? ?? 0,
+                    ))
+                .toList() ??
+            [],
+      );
+}
+
+/// Arka plan onarım botu servisi.
 ///
-/// Kullanıcıya hiçbir teknik hata göstermeden, çalma anında arka planda
-/// tarar ve sık karşılaşılan bozuklukları otomatik düzeltir:
-///   • Şarkı açılamıyor → akış kaynağı/yöntemi değiştirilerek yeniden denenir.
-///   • YouTube zinciri tıkandı → negatif önbellek temizlenir, farklı yönteme
-///     düşülür.
-///   • Ses motoru kilitlendi (beklemede) → sıfırlanır ve şarkı tekrar çalınır.
-///   • Ağ yokken akış isteği → sessizce atlanır, indirilenlerden devam edilir.
-///
-/// Mod: olay tetiklemeli (anında) + 30 sn periyodik tarama. Cihazı yormamak
-/// için saniyede bir poll YAPILMAZ: dinleyici + düşük frekanslı kontrol.
-///
-/// Durum (aktif/pasif + son işlem) ayarlar ekranında gösterilir.
+/// Özellikler:
+/// - Event-driven: akış/arama/indirme hatalarını dinler
+/// - Polling: 30 saniyede bir sağlık kontrolü (pil dostu)
+/// - Sessiz onarım: kullanıcıya hiç hata göstermez
+/// - Escalation: 3 deneme başarısızsa → Cloudflare Worker → Email
 class RepairBotService extends ChangeNotifier {
   RepairBotService._();
-
   static final RepairBotService instance = RepairBotService._();
 
-  static const String _kEnabled = 'repair_bot_enabled';
-  static const Duration _periodMs = Duration(seconds: 30);
+  static const String _kStatusKey = 'repair_bot_status';
+  static const String _kWorkerUrl = 'https://23d9da7b-178f-424a-8f7d-671c7708445b.cfargotunnel.com/api/repair-log';
+  static const Duration _scanInterval = Duration(seconds: 30);
+  static const int _maxRetriesBeforeEscalation = 3;
+  static const int _maxRecentEvents = 50;
 
-  bool _enabled = true;
-  bool _init = false;
-  Timer? _timer;
-  int _repairs = 0;
-  int _scans = 0;
-  String _lastAction = '—';
-  DateTime? _lastRepairAt;
+  RepairBotStatus _status = const RepairBotStatus(
+    isActive: true,
+    fixedCount: 0,
+    escalatedCount: 0,
+    recentEvents: [],
+  );
+  Timer? _scanTimer;
+  StreamSubscription? _connectivitySub;
+  bool _isScanning = false;
 
-  bool get enabled => _enabled;
-  int get repairs => _repairs;
-  int get scans => _scans;
-  String get lastAction => _lastAction;
-  DateTime? get lastRepairAt => _lastRepairAt;
+  RepairBotStatus get status => _status;
+  bool get isActive => _status.isActive;
+  bool get isScanning => _isScanning;
 
-  /// Başlatma: tercihi yükle, periyodik taramayı kur, hata dinleyicisini bağla.
-  Future<void> init() async {
-    if (_init) return;
-    _init = true;
+  /// Botu başlatır (uygulama açılışında çağrılır).
+  Future<void> initialize() async {
+    await _loadStatus();
+    // Arka plan görevi için Workmanager tek sefer kurulur (Android/iOS).
     try {
-      final prefs = await SharedPreferences.getInstance();
-      _enabled = prefs.getBool(_kEnabled) ?? true;
+      await Workmanager().initialize(callbackDispatcher);
     } catch (_) {}
-    _timer?.cancel();
-    _timer = Timer.periodic(_periodMs, (_) => _sweep());
-    _bindPlayer();
-    notifyListeners();
-  }
-
-  /// Aç/Kapat. Kapatılınca periyodik tarama durur; açılınca yeniden başlar.
-  Future<void> setEnabled(bool value) async {
-    if (_enabled == value) return;
-    _enabled = value;
-    notifyListeners();
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_kEnabled, value);
-    } catch (_) {}
-    if (_enabled) {
-      _timer?.cancel();
-      _timer = Timer.periodic(_periodMs, (_) => _sweep());
+    if (_status.isActive) {
+      _startPeriodicScan();
+      _listenConnectivity();
+      dev.log('RepairBot: Aktif - 30sn aralıkla tarama başlatıldı');
     } else {
-      _timer?.cancel();
+      dev.log('RepairBot: Pasif - kullanıcı kapatmış');
     }
   }
 
-  /// Player hatasını dinler: akış açılamadığında anında onarım girişimi.
-  void _bindPlayer() {
-    PlayerService.instance.addListener(_onPlayerChanged);
-  }
-
-  void _onPlayerChanged() {
-    if (!_enabled) return;
-    final player = PlayerService.instance;
-    final err = player.lastError;
-    if (err != null && !player.isPlaying && player.current != null) {
-      // Hata banner'ı görünmeden hızlıca düzelt: farklı kaynakla yeniden dene.
-      _repair('hata', detail: err);
-    }
-  }
-
-  /// Periyodik tarama — kilitli oynatıcı ve tıkanmış video zinciri kontrolü.
-  Future<void> _sweep() async {
-    if (!_enabled) return;
-    _scans++;
-    final player = PlayerService.instance;
-    // 1) Kilitli/kırık oynatıcı: bekleyen akış yüklenmediyse sıfırla.
-    if (player.isLoading &&
-        !player.isPlaying &&
-        player.lastError == null &&
-        player.current != null) {
-      // Oynatıcı 30sn+ beklemede — akış çözülemedi; farklı yöntemle dene.
-      _repair('kilit', detail: 'oynatıcı beklemede');
-    } else if (player.lastError != null && player.current != null) {
-      _repair('hata', detail: player.lastError!);
-    }
-    // 2) Ölü Invidious negatif önbelleği tazele (10dk sonra yeniden denenir).
+  /// Durumu SharedPreferences'tan yükler.
+  Future<void> _loadStatus() async {
     try {
-      MusicService.refreshDeadInvidious();
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kStatusKey);
+      if (raw != null) {
+        _status = RepairBotStatus.fromJson(jsonDecode(raw));
+      }
+    } catch (_) {}
+  }
+
+  /// Durumu kaydeder ve UI'ı günceller.
+  Future<void> _saveStatus() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kStatusKey, jsonEncode(_status.toJson()));
     } catch (_) {}
     notifyListeners();
   }
 
-  Future<void> _repair(String type, {required String detail}) async {
-    if (_repairing) return;
-    _repairing = true;
+  /// Periyodik tarama başlatır.
+  void _startPeriodicScan() {
+    _scanTimer?.cancel();
+    _scanTimer = Timer.periodic(_scanInterval, (_) => _healthScan());
+    // Workmanager ile arka plan da çalışır (Android/iOS)
+    _registerBackgroundTask();
+  }
+
+  /// Bağlantı dinleyicisi - çevrimiçi olduğunda hemen tarama.
+  void _listenConnectivity() {
+    _connectivitySub?.cancel();
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((result) {
+      if (!result.contains(ConnectivityResult.none)) {
+        _healthScan();
+      }
+    });
+  }
+
+  /// Workmanager arka plan görevi kaydı.
+  Future<void> _registerBackgroundTask() async {
     try {
-      final player = PlayerService.instance;
-      player.clearStreamCache();
-      await player.retryCurrent();
-      _repairs++;
-      _lastRepairAt = DateTime.now();
-      _lastAction = 'düzeltildi ($type)';
-    } catch (_) {
-      _lastAction = 'düzeltilemedi ($type)';
+      await Workmanager().registerPeriodicTask(
+        'repair-bot-scan',
+        'repairBotHealthScan',
+        frequency: const Duration(minutes: 15), // Minimum 15dk (OS kısıtlaması)
+        constraints: Constraints(
+          networkType: NetworkType.connected,
+          requiresBatteryNotLow: true,
+        ),
+      );
+    } catch (_) {}
+  }
+
+  /// Ana sağlık tarama fonksiyonu.
+  Future<void> _healthScan() async {
+    if (_isScanning || !_status.isActive) return;
+    _isScanning = true;
+
+    try {
+      // 1. Ağ erişimi
+      final connectivity = await Connectivity().checkConnectivity();
+      if (connectivity.contains(ConnectivityResult.none)) {
+        await _recordEvent(RepairEventType.networkTimeout,
+            'İnternet bağlantısı yok', {'action': 'waiting_for_connection'});
+        return;
+      }
+
+      // 2. YouTube API yanıt süresi (Invidious + InnerTube)
+      await _checkApiHealth();
+
+      // 3. Proxy durumu
+      await _checkProxyHealth();
+
+      // 4. Cache boyutu ve bozulma kontrolü
+      await _checkCacheHealth();
+
+      // 5. İndirme kuyruğu
+      await _checkDownloadQueue();
+
+      // 6. Player durumu
+      await _checkPlayerHealth();
+
+      _status = _status.copyWith(lastScan: DateTime.now());
+      await _saveStatus();
+      dev.log('RepairBot: Sağlık tarama tamamlandı - ${_status.fixedCount} onarım');
+    } catch (e, st) {
+      dev.log('RepairBot tarama hatası: $e', stackTrace: st);
+      await _recordEvent(RepairEventType.networkTimeout,
+          'Tarama sırasında hata: $e', {'stack': st.toString()});
     } finally {
-      _repairing = false;
-      notifyListeners();
+      _isScanning = false;
     }
   }
 
-  bool _repairing = false;
-
-  /// Telefon/bilgisayar boştayken kullanıcıya destek raporu için özet cadde
-  /// (uzaktan onarım aşamasına geçen hatalar için yardım metni üretir).
-  String statusLine() {
-    if (!_enabled) return 'Pasif';
-    final t = _lastRepairAt;
-    final when = t == null
-        ? 'henüz onarım yok'
-        : 'son onarım ${t.hour.toString().padLeft(2, '0')}:'
-            '${t.minute.toString().padLeft(2, '0')}';
-    return 'Aktif · $when · $_repairs onarım';
+  /// API sağlık kontrolü.
+  Future<void> _checkApiHealth() async {
+    // Invidious hızlı ping (MusicService iç önbelleği canlı örneklere bakarak
+    // atlar; bu yöntem aynı negatif önbelleği kullanır).
+    final latency = await MusicService.instance.pingInvidious();
+    if (latency < 0) {
+      await _recordEvent(RepairEventType.proxyFailed,
+          'Invidious erişilemiyor', {'fallback': 'InnerTube'});
+      MusicService.refreshDeadInvidious(); // Negatif önbelleği temizle
+      await _fixCountIncrement();
+      return;
+    }
+    if (latency > 5000) {
+      await _recordEvent(RepairEventType.networkTimeout,
+          'Invidious yanıt süresi yüksek: ${latency}ms',
+          {'latency_ms': latency});
+      // InnerTube'a geçiş otomatik yapılır (MusicService içinde)
+    }
   }
+
+  /// Proxy sağlık kontrolü.
+  Future<void> _checkProxyHealth() async {
+    final proxy = MusicService.proxyBaseUrl;
+    if (proxy == null) return; // Proxy kapalıysa kontrol etme
+
+    try {
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+      final req = await client.getUrl(Uri.parse('$proxy/health'));
+      final res = await req.close().timeout(const Duration(seconds: 5));
+      if (res.statusCode != HttpStatus.ok) {
+        await _recordEvent(RepairEventType.proxyFailed,
+            'Proxy health check başarısız: ${res.statusCode}', {'proxy': proxy});
+        // Proxy'yi geçici devre dışı bırak
+        MusicService.setStreamProxy('');
+        await _fixCountIncrement();
+      }
+    } catch (_) {
+      await _recordEvent(RepairEventType.proxyFailed,
+          'Proxy erişilemiyor, devre dışı bırakılıyor', {'proxy': proxy});
+      MusicService.setStreamProxy('');
+      await _fixCountIncrement();
+    }
+  }
+
+  /// Cache sağlık kontrolü.
+  Future<void> _checkCacheHealth() async {
+    try {
+      // Home cache boyutu — şişmişse önce süresi dolan girişleri temizle,
+      // hâlâ 200 üstündeyse tümünü boşalt (home zararsız yeniden çeker).
+      final cacheSize = MusicService.homeCacheSize;
+      if (cacheSize > 200) {
+        final pruned = MusicService.pruneHomeCache();
+        await _recordEvent(RepairEventType.cacheCorrupted,
+            'Eski cache temizlendi: $pruned entry (toplam $cacheSize → ${MusicService.homeCacheSize})',
+            {'cleaned': pruned});
+        if (MusicService.homeCacheSize > 200) {
+          await _fixCountIncrement();
+        }
+      }
+
+      // Stream cache — şişmişse boşalt (çözüm her istemde yeniden yapılır).
+      if (MusicService.instance.streamUrlCacheSize > 500) {
+        MusicService.instance.clearStreamUrlCache();
+        await _fixCountIncrement();
+      }
+    } catch (_) {}
+  }
+
+  /// İndirme kuyruğu kontrolü.
+  Future<void> _checkDownloadQueue() async {
+    final dm = DownloadManager.instance;
+    final stuck = dm.progress.keys.where((id) {
+      final started = dm.startedAt(id);
+      if (started == null) return false;
+      return dm.isCompleted(id) == false &&
+          DateTime.now().difference(started) > const Duration(minutes: 10);
+    }).toList();
+
+    for (final id in stuck) {
+      final song = dm.activeSong(id);
+      if (song == null) continue;
+      await dm.resetDownload(id);
+      await Future.delayed(const Duration(seconds: 2));
+      await dm.download(song);
+      await _recordEvent(RepairEventType.downloadFailed,
+          'Takılı indirme yeniden başlatıldı: ${song.title}',
+          {'song_id': song.id});
+      await _fixCountIncrement();
+    }
+  }
+
+  /// Player sağlık kontrolü.
+  Future<void> _checkPlayerHealth() async {
+    final player = PlayerService.instance;
+    final song = player.current;
+    if (song == null) return;
+    // Şarkı varken oynatma durduysa ve son hata akış hatasıysa → olası
+    // akış arızası. PlayerService zaten sonraki adayı/sıradaki şarkıyı dener.
+    if (!player.isPlaying && player.lastError != null && !player.isLoading) {
+      await _recordEvent(RepairEventType.streamError,
+          'Player durdu ama şarkı var: ${song.title}',
+          {'song_id': song.id});
+    }
+  }
+
+  /// Olay kaydı ve onarım tetikleme.
+  Future<void> _recordEvent(RepairEventType type, String message,
+      Map<String, dynamic> context) async {
+    final event = RepairEvent(
+      type: type,
+      message: message,
+      context: context,
+      timestamp: DateTime.now(),
+    );
+
+    final events = List<RepairEvent>.from(_status.recentEvents)
+      ..insert(0, event);
+    if (events.length > _maxRecentEvents) {
+      events.removeRange(_maxRecentEvents, events.length);
+    }
+
+    _status = _status.copyWith(
+      recentEvents: events,
+      lastError: message,
+    );
+    await _saveStatus();
+
+    // Otomatik onarım stratejileri
+    await _attemptAutoFix(type, context);
+  }
+
+  /// Otomatik onarım stratejileri.
+  Future<void> _attemptAutoFix(RepairEventType type,
+      Map<String, dynamic> context) async {
+    switch (type) {
+      case RepairEventType.streamError:
+        // MusicService'in streamCandidates zaten fallback dener
+        // Negatif önbelleği temizle
+        MusicService.refreshDeadInvidious();
+        break;
+      case RepairEventType.proxyFailed:
+        // Proxy zaten _checkProxyHealth'te devre dışı bırakıldı
+        break;
+      case RepairEventType.cacheCorrupted:
+        // _checkCacheHealth'te temizlendi
+        break;
+      case RepairEventType.downloadFailed:
+        // DownloadManager zaten retry yapıyor
+        break;
+      case RepairEventType.searchEmpty:
+        // Farklı kaynak denenir (MusicService.search içinde)
+        break;
+      default:
+        break;
+    }
+
+    // Aynı hata tekrar ederse escalation
+    final recentSameType = _status.recentEvents
+        .where((e) => e.type == type)
+        .take(3)
+        .length;
+    if (recentSameType >= _maxRetriesBeforeEscalation) {
+      await _escalate(type, context);
+    }
+  }
+
+  /// Onarım sayacını artır.
+  Future<void> _fixCountIncrement() async {
+    _status = _status.copyWith(fixedCount: _status.fixedCount + 1);
+    await _saveStatus();
+  }
+
+  /// Escalation: Cloudflare Worker → Email.
+  Future<void> _escalate(RepairEventType type,
+      Map<String, dynamic> context) async {
+    _status = _status.copyWith(escalatedCount: _status.escalatedCount + 1);
+    await _saveStatus();
+
+    final deviceInfo = await _collectDeviceInfo();
+    final payload = {
+      'event_type': type.name,
+      'message': _status.lastError,
+      'context': context,
+      'device': deviceInfo,
+      'timestamp': DateTime.now().toIso8601String(),
+      'app_version': await _getAppVersion(),
+      'recent_events': _status.recentEvents.take(10).map((e) => e.toJson()).toList(),
+    };
+
+    // 1. Cloudflare Worker'a logla
+    try {
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+      final req = await client.postUrl(Uri.parse(_kWorkerUrl));
+      req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+      req.write(jsonEncode(payload));
+      final res = await req.close().timeout(const Duration(seconds: 10));
+      if (res.statusCode == HttpStatus.ok) {
+        dev.log('RepairBot: Worker log başarılı');
+        return;
+      }
+    } catch (_) {}
+
+    // 2. Worker başarısızsa email gönder (basit SMTP yerine Worker üzerinden)
+    // Not: Gerçek email için Worker'da email servisi (SendGrid/Resend) kurulmalı.
+    // Burada sadece loglayıp, Worker'ın email göndereceğini varsayıyoruz.
+    dev.log('RepairBot: ESCALATION - Worker/Email tetiklendi: ${jsonEncode(payload)}');
+  }
+
+  /// Cihaz bilgilerini toplar (email/Worker logu için).
+  Future<Map<String, dynamic>> _collectDeviceInfo() async {
+    final info = <String, dynamic>{};
+    try {
+      final deviceInfo = DeviceInfoPlugin();
+      if (Platform.isAndroid) {
+        final android = await deviceInfo.androidInfo;
+        info['platform'] = 'Android';
+        info['model'] = android.model;
+        info['brand'] = android.brand;
+        info['version'] = android.version.release;
+        info['sdk'] = android.version.sdkInt;
+      } else if (Platform.isIOS) {
+        final ios = await deviceInfo.iosInfo;
+        info['platform'] = 'iOS';
+        info['model'] = ios.model;
+        info['system'] = ios.systemVersion;
+      } else if (Platform.isWindows) {
+        info['platform'] = 'Windows';
+      } else if (Platform.isLinux) {
+        info['platform'] = 'Linux';
+      } else if (Platform.isMacOS) {
+        info['platform'] = 'macOS';
+      }
+    } catch (_) {}
+    return info;
+  }
+
+  /// Uygulama versiyonu.
+  Future<String> _getAppVersion() async {
+    try {
+      final pkg = await PackageInfo.fromPlatform();
+      return '${pkg.version}+${pkg.buildNumber}';
+    } catch (_) {
+      return 'unknown';
+    }
+  }
+
+  /// Dışarıdan olay bildirimi (MusicService, PlayerService, DownloadManager çağırır).
+  Future<void> reportEvent(RepairEventType type, String message,
+      Map<String, dynamic> context) async {
+    if (!_status.isActive) return;
+    await _recordEvent(type, message, context);
+  }
+
+  /// Botu aç/kapat.
+  Future<void> setActive(bool active) async {
+    _status = _status.copyWith(isActive: active);
+    if (active) {
+      _startPeriodicScan();
+      _listenConnectivity();
+    } else {
+      _scanTimer?.cancel();
+      _connectivitySub?.cancel();
+    }
+    await _saveStatus();
+    dev.log('RepairBot: ${active ? "Aktif" : "Pasif"}');
+  }
+
+  /// Durumu sıfırla (test/debug için).
+  Future<void> reset() async {
+    _status = const RepairBotStatus(
+      isActive: true,
+      fixedCount: 0,
+      escalatedCount: 0,
+      recentEvents: [],
+    );
+    await _saveStatus();
+  }
+
+  @override
+  void dispose() {
+    _scanTimer?.cancel();
+    _connectivitySub?.cancel();
+    super.dispose();
+  }
+}
+
+/// CopyWith extension for RepairBotStatus
+extension RepairBotStatusCopy on RepairBotStatus {
+  RepairBotStatus copyWith({
+    bool? isActive,
+    DateTime? lastScan,
+    int? fixedCount,
+    int? escalatedCount,
+    String? lastError,
+    List<RepairEvent>? recentEvents,
+  }) {
+    return RepairBotStatus(
+      isActive: isActive ?? this.isActive,
+      lastScan: lastScan ?? this.lastScan,
+      fixedCount: fixedCount ?? this.fixedCount,
+      escalatedCount: escalatedCount ?? this.escalatedCount,
+      lastError: lastError ?? this.lastError,
+      recentEvents: recentEvents ?? this.recentEvents,
+    );
+  }
+}
+
+/// Workmanager callback (arka plan görevi).
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((task, inputData) async {
+    if (task == 'repairBotHealthScan') {
+      // Arka planda hafif tarama (sadece kritik kontroller)
+      final connectivity = await Connectivity().checkConnectivity();
+      if (!connectivity.contains(ConnectivityResult.none)) {
+        MusicService.refreshDeadInvidious();
+        // Proxy kontrolü
+        final proxy = MusicService.proxyBaseUrl;
+        if (proxy != null) {
+          try {
+            final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+            final req = await client.getUrl(Uri.parse('$proxy/health'));
+            final res = await req.close().timeout(const Duration(seconds: 5));
+            if (res.statusCode != HttpStatus.ok) {
+              MusicService.setStreamProxy('');
+            }
+          } catch (_) {
+            MusicService.setStreamProxy('');
+          }
+        }
+      }
+    }
+    return Future.value(true);
+  });
 }

@@ -1,4 +1,4 @@
-/// Melody'nin müzik sağlayıcı tipi.
+/// CloudTune'un müzik sağlayıcı tipi.
 ///
 /// YouTube varsayılan değildir: [MusicSourceType] `audius` varsayılanıyla
 /// uygulama yasal/ücretsiz katalogdan başlar. YouTube yalnızca kullanıcının

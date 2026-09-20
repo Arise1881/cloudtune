@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import '../services/download_manager.dart';
 import '../services/library_store.dart';
 import '../services/music_service.dart';
 import '../services/player_service.dart';
+import '../services/repair_bot_service.dart';
 import '../services/room_service.dart';
 import '../widgets/artwork.dart';
 import '../widgets/song_tile.dart';
@@ -37,6 +39,8 @@ class HomeScreen extends StatelessWidget {
             const SliverToBoxAdapter(child: _OfflineHome()),
           ] else ...[
             SliverToBoxAdapter(child: _quickAccess(context, library)),
+            const SliverToBoxAdapter(child: _MoodAssistant()),
+            SliverToBoxAdapter(child: _ForYouSection()),
             SliverToBoxAdapter(
               child: _TrendSection(
                 title: 'Açık Katalogda Öne Çıkanlar',
@@ -155,6 +159,17 @@ class HomeScreen extends StatelessWidget {
               LibraryScreen.openTab(context, 0);
             },
           ),
+          const SizedBox(width: 12),
+          _songCard(
+            context,
+            title: 'Sonsuz Karışık',
+            subtitle: 'Tekrarsız, saatlerce',
+            icon: Icons.all_inclusive,
+            onTap: () {
+              context.read<PlayerService>().startInfiniteMix();
+              Navigator.push(context, NowPlayingScreen.route(context));
+            },
+          ),
         ],
       ),
     );
@@ -212,6 +227,179 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
+/// Ruh hali asistanı: kullanıcı ruh halini seçer, uygun şarkılar listelenir.
+/// Gerçek LLM yok — sorgu tabanlı, önerilen müzik açık katalogdan çekilir.
+class _MoodAssistant extends StatelessWidget {
+  const _MoodAssistant();
+
+  static const _moods = [
+    (Icons.sentiment_very_satisfied, 'Mutlu'),
+    (Icons.bolt, 'Enerjik'),
+    (Icons.spa, 'Sakin'),
+    (Icons.music_note, 'Hüzünlü'),
+    (Icons.psychology_alt, 'Odak'),
+    (Icons.nightlight_round, 'Gece'),
+  ];
+
+  void _openMood(BuildContext context, String mood) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlaylistScreen(
+          title: '$mood Çalma Listesi',
+          songs: const [],
+          fetcher: (limit) =>
+              MusicService.instance.search('$mood şarkılar', limit: limit),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Ruh Haline Göre Keşfet',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _moods
+                .map((m) => ActionChip(
+                      avatar: Icon(m.$1, size: 18, color: AppColors.accent),
+                      label: Text(m.$2),
+                      onPressed: () => _openMood(context, m.$2),
+                    ))
+                .toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "Senin İçin": son dinlenen sanatçıdan taze öneriler.
+/// Özelleştirme kalıcı geçmişten gelir; yeni şarkılar çekilir (tekrar yok).
+class _ForYouSection extends StatefulWidget {
+  const _ForYouSection();
+
+  @override
+  State<_ForYouSection> createState() => _ForYouSectionState();
+}
+
+class _ForYouSectionState extends State<_ForYouSection> {
+  late Future<List<Song>> _future;
+  String _seedArtist = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final library = context.watch<LibraryStore>();
+    final recents = library.recents;
+    if (recents.isEmpty) return const SizedBox.shrink();
+
+    final latest = recents.reversed.first;
+    if (latest.artist != _seedArtist) {
+      _seedArtist = latest.artist;
+      _future = _load(latest.artist, recents);
+    }
+    return FutureBuilder<List<Song>>(
+      future: _future,
+      builder: (context, snapshot) {
+        final songs = snapshot.data ?? const <Song>[];
+        if (snapshot.connectionState == ConnectionState.done &&
+            !snapshot.hasError &&
+            songs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Senin İçin',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  if (songs.isNotEmpty)
+                    GestureDetector(
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => PlaylistScreen(
+                            title: 'Senin İçin',
+                            songs: const [],
+                            fetcher: (limit) => MusicService.instance
+                                .artistSongs(_seedArtist, limit: limit),
+                          ),
+                        ),
+                      ),
+                      child: Text(
+                        'Tümünü gör',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppColors.accent,
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 200,
+              child: switch (snapshot.connectionState) {
+                ConnectionState.waiting =>
+                  const Center(child: CircularProgressIndicator()),
+                ConnectionState.done when snapshot.hasError =>
+                  const SizedBox.shrink(),
+                _ => ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: songs.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 12),
+                    itemBuilder: (context, i) => _TrendCard(
+                      song: songs[i],
+                      onTap: () {
+                        final player = context.read<PlayerService>();
+                        player.playForever(songs, startIndex: i);
+                        Navigator.push(
+                            context, NowPlayingScreen.route(context));
+                      },
+                    ),
+                  ),
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<List<Song>> _load(String artist, List<Song> recents) async {
+    try {
+      final songs = await MusicService.instance.artistSongs(artist, limit: 8);
+      final known = recents.map((s) => s.id).toSet();
+      return songs.where((s) => !known.contains(s.id)).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+}
+
 /// Küratörlü bölüm: sorguyla şarkıları çeker, yatay kart listesi gösterir.
 class _TrendSection extends StatefulWidget {
   const _TrendSection({
@@ -250,16 +438,20 @@ class _TrendSectionState extends State<_TrendSection> {
       await Future.delayed(Duration(milliseconds: widget.staggerMs));
     }
     if (!mounted) return const [];
-    if (widget.trending) {
-      return MusicService.instance.trending(limit: 12);
+    List<Song> songs;
+    try {
+      songs = widget.trending
+          ? await MusicService.instance.trending(limit: 12)
+          : await MusicService.instance.search(widget.query ?? '', limit: 12);
+    } catch (e) {
+      // Sessiz: hata kullanıcıya gösterilmez, onarım botu kaydeder.
+      unawaited(RepairBotService.instance.reportEvent(
+          RepairEventType.networkTimeout,
+          'Ana sayfa bölümü yüklenemedi: ${widget.title}',
+          {'section': widget.title, 'query': widget.query ?? ''}));
+      return const [];
     }
-    return MusicService.instance.search(widget.query ?? '', limit: 12);
-  }
-
-  void _retry() {
-    setState(() {
-      _future = _delayedLoad();
-    });
+    return songs;
   }
 
   @override
@@ -317,25 +509,8 @@ class _TrendSectionState extends State<_TrendSection> {
               child: switch (snapshot.connectionState) {
                 ConnectionState.waiting =>
                   const Center(child: CircularProgressIndicator()),
-                ConnectionState.done when snapshot.hasError => Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text(
-                          'Bölüm yüklenemedi',
-                          style: TextStyle(color: AppColors.textSecondary),
-                        ),
-                        const SizedBox(height: 8),
-                        OutlinedButton(
-                          onPressed: _retry,
-                          style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: AppColors.accent)),
-                          child: const Text('Tekrar Dene',
-                              style: TextStyle(color: AppColors.accent)),
-                        ),
-                      ],
-                    ),
-                  ),
+                // Sessiz hata: bölüm gizlenir (onarım botu kaydetti).
+                ConnectionState.done when snapshot.hasError => const SizedBox.shrink(),
                 ConnectionState.done when songs.isEmpty => const Center(
                     child: Text(
                       'Şarkı bulunamadı',

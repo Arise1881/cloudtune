@@ -23,11 +23,34 @@ class DownloadManager extends ChangeNotifier {
   final Map<String, double> _progress = {};
   final Map<String, bool> _completed = {};
   final Set<String> _active = {};
+  final Map<String, DateTime> _startedAt = {};
+  final Map<String, Song> _activeSongs = {};
 
   Map<String, double> get progress => Map.unmodifiable(_progress);
   Map<String, bool> get completed => Map.unmodifiable(_completed);
   bool isDownloading(String id) => _active.contains(id);
   bool isCompleted(String id) => _completed[id] ?? false;
+
+  /// Onarım botu API'si: başlatma anı (takılı indirme tespiti için).
+  DateTime? startedAt(String id) => _startedAt[id];
+
+  /// Onarım botu API'si: şu an inmekte olan şarkı.
+  Song? activeSong(String id) => _activeSongs[id];
+
+  /// Onarım botu API'si: takılı indirmeyi temizler — parçalı dosyayı siler,
+  /// iç durumu sıfırlar. Ardından yeniden `download` çağrılabilir.
+  Future<void> resetDownload(String id) async {
+    _active.remove(id);
+    _progress.remove(id);
+    _completed.remove(id);
+    _startedAt.remove(id);
+    _activeSongs.remove(id);
+    try {
+      final f = File(audioPath(id));
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
+    notifyListeners();
+  }
 
   Directory? _dir;
 
@@ -53,6 +76,8 @@ class DownloadManager extends ChangeNotifier {
     _active.add(song.id);
     _progress[song.id] = 0.0;
     _completed.remove(song.id);
+    _startedAt[song.id] = DateTime.now();
+    _activeSongs[song.id] = song;
     notifyListeners();
 
     try {
@@ -120,6 +145,8 @@ class DownloadManager extends ChangeNotifier {
       return msg.isEmpty ? 'İndirme başarısız' : msg;
     } finally {
       _active.remove(song.id);
+      _startedAt.remove(song.id);
+      _activeSongs.remove(song.id);
       notifyListeners();
     }
   }

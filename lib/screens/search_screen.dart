@@ -14,6 +14,7 @@ import '../services/download_manager.dart';
 import '../services/library_store.dart';
 import '../services/music_service.dart';
 import '../services/player_service.dart';
+import '../services/repair_bot_service.dart';
 import '../widgets/artwork.dart';
 import '../widgets/song_tile.dart';
 import 'artist_screen.dart';
@@ -114,7 +115,14 @@ class _SearchScreenState extends State<SearchScreen> {
       unawaited(_saveRecent(query));
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Arama başarısız oldu. Bağlantını kontrol et.');
+      // Hata mesajı kullanıcıya gösterilmez — onarım botu kaydeder ve kendi
+      // kendini düzeltir (varsayılan katalog değişikliği vb.).
+      unawaited(RepairBotService.instance.reportEvent(
+          RepairEventType.networkTimeout,
+          'Arama başarısız: $query',
+          {'query': query}));
+      setState(() => _error = null);
+      return;
     } finally {
       if (mounted) setState(() => _searching = false);
     }
@@ -444,30 +452,15 @@ class _SearchScreenState extends State<SearchScreen> {
               style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
           trailing: const Icon(Icons.play_circle_outline,
               color: AppColors.textSecondary),
-          onTap: () async {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('Çalma listesi yükleniyor…'),
-              duration: Duration(seconds: 1),
-            ));
-            try {
-              final songs = await MusicService.instance
-                  .playlistSongs(p.id)
-                  .timeout(const Duration(seconds: 30));
-              if (!mounted) return;
-              if (songs.isEmpty) {
-                _snack('Çalma listesi boş.');
-                return;
-              }
-              Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => PlaylistScreen(
-                  title: p.title,
-                  songs: songs,
-                ),
-              ));
-            } catch (_) {
-              if (mounted) _snack('Çalma listesi yüklenemedi.');
-            }
-          },
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => PlaylistScreen(
+              title: p.title,
+              songs: const [],
+              fetcher: (limit) => MusicService.instance
+                  .playlistSongs(p.id, limit: limit)
+                  .timeout(const Duration(seconds: 30)),
+            ),
+          )),
         );
       },
     );

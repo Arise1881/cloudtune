@@ -590,18 +590,47 @@ throw StreamUnavailableException(
   }
 
   // ─── Sonsuz Rasgele Şarkı (Autoplay) ───
+
+  /// Oturum+kalıcı geçmişten TEMİZ (çalınmamış) bir şarkı seçer.
+  /// Farklı sorguları dener: tek sorgu karışık sonuç verirse diğerine geçer —
+  /// tekrarsız saatlerce akışın anahtarı, çalınmış havuzdan kaçınmaktır.
+  /// Döner: seçilen şarkı veya null (tüm sorgular boş/çalınmış).
+  Future<Song?> _pickAutoplaySong() async {
+    final played = effectiveQueue.map((s) => s.id).toSet()
+      ..addAll(library.recents.map((s) => s.id));
+    for (var attempt = 0; attempt < 4; attempt++) {
+      final query = _autoplayQueries[Random().nextInt(_autoplayQueries.length)];
+      final results = await music.search(query, limit: 40);
+      if (results.isEmpty) continue;
+      final candidates = results.where((s) => !played.contains(s.id)).toList();
+      if (candidates.isEmpty) continue;
+      return candidates[Random().nextInt(candidates.length)];
+    }
+    return null;
+  }
+
+  /// Sonsuz karışık mod: mevcut kuyruğun devamına TEKRARSIZ yeni şarkılar
+  /// ekler. Oturum+geçmişten temiz şarkı seçimi sayesinde saatlerce farklı
+  /// şarkı akabilir. Kuyruk boşsa yeni bir şarkıyla başlar.
+  Future<void> startInfiniteMix() async {
+    _isRadioMode = false;
+    _radioQueue = [];
+    _radioIndex = -1;
+    _autoplay = true;
+    notifyListeners();
+    if (_queue.isEmpty) {
+      final song = await _pickAutoplaySong();
+      if (song == null) return;
+      playQueue([song]);
+    } else {
+      await _autoplayNext();
+    }
+  }
+
   Future<void> _autoplayNext() async {
     try {
-      final query = _autoplayQueries[Random().nextInt(_autoplayQueries.length)];
-      final results = await music.search(query, limit: 10);
-      if (results.isEmpty) return;
-
-      // Çalınan şarkıları hariç tut
-      final playedIds = effectiveQueue.map((s) => s.id).toSet();
-      final candidates = results.where((s) => !playedIds.contains(s.id)).toList();
-      if (candidates.isEmpty) return;
-
-      final nextSong = candidates[Random().nextInt(candidates.length)];
+      final nextSong = await _pickAutoplaySong();
+      if (nextSong == null) return;
 
       // Kuyruğa ekle
       _queue = List.of(_queue)..add(nextSong);

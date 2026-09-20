@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -5,17 +7,21 @@ import '../constants.dart';
 import '../models/song.dart';
 import '../services/library_store.dart';
 import '../services/player_service.dart';
+import '../services/repair_bot_service.dart';
 import '../widgets/artwork.dart';
 import 'now_playing_screen.dart';
 import 'song_actions.dart';
 
 /// Bir bölümün/çalma listesinin şarkı listesi ekranı.
-class PlaylistScreen extends StatelessWidget {
+/// [fetcher] verilirse "Daha Fazla" ile sunucudan kademeli yükleme yapılır;
+/// verilmezse [songs] durağan olarak gösterilir.
+class PlaylistScreen extends StatefulWidget {
   const PlaylistScreen({
     super.key,
     required this.title,
     required this.songs,
     this.playlistName,
+    this.fetcher,
   });
 
   final String title;
@@ -24,14 +30,66 @@ class PlaylistScreen extends StatelessWidget {
   /// Kitaplıktaki bir çalma listesinden geldiyse dolu; silme desteği için.
   final String? playlistName;
 
+  /// Sunucu çalma listesi yüklemesi: limit büyütülerek tekrar çağrılır.
+  final Future<List<Song>> Function(int limit)? fetcher;
+
+  @override
+  State<PlaylistScreen> createState() => _PlaylistScreenState();
+}
+
+class _PlaylistScreenState extends State<PlaylistScreen> {
+  /// Sunucudan çekilen kısmi liste; [widget.songs] başlangıç değeri.
+  List<Song> _loaded = const [];
+  int _limit = 30;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loaded = widget.songs;
+    if (widget.fetcher != null) _fetchMore();
+  }
+
+  Future<void> _fetchMore() async {
+    final fetcher = widget.fetcher;
+    if (fetcher == null) return;
+    setState(() => _loading = true);
+    try {
+      final more = await fetcher(_limit);
+      // Kuyrukta zaten olan şarkıları tekrar ekleme (id bazlı).
+      final known = _loaded.map((s) => s.id).toSet();
+      final fresh = more.where((s) => !known.contains(s.id)).toList();
+      if (!mounted) return;
+      setState(() {
+        _loaded = [..._loaded, ...fresh];
+        _loading = false;
+      });
+    } catch (_) {
+      unawaited(RepairBotService.instance.reportEvent(
+          RepairEventType.playlistParseFailed,
+          'Çalma listesi yüklenemedi: ${widget.title}',
+          {'limit': _limit}));
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
+
+  void _loadMore() {
+    if (_loading) return;
+    _limit = (_limit * 2).clamp(30, 600);
+    _fetchMore();
+  }
+
   @override
   Widget build(BuildContext context) {
     final player = context.read<PlayerService>();
     final library = context.watch<LibraryStore>();
 
     // Çalma listesindeki güncel içerik (ekleme/çıkarma sonrası yansır).
-    final effective =
-        playlistName != null ? (library.playlists[playlistName] ?? songs) : songs;
+    final effective = widget.playlistName != null
+        ? (library.playlists[widget.playlistName] ?? _loaded)
+        : _loaded;
+    final hasFetcher = widget.fetcher != null;
     final isPlayingThis = player.current != null &&
         effective.any((s) => s.id == player.current!.id);
 
@@ -48,7 +106,7 @@ class PlaylistScreen extends StatelessWidget {
               onPressed: () => Navigator.of(context).pop(),
             ),
             flexibleSpace: FlexibleSpaceBar(
-              title: Text(title,
+              title: Text(widget.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -56,7 +114,8 @@ class PlaylistScreen extends StatelessWidget {
                       fontSize: 16,
                       fontWeight: FontWeight.w800)),
               centerTitle: true,
-              background: _HeaderBackground(songs: effective, title: title),
+              background: _HeaderBackground(
+                  songs: effective, title: widget.title),
             ),
           ),
           SliverToBoxAdapter(
@@ -113,7 +172,11 @@ class PlaylistScreen extends StatelessWidget {
               ),
             ),
           ),
-          if (effective.isEmpty)
+          if (hasFetcher && _loading && effective.isEmpty)
+            const SliverFillRemaining(
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (effective.isEmpty)
             const SliverFillRemaining(
               child: Center(
                 child: Text('Bu liste boş',
@@ -122,11 +185,31 @@ class PlaylistScreen extends StatelessWidget {
             )
           else
             SliverList.builder(
-              itemCount: effective.length + (playlistName != null ? 1 : 0),
+              itemCount: effective.length +
+                  (widget.playlistName != null ? 1 : 0) +
+                  (hasFetcher ? 1 : 0),
               itemBuilder: (context, i) {
                 // Çalma listesi satırı: listeden çıkarma aksiyonu.
-                if (i == effective.length && playlistName != null) {
+                if (i == effective.length && widget.playlistName != null) {
                   return const SizedBox(height: 80);
+                }
+                // "Daha Fazla" butonu listenin sonunda.
+                if (i >= effective.length) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Center(
+                      child: _loading
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : OutlinedButton.icon(
+                              onPressed: _loadMore,
+                              icon: const Icon(Icons.keyboard_arrow_down),
+                              label: const Text('Daha Fazla'),
+                            ),
+                    ),
+                  );
                 }
                 final song = effective[i];
                 final isCurrent = player.current?.id == song.id;
@@ -162,12 +245,12 @@ class PlaylistScreen extends StatelessWidget {
                             : 'İndir',
                         onPressed: () => downloadWithToast(context, song),
                       ),
-                      if (playlistName != null)
+                      if (widget.playlistName != null)
                         IconButton(
                           icon: const Icon(Icons.remove_circle_outline,
                               size: 20, color: AppColors.textSecondary),
                           onPressed: () => library
-                              .removeFromPlaylist(playlistName!, song.id),
+                              .removeFromPlaylist(widget.playlistName!, song.id),
                         ),
                     ],
                   ),
@@ -236,7 +319,7 @@ class _HeaderBackground extends StatelessWidget {
                         fontWeight: FontWeight.w900,
                         height: 1.1)),
                 const SizedBox(height: 6),
-                Text('${songs.length} şarkı • Melody Mix',
+                Text('${songs.length} şarkı • CloudTune Mix',
                     style: const TextStyle(
                         color: AppColors.textSecondary, fontSize: 12)),
               ],

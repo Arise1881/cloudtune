@@ -6,6 +6,6 @@ void main() {
   testWidgets('Uygulama basit smoke testi', (WidgetTester tester) async {
     // Ağ ve platform kanalları mock'lanmadan tam uygulama kurulamaz;
     // bu nedenle yalnızca derlenebilirlik amaçlı bir yer tutucu test.
-    expect(MelodyApp, isNotNull);
+    expect(CloudTuneApp, isNotNull);
   });
 }

@@ -48,7 +48,7 @@ Future<void> main() async {
 
   // İlk kare asla engellenmez: servisler runApp sonrası arka planda kurulur.
   runZonedGuarded(() {
-    runApp(const MelodyApp());
+    runApp(const CloudTuneApp());
     _warmUpServices();
   }, (error, stack) {
     debugPrint('Yakalanmayan hata: $error\n$stack');
@@ -62,7 +62,7 @@ void _warmUpServices() {
   // backend'i yok; masaüstünde media_kit kullanılıyor).
   if (Platform.isAndroid || Platform.isIOS) {
     _safe('Arka plan', () => JustAudioBackground.init(
-          androidNotificationChannelId: 'com.melody.app.playback',
+          androidNotificationChannelId: 'com.cloudtune.app.playback',
           androidNotificationChannelName: 'CloudTune Müzik Çalar',
           androidNotificationOngoing: true,
           androidStopForegroundOnPause: false,
@@ -76,7 +76,7 @@ void _warmUpServices() {
   _safe('Ekolayzer', () => EqualizerService.instance.init());
   _safe('Tema', () => ThemeService.instance.init());
   _safe('Oda', () => RoomService.instance.init());
-  _safe('Onarım botu', () => RepairBotService.instance.init());
+  _safe('Onarım botu', () => RepairBotService.instance.initialize());
   UpdateService.instance.init();
 
   // Son çalınan oturum ilk kare basıldıktan SONRA geri yüklenir.
@@ -93,8 +93,8 @@ Future<void> _safe(String name, Future<void> Function() task) async {
   }
 }
 
-class MelodyApp extends StatelessWidget {
-  const MelodyApp({super.key});
+class CloudTuneApp extends StatelessWidget {
+  const CloudTuneApp({super.key});
 
   @override
   Widget build(BuildContext context) {

@@ -27,6 +27,11 @@ class ThemeService extends ChangeNotifier {
     Color(0xFF9C27B0), // Mor
     Color(0xFFE53935), // Kırmızı
     Color(0xFFFB8C00), // Turuncu
+    Color(0xFFD81B60), // Pembe
+    Color(0xFF00897B), // Turkuaz
+    Color(0xFF3949AB), // İndigo
+    Color(0xFF7CB342), // Açık yeşil
+    Color(0xFF6D4C41), // Kahve
   ];
 
   static const List<String> accentNames = [
@@ -35,6 +40,11 @@ class ThemeService extends ChangeNotifier {
     'Mor',
     'Kırmızı',
     'Turuncu',
+    'Pembe',
+    'Turkuaz',
+    'İndigo',
+    'Açık Yeşil',
+    'Kahve',
   ];
 
   Color get accent => accentColors[_accentIndex];
