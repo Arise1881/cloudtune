@@ -18,7 +18,6 @@ import 'services/equalizer_service.dart';
 import 'services/update_service.dart';
 import 'services/room_service.dart';
 import 'services/theme_service.dart';
-import 'services/assistant_service.dart';
 import 'screens/root_screen.dart';
 import 'screens/settings_screen.dart';
 
@@ -78,7 +77,6 @@ void _warmUpServices() {
   _safe('Tema', () => ThemeService.instance.init());
   _safe('Oda', () => RoomService.instance.init());
   _safe('Onarım botu', () => RepairBotService.instance.initialize());
-  _safe('Asistan', () => AssistantService.instance.init());
   _safe('Cloudflare', () => _initCloudflareSilent());
   UpdateService.instance.init();
 
@@ -135,7 +133,6 @@ class CloudTuneApp extends StatelessWidget {
         ChangeNotifierProvider<ThemeService>.value(value: ThemeService.instance),
         ChangeNotifierProvider<RepairBotService>.value(
             value: RepairBotService.instance),
-        ChangeNotifierProvider<AssistantService>.value(value: AssistantService.instance),
       ],
       child: Consumer<ThemeService>(
         builder: (context, themeService, _) => MaterialApp(

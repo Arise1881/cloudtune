@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import '../models/music_source.dart';
@@ -87,40 +87,23 @@ class MusicService {
   /// ve Invidious erişimi de gerektiğinde devreden çıkar.
   static final ValueNotifier<String?> proxyNotifier =
       ValueNotifier<String?>(null);
-  static const String _kProxyUrl = 'stream_proxy_url';
 
-  /// YouTube kaynağı açık mı? Varsayılan AÇIK (05-2026 isteği): birincil ve
-  /// varsayılan kaynak YouTube; Audius + Internet Archive yedek kalır.
-  static final ValueNotifier<bool> youtubeEnabledNotifier =
-      ValueNotifier<bool>(true);
-  static const String _kYoutubeEnabled = 'youtube_enabled';
+  /// YouTube kaynağı her zaman AÇIK (gizli, sabit). Kullanıcı kapatılamaz.
+  static const bool youtubeEnabled = true;
 
-  static bool get youtubeEnabled => youtubeEnabledNotifier.value;
-
-  /// Uygulama açılışında YouTube kaynak ayarını yükler.
-  /// Varsayılan AÇIK (madde 7: YouTube birincil kaynak, kişisel kapatabilir).
+  /// NOOP - YouTube her zaman açık, ayar yok.
   static Future<void> loadYoutubeEnabled() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      youtubeEnabledNotifier.value = prefs.getBool(_kYoutubeEnabled) ?? true;
-    } catch (_) {
-      youtubeEnabledNotifier.value = true;
-    }
+    // Zaten sabit true
   }
 
-  /// Kullanıcı tercihini kaydeder ve notifier'ı günceller.
+  /// NOOP - YouTube kapatılamaz.
   static Future<void> setYoutubeEnabled(bool enabled) async {
-    youtubeEnabledNotifier.value = enabled;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_kYoutubeEnabled, enabled);
-    } catch (_) {}
+    // NOOP
   }
 
-  /// Varsayılan ücretsiz proxy (kullanıcının Cloudflare Workers hesabı).
-  /// Kullanıcı ayarlardan silerse ayar `''` olarak saklanır ve proxy kapanır;
-  /// hiç kayıt yoksa bu varsayılan kullanılır.
-  static const String _defaultProxyUrl = '';
+  /// Varsayılan Cloudflare Worker proxy (stream-proxy.js deploy edilmiş).
+  /// Kullanıcı değiştiremez; gizli, her zaman aktif.
+  static const String _defaultProxyUrl = 'https://cloudtune-stream.cloudtune-5b3.workers.dev';
 
   static String? get proxyBaseUrl => proxyNotifier.value;
 
@@ -131,32 +114,25 @@ class MusicService {
     return v.endsWith('/') ? v.substring(0, v.length - 1) : v;
   }
 
-  /// Uygulama açılışında kayıtlı proxy URL'sini yükler. Kayıt yoksa
-  /// varsayılan ücretsiz proxy kullanılır; `''` kayıtlıysa proxy kapalıdır.
+
+  /// Uygulama açılışında proxy'yi varsayılan Worker URL ile başlatır.
+  /// Kullanıcı ayarı YOK - her zaman default aktif.
   static Future<void> loadStreamProxy() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      if (!prefs.containsKey(_kProxyUrl)) {
-        proxyNotifier.value = _defaultProxyUrl;
-        return;
-      }
-      final v = prefs.getString(_kProxyUrl);
-      proxyNotifier.value = (v == null || v.trim().isEmpty) ? null : v.trim();
+      // Her zaman hardcoded default proxy kullan
+      proxyNotifier.value = _defaultProxyUrl;
+
     } catch (_) {
       proxyNotifier.value = _defaultProxyUrl;
+
     }
   }
 
-  /// Proxy URL'sini kaydeder. Boş değer proxy'yi kapatır (`''` olarak saklanır).
+  /// NOOP - Proxy gizli, kullanıcı değiştiremez.
   static Future<void> setStreamProxy(String? url) async {
-    final v = (url == null || url.trim().isEmpty) ? null : url.trim();
-    proxyNotifier.value = v;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_kProxyUrl, v ?? '');
-    } catch (_) {}
-  }
+    proxyNotifier.value = _defaultProxyUrl;
 
+  }
   /// googlevideo URL'sini `/stream/<base64url>` yoluna çevirir.
   static String _proxyEncodedStreamUrl(String proxy, String url) =>
       '$proxy/stream/${base64Url.encode(utf8.encode(url)).replaceAll('=', '')}';
@@ -291,6 +267,13 @@ class MusicService {
 
   /// Onarım botu API'si: mevcut ana sayfa önbellek boyutu (giriş sayısı).
   static int get homeCacheSize => _homeCache.length;
+
+  /// Ana sayfa önbelleğini tamamen boşaltır. Ana sayfa tuşuna her basışta
+  /// TAZE şarkılar gelmesi için HomeScreen.refreshNow() çağırır.
+  static void bustHomeCache() {
+    _homeCache.clear();
+    _homeCacheAt.clear();
+  }
 
   /// Onarım botu API'si: süresi dolmuş ana sayfa önbellek girişlerini temizler,
   /// silinen giriş sayısını döner. Önbellek zaten doluysa bot eskileri atar.
@@ -707,9 +690,9 @@ class MusicService {
 
     // 0) Kullanıcı Cloudflare Workers proxy'si tanımlıysa
     // Proxy URL'si doğrudan eklenmez; sadece googlevideo bypass için kullanılır.
-    // if (proxy != null) {
-    //   add('$proxy/v1/stream/$videoId');
-    // }
+    if (proxy != null) {
+      add('$proxy/v1/stream/$videoId');
+    }
 
     // 1) Invidious latest working
     try {
@@ -933,6 +916,51 @@ class MusicService {
       default:
         return List.of(candidates);
     }
+  }
+
+  /// YouTube akış kaynağı hiç çalınamadıysa YEDEK: aynı şarkının başka
+  /// kaynaktaki (Audius / Internet Archive) akış URL'lerini arar.
+  ///
+  /// Türkiye'de googlevideo CDN IP engeli nedeniyle YouTube akışı açılamaz;
+  /// bu yedek, aynı şarkının yasal/geo-bloksuz kopyasını bulup çalmayı garanti
+  /// eder. Audius tek istekte 302→CDN mp3 döner (hızlı), IA metadata+mp3 seçer.
+  Future<List<String>> fallbackStreamCandidates(Song song) async {
+    if (song.title.isEmpty) return const [];
+    final query = song.artist.isNotEmpty
+        ? '${song.title} ${song.artist}'
+        : song.title;
+    final out = <String>[];
+    final seen = <String>{};
+
+    // 1) Audius — hızlı, tek 302.
+    try {
+      final songs = await AudiusSource.defaultHost().search(query, limit: 5);
+      for (final s in songs) {
+        if (s.id == song.id) continue;
+        try {
+          final url =
+              await AudiusSource.defaultHost().streamUrl(trackId: s.id);
+          if (url.isNotEmpty && seen.add(url)) out.add(url);
+          if (out.length >= 4) return out;
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    // 2) Internet Archive — mp3/ogg kopyalar.
+    try {
+      final songs = await InternetArchiveSource().search(query, limit: 5);
+      for (final s in songs) {
+        try {
+          final urls = await InternetArchiveSource().streamCandidates(s);
+          for (final u in urls) {
+            if (seen.add(u)) out.add(u);
+          }
+          if (out.length >= 6) break;
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    return out;
   }
 
   /// Kaynak bilinçli akış adayları: Song.source'a göre doğru kaynağa

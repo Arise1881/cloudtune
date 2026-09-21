@@ -5,7 +5,6 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   connectivity_plus
   file_selector_windows
-  flutter_tts
   media_kit_libs_windows_audio
   speech_to_text_windows
   url_launcher_windows

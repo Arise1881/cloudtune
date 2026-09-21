@@ -1,17 +1,11 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../constants.dart';
 import '../services/connectivity_service.dart';
 import '../services/download_manager.dart';
 import '../services/equalizer_service.dart';
 import '../services/player_service.dart';
-import '../services/repair_bot_service.dart';
-import '../services/music_service.dart';
 import '../services/theme_service.dart';
 import '../services/haptic_service.dart';
 import 'equalizer_screen.dart';
@@ -26,7 +20,6 @@ class SettingsScreen extends StatelessWidget {
     final player = context.watch<PlayerService>();
     final eq = context.watch<EqualizerService>();
     final connectivity = context.watch<ConnectivityService>();
-    final repairBot = context.watch<RepairBotService>();
     final isDark = themeService.isDark;
 
     return Scaffold(
@@ -91,14 +84,6 @@ class SettingsScreen extends StatelessWidget {
               onChanged: (_) { HapticService.instance.light(); player.toggleAutoplay(); },
               showDivider: false,
             ),
-            const SizedBox(height: 8),
-            _toggleTile(
-              title: 'YouTube Kaynagi',
-              subtitle: "YouTube'den sarki arama ve oynatma",
-              value: MusicService.youtubeEnabled,
-              onChanged: (v) { HapticService.instance.light(); MusicService.setYoutubeEnabled(v); },
-              showDivider: false,
-            ),
             const SizedBox(height: 16),
             _sectionTitle('Oynatma Hızı'),
             const SizedBox(height: 4),
@@ -132,17 +117,6 @@ class SettingsScreen extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            _sectionTitle('Destek'),
-            _toggleTile(
-              title: 'Onarım Botu',
-              subtitle: repairBot.isActive
-                  ? 'Aktif — arka planda sürekli koruyor'
-                  : 'Kapalı — arıza sırasında otomatik düzeltme durdurulur',
-              value: repairBot.isActive,
-              onChanged: (v) { HapticService.instance.light(); repairBot.setActive(v); },
-            ),
-            if (repairBot.isActive) _RepairBotStatusPanel(status: repairBot.status),
             const SizedBox(height: 16),
             _sectionTitle('Depolama'),
             _StorageTile(),
@@ -391,212 +365,6 @@ class DropdownItem {
   final int index;
   const DropdownItem(this.label, this.index);
 }
-
-/// Onarım botunun canlı durumu: son tarama, onarımlar, el değmesi olayları.
-class _RepairBotStatusPanel extends StatelessWidget {
-  const _RepairBotStatusPanel({required this.status});
-  final RepairBotStatus status;
-
-  String _typeLabel(RepairEventType type) => switch (type) {
-        RepairEventType.networkTimeout => 'Ağ zaman aşımı',
-        RepairEventType.streamError => 'Akış hatası',
-        RepairEventType.downloadFailed => 'İndirme hatası',
-        RepairEventType.cacheCorrupted => 'Önbellek hatası',
-        RepairEventType.proxyFailed => 'Ağ hatası',
-        RepairEventType.searchEmpty => 'Boş arama',
-        RepairEventType.playlistParseFailed => 'Çalma listesi hatası',
-        RepairEventType.artistParseFailed => 'Sanatçı hatası',
-      };
-
-  String _time(DateTime t) {
-    final local = t.toLocal();
-    final hh = local.hour.toString().padLeft(2, '0');
-    final mm = local.minute.toString().padLeft(2, '0');
-    return '$hh:$mm';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final lastScan = status.lastScan;
-    final events = status.recentEvents;
-    return Container(
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.cardLight,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF3A3A3A)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.troubleshoot,
-                  size: 18, color: AppColors.textSecondary),
-              const SizedBox(width: 8),
-              Text(
-                lastScan == null
-                    ? 'Son tarama: henüz yapılmadı'
-                    : 'Son tarama: ${_time(lastScan)} (${lastScan.day}/${lastScan.month})',
-                style: const TextStyle(
-                    color: AppColors.textPrimary, fontSize: 13),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              _stat('Onarım', status.fixedCount),
-              const SizedBox(width: 16),
-              _stat('El değmesi', status.escalatedCount),
-            ],
-          ),
-          if (status.lastError != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Son hata: ${status.lastError}',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  color: AppColors.textSecondary, fontSize: 12),
-            ),
-          ],
-          if (events.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            ...events.take(4).map((e) => Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('${_time(e.timestamp)}  ',
-                          style: const TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 12)),
-                      Expanded(
-                        child: Text(
-                          '${_typeLabel(e.type)} — ${e.message}',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              color: AppColors.textPrimary, fontSize: 12),
-                        ),
-                      ),
-                    ],
-                  ),
-                )),
-          ],
-          if (events.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text('Henüz arıza bildirilmedi — her şey yolunda.',
-                  style: TextStyle(
-                      color: AppColors.textSecondary, fontSize: 12)),
-            ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () => _showReportDialog(context),
-              icon: const Icon(Icons.support_agent,
-                  size: 16, color: AppColors.textSecondary),
-              label: const Text('Uzaktan Onarım Raporu',
-                  style: TextStyle(
-                      color: AppColors.textPrimary, fontSize: 12)),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Color(0xFF3A3A3A)),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Son arıza raporunu gösterir; e-postayla gönderme veya panoya
-  /// kopyalama imkânı sunar (CloudTune@hotmail.com'a uzaktan onarım).
-  Future<void> _showReportDialog(BuildContext context) async {
-    final report = await RepairBotService.instance.reportForEmail();
-    final Map<String, dynamic> data = report ??
-        {
-          'durum': 'rapor yok',
-          'son_tarama': status.lastScan?.toIso8601String(),
-          'onarim': status.fixedCount,
-          'el_degmesi': status.escalatedCount,
-          'son_hata': status.lastError,
-          'olaylar': status.recentEvents.take(5).map((e) => e.toJson()).toList(),
-        };
-    final body = JsonEncoder.withIndent('  ').convert(data);
-    final mailTo = Uri(
-      scheme: 'mailto',
-      path: 'CloudTune@hotmail.com',
-      queryParameters: {
-        'subject': 'CloudTune Uzaktan Onarım Raporu',
-        'body': body,
-      },
-    ).toString();
-
-    if (!context.mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: AppColors.cardLight,
-        title: const Text('Uzaktan Onarım Raporu',
-            style: TextStyle(fontSize: 16, color: AppColors.textPrimary)),
-        content: SingleChildScrollView(
-          child: Text(body,
-              style: const TextStyle(
-                  color: AppColors.textSecondary, fontSize: 12)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: body));
-              if (dialogCtx.mounted) {
-                Navigator.of(dialogCtx).pop();
-              }
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                  content: Text('Rapor panoya kopyalandı'),
-                  duration: Duration(seconds: 2),
-                ));
-              }
-            },
-            child: const Text('Panoya Kopyala'),
-          ),
-          TextButton(
-            onPressed: () async {
-              if (await canLaunchUrl(Uri.parse(mailTo))) {
-                await launchUrl(Uri.parse(mailTo),
-                    mode: LaunchMode.externalApplication);
-              }
-              if (dialogCtx.mounted) {
-                Navigator.of(dialogCtx).pop();
-              }
-            },
-            child: const Text('E-posta ile Gönder'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _stat(String label, int value) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('$value',
-              style: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold)),
-          Text(label,
-              style: const TextStyle(
-                  color: AppColors.textSecondary, fontSize: 11)),
-        ],
-      );
-}
-
 
 /// Ses kalitesi seçenekleri (etiketsiz değer eşlemesi).
 class QualityItems {

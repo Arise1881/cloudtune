@@ -293,13 +293,45 @@ class PlayerService extends ChangeNotifier {
           }
         }
         if (!started) {
+          // Kaynak bazlı yedek: TÜM YouTube/CDN adayı başlamadıysa aynı şarkının
+          // Audius / Internet Archive kopyasından çalmayı dene. Türkiye'de
+          // googlevideo CDN IP engeli yüzünden YouTube akışı çoğunlukla
+          // açılamaz; bu yedek o şarkıyı YİNE de çalınabilir yapar.
+          final fallback = await music.fallbackStreamCandidates(song);
+          for (final url in fallback) {
+            try {
+              final source = await _buildSourceFromString(url, song);
+              await _player.setAudioSource(source,
+                  initialPosition: Duration.zero, preload: true);
+              await _player.setSpeed(_speed);
+              _applyEqualizer();
+              await _player.play();
+              await _player.playerStateStream
+                  .firstWhere((s) =>
+                      s.processingState == ProcessingState.ready ||
+                      s.processingState == ProcessingState.completed)
+                  .timeout(const Duration(seconds: 12));
+              music.cacheStreamUrl(song.id, url);
+              started = true;
+              failed.clear();
+              break;
+            } catch (e) {
+              lastError = e.toString();
+              failed.add('yedek:${Uri.tryParse(url)?.host ?? url} → $e');
+              try {
+                await _player.stop();
+              } catch (_) {}
+            }
+          }
+        }
+        if (!started) {
           final brief = failed.take(3).join(' | ');
           // Sessizce onarım botuna bildir
           unawaited(RepairBotService.instance.reportEvent(
               RepairEventType.streamError,
               'Akış başlatılamadı: $brief',
               {'song': song.id, 'attempts': candidates.length}));
-          
+
           // Auto-skip to next song if autoplay is enabled, otherwise show error
           if (_autoplay) {
             debugPrint('Stream failed, auto-skipping to next song (autoplay enabled)');

@@ -13,8 +13,6 @@ import '../services/music_service.dart';
 import '../services/player_service.dart';
 import '../services/repair_bot_service.dart';
 import '../services/room_service.dart';
-import '../services/haptic_service.dart';
-import '../services/assistant_service.dart';
 import '../widgets/artwork.dart';
 import '../widgets/song_tile.dart';
 import 'library_screen.dart';
@@ -57,13 +55,14 @@ class HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  /// Ana sayfayı hemen yenile (yeni şarkılar getir)
+  /// Ana sayfayı hemen yenile (yeni şarkılar getir).
+  /// Önbellek boşaltılır: ana sayfa tuşuna her basışta TAZE şarkılar gelir.
   void refreshNow() {
-    if (mounted) {
-      setState(() {
-        _refreshCounter++;
-      });
-    }
+    if (!mounted) return;
+    MusicService.bustHomeCache();
+    setState(() {
+      _refreshCounter++;
+    });
   }
 
   @override
@@ -82,7 +81,6 @@ class HomeScreenState extends State<HomeScreen> {
             const SliverToBoxAdapter(child: _OfflineHome()),
           ] else ...[
             SliverToBoxAdapter(child: _quickAccess(context, library)),
-            const SliverToBoxAdapter(child: _AssistantBar()),
             const SliverToBoxAdapter(child: _MoodAssistant()),
             SliverToBoxAdapter(child: _ForYouSection(refreshTrigger: refreshTrigger)),
             SliverToBoxAdapter(
@@ -125,28 +123,25 @@ class HomeScreenState extends State<HomeScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            greeting,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.bold,
-                ),
+          Flexible(
+            flex: 5,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                greeting,
+                maxLines: 1,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+            ),
           ),
           const SizedBox(width: 8),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Yenile butonu - yeni şarkılar getir
-              IconButton(
-                tooltip: 'Yeni şarkılar',
-                icon: const Icon(Icons.refresh, color: AppColors.accent),
-                onPressed: () {
-                  HapticService.instance.light();
-                  setState(() {
-                    _refreshCounter++;
-                  });
-                },
-              ),
               Consumer<RoomService>(
                 builder: (context, room, _) {
                   final inRoom = room.roomId != null;
@@ -279,186 +274,6 @@ class HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// Sesli komut benzeri asistan çubuğu: "çal X", ruh hali kelimesi veya
-/// serbest arama. Gerçek LLM yok — kural tabanlı, katalogdan çeker.
-class _AssistantBar extends StatefulWidget {
-  const _AssistantBar();
-
-  @override
-  State<_AssistantBar> createState() => _AssistantBarState();
-}
-
-class _AssistantBarState extends State<_AssistantBar> {
-  final TextEditingController _controller = TextEditingController();
-
-  static const _suggestions = ['çal sarkaç', 'sakin müzik', 'odak şarkıları'];
-
-  static const _moodKeywords = [
-    ('mutlu', 'Mutlu'),
-    ('enerjik', 'Enerjik'),
-    ('sakin', 'Sakin'),
-    ('hüzünlü', 'Hüzünlü'),
-    ('huzunlu', 'Hüzünlü'),
-    ('odak', 'Odak'),
-    ('gece', 'Gece'),
-  ];
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  Future<void> _run(String raw, BuildContext ctx) async {
-    final query = raw.trim();
-    if (query.isEmpty) return;
-    _controller.clear();
-    FocusScope.of(ctx).unfocus();
-
-    final lower = query.toLowerCase();
-    String mood = '';
-    for (final (kw, name) in _moodKeywords) {
-      if (lower.contains(kw)) {
-        mood = name;
-        break;
-      }
-    }
-    if (mood.isNotEmpty) {
-      _openSearch(ctx, '$mood şarkılar', '$mood Çalma Listesi');
-      return;
-    }
-
-    final playPrefix = lower.startsWith('çal ') ? 'çal ' : (lower.startsWith('play ') ? 'play ' : null);
-    if (playPrefix != null) {
-      final songQuery = query.substring(playPrefix.length);
-      if (songQuery.isEmpty) return;
-      final player = PlayerService.instance;
-      try {
-        final songs = await MusicService.instance
-            .search(songQuery, limit: 12)
-            .timeout(const Duration(seconds: 20));
-        if (songs.isEmpty) {
-          if (ctx.mounted) {
-            ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
-                content: Text('Sonuç bulunamadı'),
-                duration: Duration(seconds: 2)));
-          }
-          return;
-        }
-        player.playForever(songs, startIndex: 0);
-        if (ctx.mounted) {
-          Navigator.push(ctx, NowPlayingScreen.route(ctx));
-        }
-      } catch (_) {
-        if (ctx.mounted) {
-          ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
-              content: Text('Şarkı çekilemedi, tekrar dene'),
-              duration: Duration(seconds: 2)));
-        }
-      }
-      return;
-    }
-
-    _openSearch(ctx, query, '“$query” Sonuçları');
-  }
-
-  void _openSearch(BuildContext ctx, String query, String title) {
-    Navigator.push(
-      ctx,
-      MaterialPageRoute(
-        builder: (_) => PlaylistScreen(
-          title: title,
-          songs: const [],
-          fetcher: (limit) =>
-              MusicService.instance.search(query, limit: limit),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          TextField(
-            controller: _controller,
-            onSubmitted: (v) => _run(v, context),
-            textInputAction: TextInputAction.search,
-            style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
-            decoration: InputDecoration(
-              hintText: 'Asistana sor: "çal sarkaç", "sakin müzik"...',
-              hintStyle: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
-              prefixIcon: const Icon(Icons.auto_awesome,
-                  size: 18, color: AppColors.accent),
-              suffixIcon: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Consumer<AssistantService>(
-                    builder: (context, assistant, _) {
-                      return IconButton(
-                        icon: Icon(
-                          assistant.isListening ? Icons.mic : Icons.mic_none,
-                          size: 18,
-                          color: assistant.isListening ? AppColors.accent : AppColors.textSecondary,
-                        ),
-                        onPressed: () async {
-                          if (assistant.isListening) {
-                            await assistant.stopConversation();
-                          } else {
-                            await assistant.startConversation();
-                          }
-                        },
-                      );
-                    },
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.send,
-                        size: 18, color: AppColors.textSecondary),
-                    onPressed: () => _run(_controller.text, context),
-                  ),
-                ],
-              ),
-              filled: true,
-              fillColor: AppColors.cardLight,
-              contentPadding: const EdgeInsets.symmetric(vertical: 12),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: Color(0xFF3A3A3A)),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: Color(0xFF3A3A3A)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide(color: AppColors.accent),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: _suggestions
-                .map((s) => ActionChip(
-                      label: Text(s,
-                          style: const TextStyle(
-                              fontSize: 12, color: AppColors.textSecondary)),
-                      side: const BorderSide(color: Color(0xFF3A3A3A)),
-                      backgroundColor: AppColors.cardLight,
-                      onPressed: () => _run(s, context),
-                    ))
-                .toList(),
-          ),
-        ],
       ),
     );
   }
