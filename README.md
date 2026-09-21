@@ -98,8 +98,10 @@
 | Trend ana sayfa + sonsuz döngü | ✅ | ✅ | ✅ | ✅ |
 | Playlist içe aktarma (YTM) | ✅ | ✅ | ✅ | ✅ |
 | OTA güncelleme | ✅ | ⚠️ AltStore | ✅ | ✅ (deb) |
+| Bildirim + kilit ekranı kontrolü (önceki/oynat/sonraki) | ✅ | ✅* | — | — |
 
 *\* Linux'ta mikrofon girişi desteklenmez — sesli arama butonu gizli.*
+*\* Bildirimde "beğen" aksiyonu paket (just_audio_background) sınırı — beğen menüden uygulama içinde yapılır.*
 
 > 📲 **Otomatik güncelleme:** Uygulama arka planda `update.json` kontrol eder.
 > Android'de yeni APK sessizce indirilir, banner "Kuruluma hazır" der — tek
@@ -122,6 +124,9 @@
 > 📲 **Otomatik güncelleme:** Uygulama arka planda `update.json` kontrol eder.
 > Android'de yeni APK sessizce indirilir, banner "Kuruluma hazır" der — tek
 > dokunuşla kurulur, müzik kesilmez. Linux'ta deb paketi indirilir.
+
+> ℹ️ **Dosya adları:** Yayınlardaki `Melody.*` dosya adları, indirme
+> bağlantılarının kırılmaması için korunur; içerik aynı **CloudTune** uygulamasıdır.
 
 ---
 
