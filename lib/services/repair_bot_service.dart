@@ -116,8 +116,8 @@ class RepairBotService extends ChangeNotifier {
   static const String _kWorkerUrl = 'https://23d9da7b-178f-424a-8f7d-671c7708445b.cfargotunnel.com/api/repair-log';
   // Yedek: Cloudflare Worker (workers.dev) — tünel aşağıda olunca çalışır.
   static const String _kWorkerUrlFallback = 'https://cloudtune-repair-log.cloudtune-5b3.workers.dev/api/repair-log';
-  static const Duration _scanInterval = Duration(seconds: 10);
-  static const Duration _heavyScanInterval = Duration(seconds: 60);
+  static const Duration _scanInterval = Duration(seconds: 5);  // Daha hızlı tespit
+  static const Duration _heavyScanInterval = Duration(seconds: 30);  // Daha sık ağ kontrolü
   static const int _maxRetriesBeforeEscalation = 3;
   static const int _maxRecentEvents = 50;
 
@@ -294,25 +294,24 @@ class RepairBotService extends ChangeNotifier {
     }
   }
 
-  /// Proxy sağlık kontrolü.
+  /// Proxy sağlık kontrolü — ultra hızlı, sessiz, uygulama akışını bloke etmez.
   Future<void> _checkProxyHealth() async {
     final proxy = MusicService.proxyBaseUrl;
     if (proxy == null) return; // Proxy kapalıysa kontrol etme
 
     try {
-      final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
       final req = await client.getUrl(Uri.parse('$proxy/health'));
-      final res = await req.close().timeout(const Duration(seconds: 5));
+      final res = await req.close().timeout(const Duration(seconds: 2));
       if (res.statusCode != HttpStatus.ok) {
-        await _recordEvent(RepairEventType.proxyFailed,
-            'Proxy health check başarısız: ${res.statusCode}', {'proxy': proxy});
-        // Proxy'yi geçici devre dışı bırak
+        // Sessizce devre dışı bırak, kullanıcıya hata gösterme
         MusicService.setStreamProxy('');
         await _fixCountIncrement();
       }
+      await res.drain();
+      client.close(force: true);
     } catch (_) {
-      await _recordEvent(RepairEventType.proxyFailed,
-          'Proxy erişilemiyor, devre dışı bırakılıyor', {'proxy': proxy});
+      // Sessizce devre dışı bırak
       MusicService.setStreamProxy('');
       await _fixCountIncrement();
     }
@@ -466,21 +465,24 @@ class RepairBotService extends ChangeNotifier {
     // 1. Yerel rapor dosyası (her zaman — cihazda iz bırakır).
     await _saveLocalReport(payload);
 
-    // 2. Cloudflare Worker'a logla (tünel + workers.dev sırayla denenir).
+    // 2. Cloudflare Worker'a logla (tünel + workers.dev sırayla denenir) — ultra hızlı.
     final urls = [_kWorkerUrl, _kWorkerUrlFallback];
     for (final url in urls) {
       try {
-        final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+        final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
         final req = await client.postUrl(Uri.parse(url));
         req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
         req.write(jsonEncode(payload));
-        final res = await req.close().timeout(const Duration(seconds: 8));
+        final res = await req.close().timeout(const Duration(seconds: 2));
         if (res.statusCode == HttpStatus.ok) {
           dev.log('RepairBot: Worker rapor alındı: $url');
           return;
         }
+        await res.drain();
+        client.close(force: true);
       } catch (_) {}
     }
+    // Her ikisi de başarısız olsa bile uygulama akışı devam eder — sessizce.
 
     // 3. Worker yoksa/ulaşılamazsa rapor yerel kalır; ayarlar ekranındaki
     //    "Uzaktan Onarım Raporu" e-postayla göndermeyi sağlar.

@@ -41,5 +41,5 @@ const Map<String, String> curatedSections = {
   '90\'lar Nostalji': '90s',
 };
 
-const String downloadsFolderName = 'sonora_downloads';
-const String libraryFileName = 'sonora_library.json';
+const String downloadsFolderName = 'cloudtune_downloads';
+const String libraryFileName = 'cloudtune_library.json';

@@ -9,7 +9,6 @@ import '../constants.dart';
 import '../services/connectivity_service.dart';
 import '../services/download_manager.dart';
 import '../services/equalizer_service.dart';
-import '../services/music_service.dart';
 import '../services/player_service.dart';
 import '../services/repair_bot_service.dart';
 import '../services/theme_service.dart';
@@ -125,8 +124,7 @@ class SettingsScreen extends StatelessWidget {
             _toggleTile(
               title: 'Onarım Botu',
               subtitle: repairBot.isActive
-                  ? 'Aktif — ${repairBot.status.fixedCount} onarım, '
-                      '${repairBot.status.escalatedCount} el değmesi'
+                  ? 'Aktif — arka planda sürekli koruyor'
                   : 'Kapalı — arıza sırasında otomatik düzeltme durdurulur',
               value: repairBot.isActive,
               onChanged: repairBot.setActive,
@@ -155,7 +153,7 @@ class SettingsScreen extends StatelessWidget {
             _sectionTitle('Çevrimdışı Mod'),
             _toggleTile(
               title: 'Çevrimdışı Mod',
-              subtitle: 'Ağ kontrolünü yok say, yalnızca indirilenleri oynat',
+              subtitle: 'Sadece indirilen şarkıları çal',
               value: connectivity.forceOffline || connectivity.isOffline,
               onChanged: (v) {
                 connectivity.setForceOffline(v);

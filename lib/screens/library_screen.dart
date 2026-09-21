@@ -63,7 +63,7 @@ class _LibraryScreenState extends State<LibraryScreen>
               keyboardType: TextInputType.url,
               style: const TextStyle(color: Colors.black87),
               decoration: const InputDecoration(
-                labelText: 'Çalma listesi bağlantısı',
+                labelText: 'Çalma listesi linki',
                 filled: true,
                 fillColor: Colors.white,
                 border: OutlineInputBorder(),
@@ -134,7 +134,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     } catch (_) {
       if (!mounted) return;
       messenger.showSnackBar(const SnackBar(
-          content: Text('İçe aktarma başarısız. Bağlantıyı kontrol et.')));
+          content: Text('İçe aktarma başarısız. Linki kontrol edin.')));
     }
   }
 

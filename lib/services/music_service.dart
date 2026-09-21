@@ -54,7 +54,12 @@ class MusicService {
   /// dönmüyor, local kapalı.
   static const Map<String, bool> _invidiousInstances = {
     'https://invidious.darkness.services': true,
-    'https://invidious.ducks.party': true,
+    'https://invidious.nipt.dev': true,
+    'https://invidious.flokkit.net': true,
+    'https://invidious.tanuki.me': true,
+    'https://invidious.vrold.cc': true,
+    'https://invidious.kavin.rocks': true,
+    'https://youtube.com': false, // Fallback to direct YouTube (will use InnerTube)
     'https://invidious.f5.si': false,
     'https://invidious.projectsegfau.lt': false,
   };
@@ -148,11 +153,13 @@ class MusicService {
   /// Innertube player deneme sırası: bazı videolar için bazı istemciler
   /// akış döndürmez, diğerleri döndürür.
   static const List<Map<String, Object>> _playerClients = [
-    {'name': 'WEB', 'version': '2.20240101.00.00'},
-    {'name': 'WEB_EMBEDDED_PLAYER', 'version': '1.20240101.00.00'},
-    {'name': 'ANDROID', 'version': '19.09.37'},
-    {'name': 'IOS', 'version': '19.09.3'},
-    {'name': 'TVHTML5', 'version': '7.20240101.00.00'},
+    {'name': 'WEB', 'version': '2.20250101.00.00'},
+    {'name': 'WEB_EMBEDDED_PLAYER', 'version': '1.20250101.00.00'},
+    {'name': 'ANDROID', 'version': '19.50.37'},
+    {'name': 'IOS', 'version': '19.50.3'},
+    {'name': 'TVHTML5', 'version': '7.20250101.00.00'},
+    {'name': 'ANDROID_VR', 'version': '1.0.0'},
+    {'name': 'WEB_LIGHT', 'version': '2.20250101.00.00'},
   ];
 
   final YoutubeExplode _yt = YoutubeExplode();
@@ -299,27 +306,47 @@ class MusicService {
   }
 
   /// InnerTube player: çoklu client dener, akış içeren ilk yanıtı döner.
+  /// Daha gerçekçi başlıklar ve daha fazla istemci variétéyisi ile YouTube bot korumasını aşar.
   Future<Map<String, dynamic>?> _innerTubePlayer(String videoId) async {
     for (final client in _playerClients) {
       final name = client['name'] as String;
       final version = client['version'] as String;
-      final contextClient = <String, Object?>{'clientName': name, 'clientVersion': version};
-      contextClient['hl'] = 'tr';
-      contextClient['gl'] = 'TR';
+      
+      // Daha gerçekçi istemci bağlamı
+      final contextClient = <String, Object?>{
+        'clientName': name,
+        'clientVersion': version,
+        'hl': 'tr',
+        'gl': 'TR',
+        'clientScreen': 'NONEMBED',
+      };
+      
+      // Platform-specific bilgiler
       if (name == 'ANDROID') {
         contextClient['androidSdkVersion'] = 30;
         contextClient['osName'] = 'Android';
         contextClient['osVersion'] = '13';
+        contextClient['platform'] = 'MOBILE';
       } else if (name == 'IOS') {
         contextClient['osName'] = 'iPhone';
         contextClient['osVersion'] = '17.2.0';
+        contextClient['platform'] = 'MOBILE';
+      } else if (name == 'TVHTML5') {
+        contextClient['platform'] = 'TV';
       }
+      
       final body = <String, Object?>{
         'context': {'client': contextClient},
         'videoId': videoId,
         'racyCheckOk': true,
         'contentCheckOk': true,
+        'playbackContext': {
+          'contentPlaybackContext': {
+            'html5Preference': 'HTML5_PREF_WANTED'
+          }
+        },
       };
+      
       final data = await _postJson(
         'https://www.youtube.com/youtubei/v1/player',
         body,
@@ -328,9 +355,15 @@ class MusicService {
           'Referer': 'https://www.youtube.com/watch?v=$videoId',
           'X-YouTube-Client-Name': '1',
           'X-YouTube-Client-Version': version,
+          'Accept': '*/*',
+          'Accept-Encoding': 'gzip, deflate',
+          'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+          'User-Agent':
+              'Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
         },
-        timeout: const Duration(seconds: 10),
+        timeout: const Duration(seconds: 15),
       );
+      
       if (data is Map<String, dynamic>) {
         final sd = data['streamingData'];
         if (sd is Map<String, dynamic> &&
@@ -643,13 +676,13 @@ class MusicService {
       if (u.isNotEmpty && !urls.contains(u)) urls.add(u);
     }
 
-    // 0) Kullanıcı Cloudflare Workers proxy'si tanımlıysa: tek adres hem
-    //    ses URL'sini çözer hem CDN'i proxy'ler. En hızlı ve en güvenilir yol.
-    if (proxy != null) {
-      add('$proxy/v1/stream/$videoId');
-    }
+    // 0) Kullanıcı Cloudflare Workers proxy'si tanımlıysa
+    // Proxy URL'si doğrudan eklenmez; sadece googlevideo bypass için kullanılır.
+    // if (proxy != null) {
+    //   add('$proxy/v1/stream/$videoId');
+    // }
 
-    // 1) Invidious videos API (adaptiveFormats) — doğrulanmış, en hızlı yol.
+    // 1) Invidious latest working
     try {
       final latest = await _invidiousLatestWorking(videoId);
       for (final u in latest) {
@@ -657,7 +690,7 @@ class MusicService {
       }
     } catch (_) {}
 
-    // InnerTube player (en güncel; ses adaptif formatları)
+    // 2) InnerTube player
     try {
       final p = await _innerTubePlayer(videoId);
       for (final u in _audioUrlsFromStreamingData(p?['streamingData'])) {
@@ -665,7 +698,7 @@ class MusicService {
       }
     } catch (_) {}
 
-    // Invidious videos (adaptiveFormats)
+    // 3) Invidious videos API
     try {
       final data = await _invidious(
           '/api/v1/videos/$videoId?fields=adaptiveFormats,formatStreams');
@@ -676,7 +709,7 @@ class MusicService {
       }
     } catch (_) {}
 
-    // youtube_explode manifest (son çare)
+    // 4) youtube_explode manifest
     try {
       final audio = await _audioStreams(videoId);
       for (final s in audio) {
@@ -689,11 +722,6 @@ class MusicService {
           'Akış çözülemedi (Invidious: ${_liveInvidiousCount()}/${_invidiousInstances.length} kaynak canlı)');
     }
 
-    // Türk mobil operatörleri googlevideo CDN bağlantısını IP düzeyinde
-    // kısıtlayabiliyor. Sıralama:
-    //   1. Proxy'lenmiş googlevideo adayları (Cloudflare Workers üzerinden)
-    //   2. Aracı (invidious) inline adaylar
-    //   3. Doğrudan googlevideo CDN adayları (en son çare)
     final proxied = <String>[];
     final inline = <String>[];
     final cdn = <String>[];

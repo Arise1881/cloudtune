@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../constants.dart';
@@ -27,6 +28,17 @@ class PlayerService extends ChangeNotifier {
   PlayerService._() {
     _player.playerStateStream.listen(_onPlayerState);
     _player.processingStateStream.listen(_onProcessingState);
+    _initAudioSession();
+  }
+
+
+  Future<void> _initAudioSession() async {
+    try {
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration.music());
+    } catch (e) {
+      debugPrint('Audio session init error: $e');
+    }
   }
 
   static final PlayerService instance = PlayerService._();

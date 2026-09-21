@@ -123,7 +123,7 @@ class _RoomScreenState extends State<RoomScreen> {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(const SnackBar(
-          content: Text('Bağlantı sağlanamadı. İnterneti kontrol et.'),
+          content: Text('Sunucuya bağlanılamadı. Lütfen tekrar deneyin.'),
         ));
     }
   }

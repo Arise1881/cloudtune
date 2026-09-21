@@ -13,6 +13,7 @@ import '../services/music_service.dart';
 import '../services/player_service.dart';
 import '../services/repair_bot_service.dart';
 import '../services/room_service.dart';
+import '../services/assistant_service.dart';
 import '../widgets/artwork.dart';
 import '../widgets/song_tile.dart';
 import 'library_screen.dart';
@@ -22,13 +23,45 @@ import 'room_screen.dart';
 import 'song_actions.dart';
 
 /// Ana sayfa: selamlama, hızlı erişim kutucukları ve küratörlü bölümler.
-class HomeScreen extends StatelessWidget {
+/// Her 15 saniyede bir müzik listelerini yeniler.
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  Timer? _refreshTimer;
+  int _refreshCounter = 0;
+  @override
+  void initState() {
+    super.initState();
+    // Onarım botunu tetikle
+    RepairBotService.instance.initialize();
+    
+    // Her 15 saniyede bir ana sayfayı yenile
+    _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (mounted) {
+        setState(() {
+          _refreshCounter++;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final offline = context.watch<ConnectivityService>().isOffline;
     final library = context.watch<LibraryStore>();
+    // Yenileme sayacı - her 15 saniyede bir artar
+    final refreshTrigger = _refreshCounter;
 
     return SafeArea(
       bottom: false,
@@ -41,11 +74,12 @@ class HomeScreen extends StatelessWidget {
             SliverToBoxAdapter(child: _quickAccess(context, library)),
             const SliverToBoxAdapter(child: _AssistantBar()),
             const SliverToBoxAdapter(child: _MoodAssistant()),
-            SliverToBoxAdapter(child: _ForYouSection()),
+            SliverToBoxAdapter(child: _ForYouSection(refreshTrigger: refreshTrigger)),
             SliverToBoxAdapter(
               child: _TrendSection(
                 title: 'Açık Katalogda Öne Çıkanlar',
                 trending: true,
+                refreshTrigger: refreshTrigger,
               ),
             ),
             for (final entry in curatedSections.entries) ...[
@@ -55,6 +89,7 @@ class HomeScreen extends StatelessWidget {
                   title: entry.key,
                   query: entry.value,
                   staggerMs: 250,
+                  refreshTrigger: refreshTrigger,
                 ),
               ),
             ],
@@ -91,6 +126,16 @@ class HomeScreen extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Yenile butonu - yeni şarkılar getir
+              IconButton(
+                tooltip: 'Yeni şarkılar',
+                icon: const Icon(Icons.refresh, color: AppColors.accent),
+                onPressed: () {
+                  setState(() {
+                    _refreshCounter++;
+                  });
+                },
+              ),
               Consumer<RoomService>(
                 builder: (context, room, _) {
                   final inRoom = room.roomId != null;
@@ -342,10 +387,33 @@ class _AssistantBarState extends State<_AssistantBar> {
               hintStyle: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
               prefixIcon: const Icon(Icons.auto_awesome,
                   size: 18, color: AppColors.accent),
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.send,
-                    size: 18, color: AppColors.textSecondary),
-                onPressed: () => _run(_controller.text, context),
+              suffixIcon: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Consumer<AssistantService>(
+                    builder: (context, assistant, _) {
+                      return IconButton(
+                        icon: Icon(
+                          assistant.isListening ? Icons.mic : Icons.mic_none,
+                          size: 18,
+                          color: assistant.isListening ? AppColors.accent : AppColors.textSecondary,
+                        ),
+                        onPressed: () async {
+                          if (assistant.isListening) {
+                            await assistant.stopConversation();
+                          } else {
+                            await assistant.startConversation();
+                          }
+                        },
+                      );
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.send,
+                        size: 18, color: AppColors.textSecondary),
+                    onPressed: () => _run(_controller.text, context),
+                  ),
+                ],
               ),
               filled: true,
               fillColor: AppColors.cardLight,
@@ -448,7 +516,9 @@ class _MoodAssistant extends StatelessWidget {
 /// "Senin İçin": son dinlenen sanatçıdan taze öneriler.
 /// Özelleştirme kalıcı geçmişten gelir; yeni şarkılar çekilir (tekrar yok).
 class _ForYouSection extends StatefulWidget {
-  const _ForYouSection();
+  const _ForYouSection({this.refreshTrigger});
+
+  final int? refreshTrigger;
 
   @override
   State<_ForYouSection> createState() => _ForYouSectionState();
@@ -457,6 +527,22 @@ class _ForYouSection extends StatefulWidget {
 class _ForYouSectionState extends State<_ForYouSection> {
   late Future<List<Song>> _future;
   String _seedArtist = '';
+
+  @override
+  void initState() {
+    super.initState();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ForYouSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.refreshTrigger != oldWidget.refreshTrigger) {
+      setState(() {
+        _seedArtist = '';
+        _future = _delayedLoad();
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -559,6 +645,17 @@ class _ForYouSectionState extends State<_ForYouSection> {
       return const [];
     }
   }
+
+  Future<List<Song>> _delayedLoad() async {
+    final library = context.read<LibraryStore>();
+    final recents = library.recents;
+    if (recents.isEmpty) return const [];
+    final latest = recents.reversed.first;
+    final seed = library.favoriteArtist.isNotEmpty
+        ? library.favoriteArtist
+        : latest.artist;
+    return _load(seed, recents);
+  }
 }
 
 /// Küratörlü bölüm: sorguyla şarkıları çeker, yatay kart listesi gösterir.
@@ -568,6 +665,7 @@ class _TrendSection extends StatefulWidget {
     this.query,
     this.trending = false,
     this.staggerMs = 0,
+    this.refreshTrigger,
   });
 
   final String title;
@@ -581,6 +679,9 @@ class _TrendSection extends StatefulWidget {
   /// Aynı anda çok sorgu gitmesin — bölümler sırayla yüklenir.
   final int staggerMs;
 
+  /// Yenileme tetikleyicisi — değiştiğinde bölümü yeniden yükler.
+  final int? refreshTrigger;
+
   @override
   State<_TrendSection> createState() => _TrendSectionState();
 }
@@ -592,6 +693,16 @@ class _TrendSectionState extends State<_TrendSection> {
   void initState() {
     super.initState();
     _future = _delayedLoad();
+  }
+
+  @override
+  void didUpdateWidget(covariant _TrendSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.refreshTrigger != oldWidget.refreshTrigger) {
+      setState(() {
+        _future = _delayedLoad();
+      });
+    }
   }
 
   Future<List<Song>> _delayedLoad() async {
@@ -650,7 +761,11 @@ class _TrendSectionState extends State<_TrendSection> {
                           context,
                           MaterialPageRoute(
                             builder: (_) => PlaylistScreen(
-                                title: widget.title, songs: songs),
+                                title: widget.title,
+                                songs: songs,
+                                fetcher: widget.trending
+                                    ? (limit) => MusicService.instance.trending(limit: limit)
+                                    : (limit) => MusicService.instance.search(widget.query ?? '', limit: limit)),
                           ),
                         );
                       },

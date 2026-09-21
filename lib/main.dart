@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' show Platform;
+import 'dart:io' show Platform, HttpClient, HttpHeaders;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -18,6 +18,7 @@ import 'services/equalizer_service.dart';
 import 'services/update_service.dart';
 import 'services/room_service.dart';
 import 'services/theme_service.dart';
+import 'services/assistant_service.dart';
 import 'screens/root_screen.dart';
 import 'screens/settings_screen.dart';
 
@@ -77,6 +78,8 @@ void _warmUpServices() {
   _safe('Tema', () => ThemeService.instance.init());
   _safe('Oda', () => RoomService.instance.init());
   _safe('Onarım botu', () => RepairBotService.instance.initialize());
+  _safe('Asistan', () => AssistantService.instance.init());
+  _safe('Cloudflare', () => _initCloudflareSilent());
   UpdateService.instance.init();
 
   // Son çalınan oturum ilk kare basıldıktan SONRA geri yüklenir.
@@ -90,6 +93,23 @@ Future<void> _safe(String name, Future<void> Function() task) async {
     await task().timeout(const Duration(seconds: 4), onTimeout: () {});
   } catch (e) {
     debugPrint('$name başlatma uyarısı: $e');
+  }
+}
+
+/// Cloudflare bağlantısını sessizce başlatır — uygulama akışını bloke etmez.
+Future<void> _initCloudflareSilent() async {
+  try {
+    // Onarım botunun Cloudflare tüneli zaten initialize() içinde başlatılır.
+    // Burada sadece tünel erişilebilirliği hızlıca test edilir (opsiyonel).
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+    final req = await client.getUrl(
+        Uri.parse('https://23d9da7b-178f-424a-8f7d-671c7708445b.cfargotunnel.com/api/health'))
+      ..headers.set(HttpHeaders.userAgentHeader, 'CloudTune-Init/1.0');
+    final res = await req.close().timeout(const Duration(seconds: 3));
+    await res.drain(); // Response body'yi tüket
+    client.close(force: true);
+  } catch (_) {
+    // Sessizce geç — uygulama akışı devam eder.
   }
 }
 
@@ -115,6 +135,7 @@ class CloudTuneApp extends StatelessWidget {
         ChangeNotifierProvider<ThemeService>.value(value: ThemeService.instance),
         ChangeNotifierProvider<RepairBotService>.value(
             value: RepairBotService.instance),
+        ChangeNotifierProvider<AssistantService>.value(value: AssistantService.instance),
       ],
       child: Consumer<ThemeService>(
         builder: (context, themeService, _) => MaterialApp(
