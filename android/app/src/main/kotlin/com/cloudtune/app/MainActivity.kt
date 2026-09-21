@@ -12,7 +12,7 @@ class MainActivity : AudioServiceActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         // "Direkt cihaza kaydet": indirilen sesi MediaStore'a yazar; Android
-        // 10+ RELATIVE_PATH ile Download/Melody klasöründe görünür olur.
+        // 10+ RELATIVE_PATH ile Download/CloudTune klasöründe görünür olur.
         // Eski API'lerde izin yoksa sessizce atlanır (uygulama kendi saklar).
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "melody/saver")
             .setMethodCallHandler { call, result ->
@@ -38,7 +38,7 @@ class MainActivity : AudioServiceActivity() {
                                 put(MediaStore.Audio.Media.TITLE, title)
                                 put(MediaStore.Audio.Media.ARTIST, artist)
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                    put(MediaStore.Audio.Media.RELATIVE_PATH, "Download/Melody")
+                                    put(MediaStore.Audio.Media.RELATIVE_PATH, "Download/CloudTune")
                                     put(MediaStore.Audio.Media.IS_PENDING, 1)
                                 }
                             }
@@ -62,7 +62,7 @@ class MainActivity : AudioServiceActivity() {
                                 values.put(MediaStore.Audio.Media.IS_PENDING, 0)
                                 resolver.update(uri, values, null, null)
                             }
-                            result.success("Download/Melody/$fileName")
+                            result.success("Download/CloudTune/$fileName")
                         } catch (e: Exception) {
                             result.error("save_failed", e.message, null)
                         }

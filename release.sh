@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================
-# Melody yayın script'i
+# CloudTune yayın script'i
 # Tek komutla: build → artifact hazırla → GitHub release güncelle
 # ============================================================
 
@@ -13,10 +13,10 @@ BUMP="${1:-patch}"  # major / minor / patch (varsayılan: patch)
 export PATH="/home/msi/development/flutter/bin:$PATH"
 export ANDROID_SDK_ROOT=/home/msi/android-sdk
 PROJECT="/home/msi/Belgeler/Default Project/sonora"
-DIST="/tmp/opencode/melody-dist"
-STAGING="/tmp/opencode/melody-release"
+DIST="/tmp/opencode/cloudtune-dist"
+STAGING="/tmp/opencode/cloudtune-release"
 GH_TOKEN="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"
-RELEASE_TAG="melody-latest"
+RELEASE_TAG="cloudtune-latest"
 
 cd "$PROJECT"
 
@@ -73,21 +73,21 @@ fi
 # ─── 5. Artifact'leri hazırla ───
 echo "── Artifact hazırlama ──"
 mkdir -p "$STAGING"
-cp -f build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "$STAGING/Melody.apk"
-cp -f build/app/outputs/flutter-apk/app-release.apk "$STAGING/Melody-universal.apk"
-cp -f build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk "$STAGING/Melody-armeabi-v7a.apk"
-cp -f build/app/outputs/flutter-apk/app-x86_64-release.apk "$STAGING/Melody-x86_64.apk"
+cp -f build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "$STAGING/CloudTune-universal.apk"
+cp -f build/app/outputs/flutter-apk/app-release.apk "$STAGING/CloudTune-universal.apk"
+cp -f build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk "$STAGING/CloudTune-armv7.apk"
+cp -f build/app/outputs/flutter-apk/app-x86_64-release.apk "$STAGING/CloudTune-x86_64.apk"
 
 # Linux tar.gz
 cd build/linux/x64/release
-tar -czf "$STAGING/Melody-linux.tar.gz" bundle
+tar -czf "$STAGING/CloudTune-linux.tar.gz" bundle
 cd "$PROJECT"
 
 # Windows zip (yalnızca Windows makinede build edilirse)
-if [[ -f build/windows/x64/runner/Release/melody.exe ]]; then
+if [[ -f build/windows/x64/runner/Release/cloudtune.exe ]]; then
   echo "── Windows paketle ──"
   cd build/windows/x64/runner/Release
-  zip -qr "$STAGING/Melody-windows.zip" . -x "*.pdb" -x "flutter_windows.dll" -x "Darwin*"
+  zip -qr "$STAGING/CloudTune-windows.zip" . -x "*.pdb" -x "flutter_windows.dll" -x "Darwin*"
   cd "$PROJECT"
 fi
 
@@ -97,24 +97,24 @@ if [[ -d build/ios/iphoneos ]]; then
   mkdir -p /tmp/opencode/ipa/Payload
   cp -R build/ios/iphoneos/*.app /tmp/opencode/ipa/Payload/
   cd /tmp/opencode/ipa
-  zip -qr "$STAGING/Melody.ipa" Payload
+  zip -qr "$STAGING/CloudTune.ipa" Payload
   cd "$PROJECT"
 fi
 
 # DEB paketle
-DEB_DIR="/tmp/opencode/melody-deb"
-mkdir -p "$DEB_DIR/usr/share/melody" "$DEB_DIR/DEBIAN"
-rm -rf "$DEB_DIR/usr/share/melody/"* 2>/dev/null || true
-cp -a build/linux/x64/release/bundle/. "$DEB_DIR/usr/share/melody/"
+DEB_DIR="/tmp/opencode/cloudtune-deb"
+mkdir -p "$DEB_DIR/usr/share/cloudtune" "$DEB_DIR/DEBIAN"
+rm -rf "$DEB_DIR/usr/share/cloudtune/"* 2>/dev/null || true
+cp -a build/linux/x64/release/bundle/. "$DEB_DIR/usr/share/cloudtune/"
 cat > "$DEB_DIR/DEBIAN/control" <<EOF
-Package: melody
+Package: cloudtune
 Version: $NEW_VER
 Section: sound
 Priority: optional
 Architecture: amd64
 Maintainer: Arise1881 <arise1881@users.noreply.github.com>
-Description: Melody — YouTube müzik çalar (reklamsız)
- Installed-Size: $(du -sk "$DEB_DIR/usr/share/melody" | cut -f1)
+Description: CloudTune — YouTube müzik çalar (reklamsız)
+ Installed-Size: $(du -sk "$DEB_DIR/usr/share/cloudtune" | cut -f1)
 EOF
 
 # Masaüstü girişi (.desktop) + uygulama ikonu — DE menülerinde görünür
@@ -124,16 +124,16 @@ mkdir -p "$DEB_DIR/usr/share/applications" \
 cat > "$DEB_DIR/usr/share/applications/melody.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Melody
+Name=CloudTune
 GenericName=Music Player
 Comment=Spotify tarzı müzik çalar (YouTube, reklamsız)
-Exec=/usr/share/melody/melody
-Icon=melody
+Exec=/usr/share/cloudtune/cloudtune
+Icon=cloudtune
 Terminal=false
 Categories=Audio;AudioVideo;Player;
-StartupWMClass=melody
+StartupWMClass=cloudtune
 EOF
-cp -f "$DIST/icon.png" "$DEB_DIR/usr/share/icons/hicolor/512x512/apps/melody.png"
+cp -f "$DIST/icon.png" "$DEB_DIR/usr/share/icons/hicolor/512x512/apps/cloudtune.png"
 cat > "$DEB_DIR/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
@@ -146,7 +146,7 @@ fi
 exit 0
 EOF
 chmod 755 "$DEB_DIR/DEBIAN/postinst"
-dpkg-deb --build --root-owner-group "$DEB_DIR" "$STAGING/melody_${NEW_VER}_amd64.deb" 2>&1 | tail -1
+dpkg-deb --build --root-owner-group "$DEB_DIR" "$STAGING/CloudTune-linux.deb" 2>&1 | tail -1
 
 echo "Artifact'ler hazır:"
 ls -la "$STAGING/"
@@ -159,8 +159,8 @@ with open('update.json') as f:
     d = json.load(f)
 d['version'] = '$NEW_VER'
 d['versionCode'] = $NEW_BUILD
-d['notes'] = 'Melody $NEW_VER'
-d['platforms']['linux'] = 'https://github.com/Arise1881/melody-dist/releases/download/$RELEASE_TAG/melody_${NEW_VER}_amd64.deb'
+d["notes"] = "'CloudTune $NEW_VER'"
+d['platforms']['linux'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.deb'
 with open('update.json', 'w') as f:
     json.dump(d, f, indent=2, ensure_ascii=False)
 print(f'update.json -> {d[\"version\"]} / {d[\"versionCode\"]}')
@@ -183,16 +183,16 @@ print(f'apps.json -> {app[\"version\"]} / {app[\"versionDate\"]}')
 # ─── 7. GitHub release asset'lerini güncelle ───
 echo "── Eski asset'leri sil ──"
 RELEASE_ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
-  "https://api.github.com/repos/Arise1881/melody-dist/releases/tags/$RELEASE_TAG" \
+  "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/tags/$RELEASE_TAG" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 
 ASSET_IDS=$(curl -s -H "Authorization: token $GH_TOKEN" \
-  "https://api.github.com/repos/Arise1881/melody-dist/releases/tags/$RELEASE_TAG" \
+  "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/tags/$RELEASE_TAG" \
   | python3 -c "
 import sys,json,os.path
 skip = set()
-if os.path.exists('$STAGING/Melody.ipa'): skip.add('Melody.ipa')
-if os.path.exists('$STAGING/Melody-windows.zip'): skip.add('Melody-windows.zip')
+if os.path.exists('$STAGING/CloudTune.ipa'): skip.add('CloudTune.ipa')
+if os.path.exists('$STAGING/CloudTune-windows.zip'): skip.add('CloudTune-windows.zip')
 for a in json.load(sys.stdin)['assets']:
     if a['name'] not in skip:
         print(a['id'])
@@ -200,12 +200,12 @@ for a in json.load(sys.stdin)['assets']:
 for aid in $ASSET_IDS; do
   curl -s -o /dev/null -X DELETE \
     -H "Authorization: token $GH_TOKEN" \
-    "https://api.github.com/repos/Arise1881/melody-dist/releases/assets/$aid"
+    "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/assets/$aid"
 done
 
 echo "── Yeni asset'leri yükle ──"
-UPLOAD="https://uploads.github.com/repos/Arise1881/melody-dist/releases/$RELEASE_ID/assets"
-for f in Melody.apk Melody-universal.apk Melody-armeabi-v7a.apk Melody-x86_64.apk Melody-linux.tar.gz; do
+UPLOAD="https://uploads.github.com/repos/Arise1881/cloudtune-dist/releases/$RELEASE_ID/assets"
+for f in CloudTune-universal.apk CloudTune-universal.apk CloudTune-armv7.apk CloudTune-x86_64.apk CloudTune-linux.tar.gz; do
   MIME="application/octet-stream"
   [[ "$f" == *.apk ]] && MIME="application/vnd.android.package-archive"
   [[ "$f" == *.tar.gz ]] && MIME="application/gzip"
@@ -217,7 +217,7 @@ for f in Melody.apk Melody-universal.apk Melody-armeabi-v7a.apk Melody-x86_64.ap
 done
 
 # deb (yeni isimle)
-DEB_FILE="melody_${NEW_VER}_amd64.deb"
+DEB_FILE="CloudTune-linux.deb"
 curl -s -o /dev/null -w "$DEB_FILE -> %{http_code}\n" -X POST \
   -H "Authorization: token $GH_TOKEN" \
   -H "Content-Type: application/vnd.debian.binary-package" \
@@ -225,7 +225,7 @@ curl -s -o /dev/null -w "$DEB_FILE -> %{http_code}\n" -X POST \
   "$UPLOAD?name=$DEB_FILE"
 
 # Windows + iOS paketleri (yalnızca build edilen varsa yenilenir)
-for f in Melody-windows.zip Melody.ipa; do
+for f in CloudTune-windows.zip CloudTune.ipa; do
   if [[ -f "$STAGING/$f" ]]; then
     curl -s -o /dev/null -w "$f -> %{http_code}\n" -X POST \
       -H "Authorization: token $GH_TOKEN" \
@@ -237,18 +237,18 @@ done
 
 # Eski deb asset'ini sil (farklı isimde kalabilir)
 OLD_DEB_ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
-  "https://api.github.com/repos/Arise1881/melody-dist/releases/tags/$RELEASE_TAG" \
+  "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/tags/$RELEASE_TAG" \
   | python3 -c "
 import sys,json
 for a in json.load(sys.stdin)['assets']:
-    if a['name'].startswith('melody_') and a['name'] != '$DEB_FILE':
+    if a['name'].startswith('cloudtune_') and a['name'] != '$DEB_FILE':
         print(a['id'])
 " 2>/dev/null)
 if [ -n "$OLD_DEB_ID" ]; then
   for aid in $OLD_DEB_ID; do
     curl -s -o /dev/null -X DELETE \
       -H "Authorization: token $GH_TOKEN" \
-      "https://api.github.com/repos/Arise1881/melody-dist/releases/assets/$aid"
+      "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/assets/$aid"
   done
   echo "Eski deb asset silindi"
 fi
@@ -262,14 +262,14 @@ echo "── Push ──"
 git add update.json apps.json index.html README.md
 git -c user.name="Arise1881" -c user.email="arise1881@users.noreply.github.com" \
   commit -m "v$NEW_FULL: $BUMP bump, Pages manifest URL, release guncellemesi" 2>&1 | tail -1
-git push "https://x-access-token:${GH_TOKEN}@github.com/Arise1881/melody-dist.git" main 2>&1 | tail -1
+git push "https://x-access-token:${GH_TOKEN}@github.com/Arise1881/cloudtune-dist.git" main 2>&1 | tail -1
 
 # ─── 8b. Kaynak repoyu push et (CI aynı sürümü derlesin) ───
 cd "$PROJECT"
 git add pubspec.yaml
 git -c user.name="Arise1881" -c user.email="arise1881@users.noreply.github.com" \
   commit -m "chore: surum $NEW_FULL" 2>&1 | tail -1 || true
-git push "https://x-access-token:${GH_TOKEN}@github.com/Arise1881/melody.git" HEAD 2>&1 | tail -1
+git push "https://x-access-token:${GH_TOKEN}@github.com/Arise1881/cloudtune.git" HEAD 2>&1 | tail -1
 
 # ─── 8c. iOS + Windows CI derlemelerini tetikle ───
 echo "── iOS + Windows derlemelerini tetikle ──"
@@ -277,18 +277,18 @@ for wf in ios-build.yml windows-build.yml; do
   curl -s -o /dev/null -w "$wf -> %{http_code}\n" -X POST \
     -H "Authorization: token $GH_TOKEN" \
     -H "Accept: application/vnd.github+json" \
-    "https://api.github.com/repos/Arise1881/melody/actions/workflows/$wf/dispatches" \
+    "https://api.github.com/repos/Arise1881/cloudtune/actions/workflows/$wf/dispatches" \
     -d '{"ref":"main"}'
 done
 
 # ─── 9. Son doğrulama ───
 echo "── Son doğrulama ──"
-curl -s -o /dev/null -w "GitHub Pages -> %{http_code}\n" "https://arise1881.github.io/melody-dist/update.json"
-curl -s "https://arise1881.github.io/melody-dist/update.json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Pages manifest -> {d[\"version\"]} / {d[\"versionCode\"]}')"
+curl -s -o /dev/null -w "GitHub Pages -> %{http_code}\n" "https://arise1881.github.io/cloudtune-dist/update.json"
+curl -s "https://arise1881.github.io/cloudtune-dist/update.json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Pages manifest -> {d[\"version\"]} / {d[\"versionCode\"]}')"
 
 echo ""
 echo "✅ Yayın tamamlandı: v$NEW_FULL"
-echo "   Melody APK (arm64): $(ls -lh $STAGING/Melody.apk | awk '{print $5}')"
-echo "   Melody APK (universal): $(ls -lh $STAGING/Melody-universal.apk | awk '{print $5}')"
+echo "   CloudTune APK (arm64): $(ls -lh $STAGING/CloudTune-universal.apk | awk '{print $5}')"
+echo "   CloudTune APK (universal): $(ls -lh $STAGING/CloudTune-universal.apk | awk '{print $5}')"
 echo "   DEB: $(ls -lh $STAGING/$DEB_FILE | awk '{print $5}')"
-echo "   tar.gz: $(ls -lh $STAGING/Melody-linux.tar.gz | awk '{print $5}')"
+echo "   tar.gz: $(ls -lh $STAGING/CloudTune-linux.tar.gz | awk '{print $5}')"

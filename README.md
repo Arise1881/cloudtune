@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Arise1881/melody-dist/main/icon.png" width="120" height="120" alt="CloudTune">
+  <img src="https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/icon.png" width="120" height="120" alt="CloudTune">
   <h1 align="center">🎵 CloudTune</h1>
   <p align="center"><b>Spotify temalı, açık kaynak, YouTube destekli müzik çalar</b></p>
   <p align="center">
     <a href="#-özellikler"><img src="https://img.shields.io/badge/özellikler-40%2B-1DB954?style=flat-square"></a>
     <a href="#-kurulum"><img src="https://img.shields.io/badge/platformlar-Android%20•%20iOS%20•%20Linux%20•%20Windows%2011-1E88E5?style=flat-square"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/lisans-MIT-9C27B0?style=flat-square"></a>
-    <a href="https://github.com/Arise1881/melody-dist"><img src="https://img.shields.io/badge/yayın-melody--dist-1DB954?style=flat-square"></a>
+    <a href="https://github.com/Arise1881/cloudtune-dist"><img src="https://img.shields.io/badge/yayın-CloudTune-1DB954?style=flat-square"></a>
   </p>
 </p>
 
@@ -20,10 +20,10 @@
 ## ✨ Ekran Görüntüleri
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/Arise1881/melody-dist/main/video-poster.png" width="600" alt="CloudTune tanıtım">
+  <img src="https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/video-poster.png" width="600" alt="CloudTune tanıtım">
   <br><br>
-  <img src="https://raw.githubusercontent.com/Arise1881/melody-dist/main/apk-qr.png" width="180" alt="Android QR kod">
-  <img src="https://raw.githubusercontent.com/Arise1881/melody-dist/main/ipa-qr.png" width="180" alt="iOS QR kod">
+  <img src="https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/apk-qr.png" width="180" alt="Android QR kod">
+  <img src="https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/ipa-qr.png" width="180" alt="iOS QR kod">
 </div>
 
 ---
@@ -113,20 +113,20 @@
 
 | Platform | Yöntem |
 |---|---|
-| **Android (arm64)** | [Melody.apk indir](https://github.com/Arise1881/melody-dist/releases/download/melody-latest/Melody.apk) · 21 MB |
-| **Android (evrensel)** | [Melody-universal.apk indir](https://github.com/Arise1881/melody-dist/releases/download/melody-latest/Melody-universal.apk) · 59 MB |
-| **iOS** | [AltStore kaynağı ekle](altstore://source?url=https://raw.githubusercontent.com/Arise1881/melody-dist/main/apps.json) veya [ipa](https://github.com/Arise1881/melody-dist/releases/download/melody-latest/Melody.ipa) |
-| **Linux (deb)** | `sudo apt install ./melody_2.2.1_amd64.deb` |
-| **Linux (tar.gz)** | [Melody-linux.tar.gz](https://github.com/Arise1881/melody-dist/releases/download/melody-latest/Melody-linux.tar.gz) |
-| **Windows 11** | Kaynak + GitHub Actions ile derlenir → `Melody-windows.zip` (release) |
+| **Android (arm64)** | [CloudTune-arm64.apk indir](https://github.com/Arise1881/cloudtune-dist/releases/download/cloudtune-latest/CloudTune-arm64.apk) · 22 MB |
+| **Android (evrensel)** | [CloudTune-universal.apk indir](https://github.com/Arise1881/cloudtune-dist/releases/download/cloudtune-latest/CloudTune-universal.apk) · 62 MB |
+| **iOS** | [AltStore kaynağı ekle](altstore://source?url=https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/apps.json) veya [ipa](https://github.com/Arise1881/cloudtune-dist/releases/download/cloudtune-latest/CloudTune.ipa) |
+| **Linux (deb)** | `sudo apt install ./CloudTune-linux.deb` |
+| **Linux (tar.gz)** | [CloudTune-linux.tar.gz](https://github.com/Arise1881/cloudtune-dist/releases/download/cloudtune-latest/CloudTune-linux.tar.gz) |
+| **Windows 11** | Kaynak + GitHub Actions ile derlenir → `CloudTune-windows.zip` (release) |
 | **Qt/Bağımsız** | `flutter run` (geliştirme) |
 
 > 📲 **Otomatik güncelleme:** Uygulama arka planda `update.json` kontrol eder.
 > Android'de yeni APK sessizce indirilir, banner "Kuruluma hazır" der — tek
 > dokunuşla kurulur, müzik kesilmez. Linux'ta deb paketi indirilir.
 
-> ℹ️ **Dosya adları:** Yayınlardaki `Melody.*` dosya adları, indirme
-> bağlantılarının kırılmaması için korunur; içerik aynı **CloudTune** uygulamasıdır.
+> ℹ️ **Dosya adları:** Tüm indirme dosyaları **CloudTune-\*** adıyla yayınlanır
+> (ör. `CloudTune-arm64.apk`, `CloudTune-linux.deb`, `CloudTune.ipa`).
 
 ---
 
@@ -192,4 +192,4 @@ Bu uygulama yalnızca açık kaynak kütüphaneler kullanır ve hiçbir içeriğ
 
 ## 📄 Lisans
 
-MIT © 2026 Arise1881 · [melody-dist](https://github.com/Arise1881/melody-dist) yayın sayfası
+MIT © 2026 Arise1881 · [cloudtune-dist](https://github.com/Arise1881/cloudtune-dist) yayın sayfası

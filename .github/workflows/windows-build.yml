@@ -53,14 +53,14 @@ jobs:
           if ("$env:TOKEN_OK" -ne "True") { Write-Host "GH_TOKEN secret yok; sadece artifact yuklendi."; exit 0 }
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           $Headers = @{ Authorization = "token $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
-          $Release = Invoke-RestMethod -Method Get -Headers $Headers -Uri "https://api.github.com/repos/Arise1881/melody-dist/releases/tags/melody-latest"
+          $Release = Invoke-RestMethod -Method Get -Headers $Headers -Uri "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/tags/cloudtune-latest"
           foreach ($a in $Release.assets) {
             if ($a.name -eq "CloudTune-windows.zip" -or $a.name -eq "CloudTune-web.zip") {
-              Invoke-RestMethod -Method Delete -Headers $Headers -Uri "https://api.github.com/repos/Arise1881/melody-dist/releases/assets/$($a.id)" | Out-Null
+              Invoke-RestMethod -Method Delete -Headers $Headers -Uri "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/assets/$($a.id)" | Out-Null
             }
           }
           $ZipHeaders = @{ Authorization = "token $env:GH_TOKEN"; "Content-Type" = "application/zip" }
-          Invoke-RestMethod -Method Post -Headers $ZipHeaders -InFile "CloudTune-windows.zip" -Uri "https://uploads.github.com/repos/Arise1881/melody-dist/releases/$($Release.id)/assets?name=CloudTune-windows.zip" | Out-Null
+          Invoke-RestMethod -Method Post -Headers $ZipHeaders -InFile "CloudTune-windows.zip" -Uri "https://uploads.github.com/repos/Arise1881/cloudtune-dist/releases/$($Release.id)/assets?name=CloudTune-windows.zip" | Out-Null
           Write-Host "CloudTune-windows.zip -> release eklendi"
-          Invoke-RestMethod -Method Post -Headers $ZipHeaders -InFile "CloudTune-web.zip" -Uri "https://uploads.github.com/repos/Arise1881/melody-dist/releases/$($Release.id)/assets?name=CloudTune-web.zip" | Out-Null
+          Invoke-RestMethod -Method Post -Headers $ZipHeaders -InFile "CloudTune-web.zip" -Uri "https://uploads.github.com/repos/Arise1881/cloudtune-dist/releases/$($Release.id)/assets?name=CloudTune-web.zip" | Out-Null
           Write-Host "CloudTune-web.zip -> release eklendi"

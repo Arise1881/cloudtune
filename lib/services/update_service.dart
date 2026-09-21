@@ -13,9 +13,9 @@ import 'package:path_provider/path_provider.dart';
 // Manifest GitHub Pages üzerinden sunulur (raw.githubusercontent CDN'i birkaç
 // dakika eski içerik dönebildiği için Pages daha güvenilirdir).
 const String kUpdateManifestUrl =
-    'https://arise1881.github.io/melody-dist/update.json';
+    'https://arise1881.github.io/cloudtune-dist/update.json';
 const String kSourceUrl =
-    'altstore://source?url=https://raw.githubusercontent.com/Arise1881/melody-dist/main/apps.json';
+    'altstore://source?url=https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/apps.json';
 
 enum UpdatePlatform { android, linux, ios, unknown }
 
