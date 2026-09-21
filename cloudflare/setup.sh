@@ -128,7 +128,14 @@ else
 fi
 
 echo
-echo "==> 6) Custom domain: ${HOSTNAME} -> ${WORKER}"
+echo "==> 6) workers.dev ac (custom domain & zone GEREKMEZ):"
+curl -fsS -X POST -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" \
+  -d '{"enabled":true}' \
+  "${API}/accounts/${ACCOUNT_ID}/workers/scripts/${WORKER}/subdomain" | jq_check
+echo "    acik -> https://${WORKER}.cloudtune-5b3.workers.dev"
+
+echo
+echo "==> 7) Custom domain: ${HOSTNAME} -> ${WORKER}"
 echo "    NOT: Workers Domain API token ile calismaz (10405, legacy auth ister)."
 echo "    Zone route yukarida (4b) eklendiyse site zaten calisir:"
 echo "    curl https://${HOSTNAME}/api/health"
@@ -142,7 +149,7 @@ echo "curl https://${HOSTNAME}/api/repair-log \\"
 echo "  -X POST -H 'Content-Type: application/json' \\"
 echo "  -d '{\"event_type\":\"test\",\"message\":\"test from setup\"}'"
 echo
-echo "ZONE AKTIFLESTIRME (kritik):"
+echo "ZONE AKTIFLESTIRME (istege bagli, workers.dev icin GEREKMEZ):"
 echo "  Durum: $(curl -sS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${API}/zones/${ZONE_ID}" | python3 -c "import json,sys;print(json.load(sys.stdin)['result']['status'])") (api)"
 echo "  cloudtune.app CF nameserver'larina yonelmediyse registrar'da (GoDaddy) nameserver degistir:"
 echo "  anita.ns.cloudflare.com  +  etienne.ns.cloudflare.com"
