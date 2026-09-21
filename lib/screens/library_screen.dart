@@ -54,7 +54,7 @@ class _LibraryScreenState extends State<LibraryScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
-              'YouTube veya YouTube Music çalma listesi bağlantısını yapıştır.',
+              'YouTube veya YouTube Music çalma listesi linkini yapıştır.',
               style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
             ),
             const SizedBox(height: 14),

@@ -15,7 +15,11 @@ import 'download_manager.dart';
 import 'equalizer_service.dart';
 import 'library_store.dart';
 import 'music_service.dart';
+import 'repair_bot_service.dart';
 import 'room_service.dart';
+
+/// Geçiş tipi: fade, cut, beat-match
+enum TransitionType { fade, cut, beatMatch }
 
 enum RepeatMode { off, all, one }
 enum AudioQuality { auto, high, medium, low, ultra }
@@ -72,6 +76,24 @@ class PlayerService extends ChangeNotifier {
   bool _crossfadeEnabled = true;
   int _crossfadeSeconds = 4;
   Duration get _crossfadeDuration => Duration(seconds: _crossfadeSeconds);
+
+  // ─── Smart Automix ───
+  /// Akıllı karıştırma: BPM/anahtar tabanlı geçiş (gelecekte ses analizi ile)
+  bool _smartAutomix = false;
+  bool get smartAutomix => _smartAutomix;
+  
+  /// Geçiş tipi: fade, cut, beat-match
+  TransitionType _transitionType = TransitionType.fade;
+  TransitionType get transitionType => _transitionType;
+
+  /// BPM verisi (gelecekte ses analizi servisinden gelecek)
+  /// Şimdilik placeholder: 0 = bilinmiyor
+  double _currentBpm = 0;
+  double get currentBpm => _currentBpm;
+  
+  /// Şarkı anahtarı (key) - placeholder
+  String _currentKey = '';
+  String get currentKey => _currentKey;
 
   // ─── Oynatma hızı ───
   double _speed = 1.0;
@@ -272,6 +294,11 @@ class PlayerService extends ChangeNotifier {
         }
         if (!started) {
           final brief = failed.take(3).join(' | ');
+          // Sessizce onarım botuna bildir
+          unawaited(RepairBotService.instance.reportEvent(
+              RepairEventType.streamError,
+              'Akış başlatılamadı: $brief',
+              {'song': song.id, 'attempts': candidates.length}));
           throw Exception(
               lastError == null
                   ? 'Akış başlatılamadı'
@@ -286,6 +313,11 @@ class PlayerService extends ChangeNotifier {
         // seçtiyse odur; şarkıda kalınır, hata banner'ıyla neden gösterilir.
         // Manuel "sonraki/türbülans" ile geçilebilir.
         _lastError = e.toString().replaceFirst('Exception: ', '');
+        // Sessizce onarım botuna bildir
+        unawaited(RepairBotService.instance.reportEvent(
+            RepairEventType.streamError,
+            'Oynatma hatası: ${e.toString().replaceFirst('Exception: ', '')}',
+            {'song': song.id}));
         break;
       }
     }
@@ -720,6 +752,8 @@ throw StreamUnavailableException(
     _speed = (_prefs?.getDouble('playback_speed') ?? 1.0).clamp(0.5, 2.0);
     _crossfadeEnabled = _prefs?.getBool('crossfade_enabled') ?? true;
     _crossfadeSeconds = (_prefs?.getInt('crossfade_seconds') ?? 4).clamp(2, 10);
+    _smartAutomix = _prefs?.getBool('smart_automix') ?? false;
+    _transitionType = TransitionType.values[_prefs?.getInt('transition_type') ?? 0];
   }
 
   Future<void> setQuality(AudioQuality q) async {
@@ -885,6 +919,38 @@ throw StreamUnavailableException(
     _crossfadeSeconds = value.clamp(2, 10);
     _prefs ??= await SharedPreferences.getInstance();
     await _prefs?.setInt('crossfade_seconds', _crossfadeSeconds);
+    notifyListeners();
+  }
+
+  /// Akıllı karıştırma aç/kapat
+  Future<void> setSmartAutomix(bool enabled) async {
+    _smartAutomix = enabled;
+    notifyListeners();
+    try {
+      _prefs ??= await SharedPreferences.getInstance();
+      await _prefs?.setBool('smart_automix', _smartAutomix);
+    } catch (_) {}
+  }
+
+  /// Geçiş tipi değiştir
+  Future<void> setTransitionType(TransitionType type) async {
+    _transitionType = type;
+    notifyListeners();
+    try {
+      _prefs ??= await SharedPreferences.getInstance();
+      await _prefs?.setInt('transition_type', type.index);
+    } catch (_) {}
+  }
+
+  /// BPM ayarla (ses analizi servisinden çağrılacak)
+  void setBpm(double bpm) {
+    _currentBpm = bpm;
+    notifyListeners();
+  }
+
+  /// Anahtar (key) ayarla
+  void setKey(String key) {
+    _currentKey = key;
     notifyListeners();
   }
 

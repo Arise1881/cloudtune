@@ -19,6 +19,7 @@ class RootScreen extends StatefulWidget {
 
 class _RootScreenState extends State<RootScreen> {
   int _tab = 0;
+  final _homeKey = GlobalKey<HomeScreenState>();
 
   @override
   Widget build(BuildContext context) {
@@ -32,10 +33,10 @@ class _RootScreenState extends State<RootScreen> {
           Expanded(
             child: IndexedStack(
               index: _tab,
-              children: const [
-                HomeScreen(),
-                SearchScreen(),
-                LibraryScreen(),
+              children: [
+                HomeScreen(key: _homeKey),
+                const SearchScreen(),
+                const LibraryScreen(),
               ],
             ),
           ),
@@ -44,7 +45,14 @@ class _RootScreenState extends State<RootScreen> {
       ),
       bottomNavigationBar: _BottomNav(
         current: _tab,
-        onChanged: (i) => setState(() => _tab = i),
+        onChanged: (i) {
+          if (i == 0 && _tab == 0) {
+            // Home tab re-tapped -> refresh
+            _homeKey.currentState?.refreshNow();
+          } else {
+            setState(() => _tab = i);
+          }
+        },
       ),
     );
   }

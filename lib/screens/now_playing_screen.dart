@@ -11,6 +11,7 @@ import '../services/download_manager.dart';
 import '../services/library_store.dart';
 import '../services/player_service.dart';
 import 'lyrics_screen.dart';
+import '../services/haptic_service.dart';
 import 'song_actions.dart';
 
 /// Tam ekran "Şu An Çalıyor" ekranı (Spotify tarzı).
@@ -602,8 +603,10 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                               icon: const Icon(Icons.keyboard_arrow_up,
                                   size: 20,
                                   color: AppColors.textSecondary),
-                              onPressed: () =>
-                                  player.moveQueueItem(i, i - 1),
+                              onPressed: () {
+                                    HapticService.instance.light();
+                                    player.moveQueueItem(i, i - 1);
+                                  },
                             ),
                           if (i < len - 1)
                             IconButton(
@@ -611,14 +614,19 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                               icon: const Icon(Icons.keyboard_arrow_down,
                                   size: 20,
                                   color: AppColors.textSecondary),
-                              onPressed: () =>
-                                  player.moveQueueItem(i, i + 1),
+                              onPressed: () {
+                                    HapticService.instance.light();
+                                    player.moveQueueItem(i, i + 1);
+                                  },
                             ),
                           IconButton(
                             visualDensity: VisualDensity.compact,
                             icon: const Icon(Icons.close,
                                 size: 18, color: AppColors.textSecondary),
-                            onPressed: () => player.removeFromQueueAt(i),
+                            onPressed: () {
+                              HapticService.instance.light();
+                              player.removeFromQueueAt(i);
+                            },
                           ),
                         ],
                       ),
@@ -724,6 +732,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
             children: [
               GestureDetector(
                 onTap: () {
+                  HapticService.instance.medium();
                   if (!player.isLoading) player.togglePlayPause();
                 },
                 child: CircleAvatar(
@@ -748,13 +757,13 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
           IconButton(
             iconSize: 38,
             icon: const Icon(Icons.skip_next, color: AppColors.textPrimary),
-            onPressed: () => player.next(),
+            onPressed: () { HapticService.instance.light(); player.next(); },
           ),
           IconButton(
             iconSize: 26,
             icon: Icon(repeatIcon,
                 color: repeatActive ? AppColors.accentBright : AppColors.textSecondary),
-            onPressed: player.cycleRepeat,
+            onPressed: () { HapticService.instance.light(); player.cycleRepeat(); },
           ),
         ],
       ),

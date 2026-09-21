@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <!-- Uygulama içinden güncelleme APK'sı kurulumu için -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- Android Auto -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
 
     <application
         android:label="CloudTune"
@@ -41,14 +43,18 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- Arka plan ses servisi (just_audio_background / audio_service) -->
+        <!-- Arka plan ses servisi (just_audio_background / audio_service) + Android Auto -->
         <service
             android:name="com.ryanheise.audioservice.AudioService"
             android:foregroundServiceType="mediaPlayback"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.media.browse.MediaBrowserService"/>
+                <action android:name="androidx.car.app.CarAppService"/>
             </intent-filter>
+            <meta-data
+                android:name="androidx.car.app.minCarApiLevel"
+                android:value="1"/>
         </service>
         <receiver
             android:name="com.ryanheise.audioservice.MediaButtonReceiver"

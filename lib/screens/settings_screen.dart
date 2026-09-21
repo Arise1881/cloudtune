@@ -12,6 +12,7 @@ import '../services/equalizer_service.dart';
 import '../services/player_service.dart';
 import '../services/repair_bot_service.dart';
 import '../services/theme_service.dart';
+import '../services/haptic_service.dart';
 import 'equalizer_screen.dart';
 
 /// Ayarlar ekranı: tema, vurgu rengi, kalite, ekolayzer, otomatik çalma.
@@ -51,7 +52,10 @@ class SettingsScreen extends StatelessWidget {
               title: 'Karanlık Mod',
               subtitle: 'Açık/koyu tema arasında geçiş yap',
               value: isDark,
-              onChanged: (_) => themeService.toggleMode(),
+              onChanged: (_) {
+                HapticService.instance.light();
+                themeService.toggleMode();
+              },
             ),
             const SizedBox(height: 8),
             _sectionTitle('Vurgu Rengi'),
@@ -64,7 +68,7 @@ class SettingsScreen extends StatelessWidget {
                 title: 'Emoji Desteği',
                 subtitle: 'Emoji ile şarkı isimlerini göster',
                 value: themeService.emojiEnabled,
-                onChanged: themeService.setEmojiEnabled,
+                onChanged: (v) { HapticService.instance.light(); themeService.setEmojiEnabled(v); },
                 showDivider: false,
               ),
             ),
@@ -83,7 +87,7 @@ class SettingsScreen extends StatelessWidget {
               title: 'Otomatik Devam',
               subtitle: 'Şarkı bitince benzer şarkılar otomatik çalsın',
               value: player.autoplay,
-              onChanged: (_) => player.toggleAutoplay(),
+              onChanged: (_) { HapticService.instance.light(); player.toggleAutoplay(); },
               showDivider: false,
             ),
             const SizedBox(height: 16),
@@ -95,7 +99,7 @@ class SettingsScreen extends StatelessWidget {
               title: 'Crossfade',
               subtitle: 'Şarkı geçişlerinde yumuşak ses geçişi',
               value: player.crossfadeEnabled,
-              onChanged: player.setCrossfadeEnabled,
+              onChanged: (v) { HapticService.instance.light(); player.setCrossfadeEnabled(v); },
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -127,7 +131,7 @@ class SettingsScreen extends StatelessWidget {
                   ? 'Aktif — arka planda sürekli koruyor'
                   : 'Kapalı — arıza sırasında otomatik düzeltme durdurulur',
               value: repairBot.isActive,
-              onChanged: repairBot.setActive,
+              onChanged: (v) { HapticService.instance.light(); repairBot.setActive(v); },
             ),
             if (repairBot.isActive) _RepairBotStatusPanel(status: repairBot.status),
             const SizedBox(height: 16),
@@ -156,6 +160,7 @@ class SettingsScreen extends StatelessWidget {
               subtitle: 'Sadece indirilen şarkıları çal',
               value: connectivity.forceOffline || connectivity.isOffline,
               onChanged: (v) {
+                HapticService.instance.light();
                 connectivity.setForceOffline(v);
                 connectivity.retry();
               },
@@ -388,7 +393,7 @@ class _RepairBotStatusPanel extends StatelessWidget {
         RepairEventType.streamError => 'Akış hatası',
         RepairEventType.downloadFailed => 'İndirme hatası',
         RepairEventType.cacheCorrupted => 'Önbellek hatası',
-        RepairEventType.proxyFailed => 'Proxy hatası',
+        RepairEventType.proxyFailed => 'Ağ hatası',
         RepairEventType.searchEmpty => 'Boş arama',
         RepairEventType.playlistParseFailed => 'Çalma listesi hatası',
         RepairEventType.artistParseFailed => 'Sanatçı hatası',

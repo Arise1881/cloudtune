@@ -13,6 +13,7 @@ import '../services/music_service.dart';
 import '../services/player_service.dart';
 import '../services/repair_bot_service.dart';
 import '../services/room_service.dart';
+import '../services/haptic_service.dart';
 import '../services/assistant_service.dart';
 import '../widgets/artwork.dart';
 import '../widgets/song_tile.dart';
@@ -28,10 +29,10 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class HomeScreenState extends State<HomeScreen> {
   Timer? _refreshTimer;
   int _refreshCounter = 0;
   @override
@@ -54,6 +55,15 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _refreshTimer?.cancel();
     super.dispose();
+  }
+
+  /// Ana sayfayı hemen yenile (yeni şarkılar getir)
+  void refreshNow() {
+    if (mounted) {
+      setState(() {
+        _refreshCounter++;
+      });
+    }
   }
 
   @override
@@ -131,6 +141,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 tooltip: 'Yeni şarkılar',
                 icon: const Icon(Icons.refresh, color: AppColors.accent),
                 onPressed: () {
+                  HapticService.instance.light();
                   setState(() {
                     _refreshCounter++;
                   });

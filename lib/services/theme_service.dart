@@ -34,7 +34,8 @@ class ThemeService extends ChangeNotifier {
     Color(0xFF6D4C41), // Kahve
   ];
 
-  static const List<String> accentNames = [
+  // accentsNames is not const to allow 'Özel Renk' at the end
+  static final List<String> accentNames = [
     'Yeşil',
     'Mavi',
     'Mor',
@@ -45,9 +46,32 @@ class ThemeService extends ChangeNotifier {
     'İndigo',
     'Açık Yeşil',
     'Kahve',
+    'Özel Renk',  // Custom color picker
   ];
 
-  Color get accent => accentColors[_accentIndex];
+  // Özel renk (hex string olarak saklanır)
+  static const String _kCustomAccent = 'theme_custom_accent';
+  String? _customAccentHex;
+
+  Color get accent {
+    if (_accentIndex == accentColors.length - 1 && _customAccentHex != null) {
+      return Color(int.parse(_customAccentHex!, radix: 16) | 0xFF000000);
+    }
+    return accentColors[_accentIndex.clamp(0, accentColors.length - 2)];
+  }
+
+  Future<void> setCustomAccent(Color color) async {
+    _accentIndex = accentColors.length - 1;
+    _customAccentHex = color.value.toRadixString(16).padLeft(8, '0');
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_kAccent, _accentIndex);
+      await prefs.setString(_kCustomAccent, _customAccentHex!);
+    } catch (e) {
+      debugPrint('özel renk kaydetme uyarısı: $e');
+    }
+  }
 
   Future<void> init() async {
     if (_init) return;
@@ -56,6 +80,9 @@ class ThemeService extends ChangeNotifier {
       _mode = ThemeMode.values[_modeIndex(prefs.getInt(_kMode) ?? 1)];
       _accentIndex = (prefs.getInt(_kAccent) ?? 0)
           .clamp(0, accentColors.length - 1);
+      if (_accentIndex == accentColors.length - 1) {
+        _customAccentHex = prefs.getString(_kCustomAccent);
+      }
       _emojiEnabled = prefs.getBool(_kEmoji) ?? false;
       _init = true;
       notifyListeners();
