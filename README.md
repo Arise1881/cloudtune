@@ -62,14 +62,15 @@
 | ✅ Dinleme geçmişi | Son çalınanlar otomatik kaydedilir |
 | ✅ Radyo | Bir şarkıdan sonsuz benzer şarkı akışı |
 | ✅ Şarkı sözleri | Eşzamanlı vurgulu (pseudo-sync) |
-| ✅ Senin İçin | Son dinlenen sanatçıdan taze öneriler, tekrar yok |
+| ✅ Senin İçin | En çok dinlediğin sanatçıdan taze öneriler, tekrar yok |
 | ✅ Ruh haline göre keşfet | Mutlu/Enerjik/Sakin… modlara göre hazır listeler |
+| ✅ Akıllı asistan | "çal sarkaç", "sakin müzik" gibi komutlarla şarkı çal / ara |
 
 ### 🌍 Bağlantılı Özellikler
 | | |
 |---|---|
 | ✅ Gerçek zamanlı oda | MQTT tabanlı kur/katıl, avatar (fotoğraf dahil), aynı anda senkron çalar |
-| ✅ Onarım botu | Arızaları sessizce tespit eder, otomatik düzeltir, durum paneli ayarlarda |
+| ✅ Onarım botu | 10sn'de bir gizli tarama — arızayı sessizce düzeltir; otomatik duramazsa Cloudflare Worker'a rapor, ayarlardan e-postayla uzaktan onarım talebi |
 | ✅ Sonsuz döngü | Trend bölümlerinden tek dokunuşla kesintisiz akış |
 | ✅ Çevrimdışı mod | Manuel kapat, yalnızca indirilenler |
 | ✅ Arka plan OTA | Güncelleme arka planda sessizce iner, kurulum onayı sendedir |

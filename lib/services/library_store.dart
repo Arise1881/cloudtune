@@ -18,6 +18,7 @@ class LibraryStore extends ChangeNotifier {
   Map<String, Song> _downloads = {};
   Map<String, List<Song>> _playlists = {};
   List<Song> _recents = [];
+  Map<String, int> _artistPlays = {};
 
   File? _file;
 
@@ -46,6 +47,8 @@ class LibraryStore extends ChangeNotifier {
         _playlists = ((data['playlists'] as Map<String, dynamic>?) ?? {})
             .map((k, v) => MapEntry(
                 k, Song.listFromJson(jsonEncode(v as List<dynamic>))));
+        _artistPlays = ((data['artistPlays'] as Map<String, dynamic>?) ?? {})
+            .map((k, v) => MapEntry(k, (v as num).toInt()));
       } catch (_) {
         // Bozuk dosya: sıfırla.
       }
@@ -62,6 +65,7 @@ class LibraryStore extends ChangeNotifier {
         'downloads': _downloads.map((k, v) => MapEntry(k, v.toJson())),
         'playlists': _playlists
             .map((k, v) => MapEntry(k, jsonDecode(Song.listToJson(v)))),
+        'artistPlays': _artistPlays,
       }));
     } catch (e) {
       debugPrint('Library persist hatası: $e');
@@ -143,7 +147,29 @@ class LibraryStore extends ChangeNotifier {
     _recents.removeWhere((s) => s.id == song.id);
     _recents.insert(0, song);
     if (_recents.length > 20) _recents = _recents.sublist(0, 20);
+    final artist = song.artist.trim();
+    if (artist.isNotEmpty) {
+      _artistPlays[artist] = (_artistPlays[artist] ?? 0) + 1;
+    }
+    // Artık geçmişte olmayan sanatçıların sayaçlarını buda (sonsuz büyüme yok).
+    _artistPlays.removeWhere((a, _) => !_recents.any((s) => s.artist == a));
     _persist();
+  }
+
+  /// En çok dinlenen sanatçı (ev tadı; eşitse en son dinlenen).
+  String get favoriteArtist {
+    String best = '';
+    var bestCount = 0;
+    for (final r in _recents) {
+      final artist = r.artist.trim();
+      if (artist.isEmpty) continue;
+      final count = _artistPlays[artist] ?? 0;
+      if (count >= bestCount) {
+        best = artist;
+        bestCount = count;
+      }
+    }
+    return best;
   }
 
   Future<int> downloadsSizeBytes() async {

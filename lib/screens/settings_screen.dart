@@ -1,5 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../constants.dart';
 import '../services/connectivity_service.dart';
@@ -569,6 +573,90 @@ class _RepairBotStatusPanel extends StatelessWidget {
                   style: TextStyle(
                       color: AppColors.textSecondary, fontSize: 12)),
             ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => _showReportDialog(context),
+              icon: const Icon(Icons.support_agent,
+                  size: 16, color: AppColors.textSecondary),
+              label: const Text('Uzaktan Onarım Raporu',
+                  style: TextStyle(
+                      color: AppColors.textPrimary, fontSize: 12)),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Color(0xFF3A3A3A)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Son arıza raporunu gösterir; e-postayla gönderme veya panoya
+  /// kopyalama imkânı sunar (CloudTune@hotmail.com'a uzaktan onarım).
+  Future<void> _showReportDialog(BuildContext context) async {
+    final report = await RepairBotService.instance.reportForEmail();
+    final Map<String, dynamic> data = report ??
+        {
+          'durum': 'rapor yok',
+          'son_tarama': status.lastScan?.toIso8601String(),
+          'onarim': status.fixedCount,
+          'el_degmesi': status.escalatedCount,
+          'son_hata': status.lastError,
+          'olaylar': status.recentEvents.take(5).map((e) => e.toJson()).toList(),
+        };
+    final body = JsonEncoder.withIndent('  ').convert(data);
+    final mailTo = Uri(
+      scheme: 'mailto',
+      path: 'CloudTune@hotmail.com',
+      queryParameters: {
+        'subject': 'CloudTune Uzaktan Onarım Raporu',
+        'body': body,
+      },
+    ).toString();
+
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: AppColors.cardLight,
+        title: const Text('Uzaktan Onarım Raporu',
+            style: TextStyle(fontSize: 16, color: AppColors.textPrimary)),
+        content: SingleChildScrollView(
+          child: Text(body,
+              style: const TextStyle(
+                  color: AppColors.textSecondary, fontSize: 12)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: body));
+              if (dialogCtx.mounted) {
+                Navigator.of(dialogCtx).pop();
+              }
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('Rapor panoya kopyalandı'),
+                  duration: Duration(seconds: 2),
+                ));
+              }
+            },
+            child: const Text('Panoya Kopyala'),
+          ),
+          TextButton(
+            onPressed: () async {
+              if (await canLaunchUrl(Uri.parse(mailTo))) {
+                await launchUrl(Uri.parse(mailTo),
+                    mode: LaunchMode.externalApplication);
+              }
+              if (dialogCtx.mounted) {
+                Navigator.of(dialogCtx).pop();
+              }
+            },
+            child: const Text('E-posta ile Gönder'),
+          ),
         ],
       ),
     );

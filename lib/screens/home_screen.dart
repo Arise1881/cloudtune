@@ -39,6 +39,7 @@ class HomeScreen extends StatelessWidget {
             const SliverToBoxAdapter(child: _OfflineHome()),
           ] else ...[
             SliverToBoxAdapter(child: _quickAccess(context, library)),
+            const SliverToBoxAdapter(child: _AssistantBar()),
             const SliverToBoxAdapter(child: _MoodAssistant()),
             SliverToBoxAdapter(child: _ForYouSection()),
             SliverToBoxAdapter(
@@ -227,6 +228,163 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
+/// Sesli komut benzeri asistan çubuğu: "çal X", ruh hali kelimesi veya
+/// serbest arama. Gerçek LLM yok — kural tabanlı, katalogdan çeker.
+class _AssistantBar extends StatefulWidget {
+  const _AssistantBar();
+
+  @override
+  State<_AssistantBar> createState() => _AssistantBarState();
+}
+
+class _AssistantBarState extends State<_AssistantBar> {
+  final TextEditingController _controller = TextEditingController();
+
+  static const _suggestions = ['çal sarkaç', 'sakin müzik', 'odak şarkıları'];
+
+  static const _moodKeywords = [
+    ('mutlu', 'Mutlu'),
+    ('enerjik', 'Enerjik'),
+    ('sakin', 'Sakin'),
+    ('hüzünlü', 'Hüzünlü'),
+    ('huzunlu', 'Hüzünlü'),
+    ('odak', 'Odak'),
+    ('gece', 'Gece'),
+  ];
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run(String raw, BuildContext ctx) async {
+    final query = raw.trim();
+    if (query.isEmpty) return;
+    _controller.clear();
+    FocusScope.of(ctx).unfocus();
+
+    final lower = query.toLowerCase();
+    String mood = '';
+    for (final (kw, name) in _moodKeywords) {
+      if (lower.contains(kw)) {
+        mood = name;
+        break;
+      }
+    }
+    if (mood.isNotEmpty) {
+      _openSearch(ctx, '$mood şarkılar', '$mood Çalma Listesi');
+      return;
+    }
+
+    final playPrefix = lower.startsWith('çal ') ? 'çal ' : (lower.startsWith('play ') ? 'play ' : null);
+    if (playPrefix != null) {
+      final songQuery = query.substring(playPrefix.length);
+      if (songQuery.isEmpty) return;
+      final player = PlayerService.instance;
+      try {
+        final songs = await MusicService.instance
+            .search(songQuery, limit: 12)
+            .timeout(const Duration(seconds: 20));
+        if (songs.isEmpty) {
+          if (ctx.mounted) {
+            ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+                content: Text('Sonuç bulunamadı'),
+                duration: Duration(seconds: 2)));
+          }
+          return;
+        }
+        player.playForever(songs, startIndex: 0);
+        if (ctx.mounted) {
+          Navigator.push(ctx, NowPlayingScreen.route(ctx));
+        }
+      } catch (_) {
+        if (ctx.mounted) {
+          ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+              content: Text('Şarkı çekilemedi, tekrar dene'),
+              duration: Duration(seconds: 2)));
+        }
+      }
+      return;
+    }
+
+    _openSearch(ctx, query, '“$query” Sonuçları');
+  }
+
+  void _openSearch(BuildContext ctx, String query, String title) {
+    Navigator.push(
+      ctx,
+      MaterialPageRoute(
+        builder: (_) => PlaylistScreen(
+          title: title,
+          songs: const [],
+          fetcher: (limit) =>
+              MusicService.instance.search(query, limit: limit),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _controller,
+            onSubmitted: (v) => _run(v, context),
+            textInputAction: TextInputAction.search,
+            style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
+            decoration: InputDecoration(
+              hintText: 'Asistana sor: "çal sarkaç", "sakin müzik"...',
+              hintStyle: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              prefixIcon: const Icon(Icons.auto_awesome,
+                  size: 18, color: AppColors.accent),
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.send,
+                    size: 18, color: AppColors.textSecondary),
+                onPressed: () => _run(_controller.text, context),
+              ),
+              filled: true,
+              fillColor: AppColors.cardLight,
+              contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: Color(0xFF3A3A3A)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: Color(0xFF3A3A3A)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide(color: AppColors.accent),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: _suggestions
+                .map((s) => ActionChip(
+                      label: Text(s,
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.textSecondary)),
+                      side: const BorderSide(color: Color(0xFF3A3A3A)),
+                      backgroundColor: AppColors.cardLight,
+                      onPressed: () => _run(s, context),
+                    ))
+                .toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Ruh hali asistanı: kullanıcı ruh halini seçer, uygun şarkılar listelenir.
 /// Gerçek LLM yok — sorgu tabanlı, önerilen müzik açık katalogdan çekilir.
 class _MoodAssistant extends StatelessWidget {
@@ -307,9 +465,12 @@ class _ForYouSectionState extends State<_ForYouSection> {
     if (recents.isEmpty) return const SizedBox.shrink();
 
     final latest = recents.reversed.first;
-    if (latest.artist != _seedArtist) {
-      _seedArtist = latest.artist;
-      _future = _load(latest.artist, recents);
+    final seed = library.favoriteArtist.isNotEmpty
+        ? library.favoriteArtist
+        : latest.artist;
+    if (seed != _seedArtist) {
+      _seedArtist = seed;
+      _future = _load(seed, recents);
     }
     return FutureBuilder<List<Song>>(
       future: _future,

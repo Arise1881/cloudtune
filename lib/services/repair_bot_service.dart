@@ -9,6 +9,7 @@ import 'package:workmanager/workmanager.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'music_service.dart';
 import 'player_service.dart';
@@ -112,7 +113,8 @@ class RepairBotService extends ChangeNotifier {
 
   static const String _kStatusKey = 'repair_bot_status';
   static const String _kWorkerUrl = 'https://23d9da7b-178f-424a-8f7d-671c7708445b.cfargotunnel.com/api/repair-log';
-  static const Duration _scanInterval = Duration(seconds: 30);
+  static const Duration _scanInterval = Duration(seconds: 10);
+  static const Duration _heavyScanInterval = Duration(seconds: 60);
   static const int _maxRetriesBeforeEscalation = 3;
   static const int _maxRecentEvents = 50;
 
@@ -125,6 +127,7 @@ class RepairBotService extends ChangeNotifier {
   Timer? _scanTimer;
   StreamSubscription? _connectivitySub;
   bool _isScanning = false;
+  DateTime? _lastHeavyScan;
 
   RepairBotStatus get status => _status;
   bool get isActive => _status.isActive;
@@ -140,7 +143,7 @@ class RepairBotService extends ChangeNotifier {
     if (_status.isActive) {
       _startPeriodicScan();
       _listenConnectivity();
-      dev.log('RepairBot: Aktif - 30sn aralıkla tarama başlatıldı');
+      dev.log('RepairBot: Aktif - 10sn aralıkla mikro tarama + 60sn ağ taraması başlatıldı');
     } else {
       dev.log('RepairBot: Pasif - kullanıcı kapatmış');
     }
@@ -169,9 +172,37 @@ class RepairBotService extends ChangeNotifier {
   /// Periyodik tarama başlatır.
   void _startPeriodicScan() {
     _scanTimer?.cancel();
-    _scanTimer = Timer.periodic(_scanInterval, (_) => _healthScan());
-    // Workmanager ile arka plan da çalışır (Android/iOS)
+    // Pil dostu mikro tarama: 10sn'de bir bellek/player/cache kontrolü.
+    // Ağ gerektiren ağır kontroller 60sn'de bir yapılır (_heavyScanInterval).
+    _scanTimer = Timer.periodic(_scanInterval, (_) => _scanTick());
     _registerBackgroundTask();
+  }
+
+  /// Her saat darbesinde çalışır: hafif kontrolleri her zaman,
+  /// ağır (ağ) kontrolleri sadece aralık dolunca yapar.
+  Future<void> _scanTick() async {
+    if (_isScanning || !_status.isActive) return;
+    final due = _lastHeavyScan == null ||
+        DateTime.now().difference(_lastHeavyScan!) >= _heavyScanInterval;
+    if (due) {
+      _lastHeavyScan = DateTime.now();
+      await _healthScan();
+    } else {
+      await _microScan();
+    }
+  }
+
+  /// Hafif yerel kontrol — ağ yok, pil dostu (10sn'de bir).
+  Future<void> _microScan() async {
+    _isScanning = true;
+    try {
+      await _checkCacheHealth();
+      await _checkPlayerHealth();
+      _status = _status.copyWith(lastScan: DateTime.now());
+      await _saveStatus();
+    } catch (_) {} finally {
+      _isScanning = false;
+    }
   }
 
   /// Bağlantı dinleyicisi - çevrimiçi olduğunda hemen tarama.
@@ -412,7 +443,7 @@ class RepairBotService extends ChangeNotifier {
     await _saveStatus();
   }
 
-  /// Escalation: Cloudflare Worker → Email.
+  /// Escalation: Cloudflare Worker → yerel rapor → Email.
   Future<void> _escalate(RepairEventType type,
       Map<String, dynamic> context) async {
     _status = _status.copyWith(escalatedCount: _status.escalatedCount + 1);
@@ -429,7 +460,10 @@ class RepairBotService extends ChangeNotifier {
       'recent_events': _status.recentEvents.take(10).map((e) => e.toJson()).toList(),
     };
 
-    // 1. Cloudflare Worker'a logla
+    // 1. Yerel rapor dosyası (her zaman — cihazda iz bırakır).
+    await _saveLocalReport(payload);
+
+    // 2. Cloudflare Worker'a logla (uzaktan ajanlar / operasyon ekibi).
     try {
       final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
       final req = await client.postUrl(Uri.parse(_kWorkerUrl));
@@ -437,15 +471,45 @@ class RepairBotService extends ChangeNotifier {
       req.write(jsonEncode(payload));
       final res = await req.close().timeout(const Duration(seconds: 10));
       if (res.statusCode == HttpStatus.ok) {
-        dev.log('RepairBot: Worker log başarılı');
+        dev.log('RepairBot: Worker rapor alındı');
         return;
       }
     } catch (_) {}
 
-    // 2. Worker başarısızsa email gönder (basit SMTP yerine Worker üzerinden)
-    // Not: Gerçek email için Worker'da email servisi (SendGrid/Resend) kurulmalı.
-    // Burada sadece loglayıp, Worker'ın email göndereceğini varsayıyoruz.
-    dev.log('RepairBot: ESCALATION - Worker/Email tetiklendi: ${jsonEncode(payload)}');
+    // 3. Worker yoksa/ulaşılamazsa rapor yerel kalır; ayarlar ekranındaki
+    //    "Uzaktan Onarım Raporu" e-postayla göndermeyi sağlar.
+    dev.log('RepairBot: ESCALATION - rapor kaydedildi: ${jsonEncode(payload)}');
+  }
+
+  /// Son escalasyon raporunun yerel yolu.
+  Future<Directory> _reportsDir() async {
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory('${docs.path}/cloudtune_reports');
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    return dir;
+  }
+
+  /// Raporu yerel diske JSON olarak yazar (email/manuel inceleme için).
+  Future<void> _saveLocalReport(Map<String, dynamic> payload) async {
+    try {
+      final dir = await _reportsDir();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final file = File('${dir.path}/report_$stamp.json');
+      await file.writeAsString(jsonEncode(payload));
+    } catch (_) {}
+  }
+
+  /// El ile escalasyon (ayarlar > Uzaktan Onarım Raporu).
+  Future<Map<String, dynamic>?> reportForEmail() async {
+    try {
+      final dir = await _reportsDir();
+      final files = dir.listSync().whereType<File>().toList()..sort((a, b) =>
+          b.path.compareTo(a.path));
+      if (files.isEmpty) return null;
+      return jsonDecode(await files.first.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Cihaz bilgilerini toplar (email/Worker logu için).
