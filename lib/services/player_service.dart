@@ -299,10 +299,17 @@ class PlayerService extends ChangeNotifier {
               RepairEventType.streamError,
               'Akış başlatılamadı: $brief',
               {'song': song.id, 'attempts': candidates.length}));
-          throw Exception(
-              lastError == null
-                  ? 'Akış başlatılamadı'
-                  : 'Akış başlatılamadı (${candidates.length} aday denendi: $brief)');
+          
+          // Auto-skip to next song if autoplay is enabled, otherwise show error
+          if (_autoplay) {
+            debugPrint('Stream failed, auto-skipping to next song (autoplay enabled)');
+            unawaited(next());
+          } else {
+            throw Exception(
+                lastError == null
+                    ? 'Akış başlatılamadı'
+                    : 'Akış başlatılamadı (${candidates.length} aday denendi: $brief)');
+          }
         }
         _saveSession();
         // Ön yükleme: sıradaki şarkının stream URL'ini arka planda çöz
@@ -318,7 +325,14 @@ class PlayerService extends ChangeNotifier {
             RepairEventType.streamError,
             'Oynatma hatası: ${e.toString().replaceFirst('Exception: ', '')}',
             {'song': song.id}));
-        break;
+        
+        // Auto-skip to next song if autoplay is enabled
+        if (_autoplay) {
+          debugPrint('Playback error, auto-skipping to next song (autoplay enabled)');
+          unawaited(next());
+        } else {
+          break;
+        }
       }
     }
 

@@ -53,15 +53,26 @@ class MusicService {
   /// bot-koruması videoplayback yolunu HTML'ye çeviriyor). segfau: JSON hiç
   /// dönmüyor, local kapalı.
   static const Map<String, bool> _invidiousInstances = {
+    // Reliable instances with local proxy (googlevideo bypass)
     'https://invidious.darkness.services': true,
     'https://invidious.nipt.dev': true,
     'https://invidious.flokkit.net': true,
     'https://invidious.tanuki.me': true,
     'https://invidious.vrold.cc': true,
     'https://invidious.kavin.rocks': true,
-    'https://youtube.com': false, // Fallback to direct YouTube (will use InnerTube)
+    'https://yewtu.be': true,
+    'https://invidious.namazso.eu': true,
+    'https://invidious.snopyta.org': true,
+    'https://y.com.sb': true,
+    'https://inv.riverside.rocks': true,
+    'https://invidious.lunar.icu': true,
+    // Fallback to direct YouTube (will use InnerTube)
+    'https://youtube.com': false,
+    // Instances without local proxy (fallback only)
     'https://invidious.f5.si': false,
     'https://invidious.projectsegfau.lt': false,
+    'https://invidious.privacydev.net': false,
+    'https://invidious.sethforprivacy.com': false,
   };
 
   /// Negatif önbellek: bir örnek son 10dk içinde yanıt vermediyse atlanır.
@@ -160,6 +171,8 @@ class MusicService {
     {'name': 'TVHTML5', 'version': '7.20250101.00.00'},
     {'name': 'ANDROID_VR', 'version': '1.0.0'},
     {'name': 'WEB_LIGHT', 'version': '2.20250101.00.00'},
+    {'name': 'ANDROID_MUSIC', 'version': '6.41.51'},
+    {'name': 'ANDROID_CREATOR', 'version': '24.10.100'},
   ];
 
   final YoutubeExplode _yt = YoutubeExplode();
@@ -333,6 +346,16 @@ class MusicService {
         contextClient['platform'] = 'MOBILE';
       } else if (name == 'TVHTML5') {
         contextClient['platform'] = 'TV';
+      } else if (name == 'ANDROID_MUSIC') {
+        contextClient['androidSdkVersion'] = 33;
+        contextClient['osName'] = 'Android';
+        contextClient['osVersion'] = '14';
+        contextClient['platform'] = 'MOBILE';
+      } else if (name == 'ANDROID_CREATOR') {
+        contextClient['androidSdkVersion'] = 33;
+        contextClient['osName'] = 'Android';
+        contextClient['osVersion'] = '14';
+        contextClient['platform'] = 'MOBILE';
       }
       
       final body = <String, Object?>{
@@ -347,29 +370,35 @@ class MusicService {
         },
       };
       
-      final data = await _postJson(
-        'https://www.youtube.com/youtubei/v1/player',
-        body,
-        extraHeaders: {
-          'Origin': 'https://www.youtube.com',
-          'Referer': 'https://www.youtube.com/watch?v=$videoId',
-          'X-YouTube-Client-Name': '1',
-          'X-YouTube-Client-Version': version,
-          'Accept': '*/*',
-          'Accept-Encoding': 'gzip, deflate',
-          'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-          'User-Agent':
-              'Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
-        },
-        timeout: const Duration(seconds: 15),
-      );
-      
-      if (data is Map<String, dynamic>) {
-        final sd = data['streamingData'];
-        if (sd is Map<String, dynamic> &&
-            (sd['formats'] is List || sd['adaptiveFormats'] is List)) {
-          return data;
+      try {
+        final data = await _postJson(
+          'https://www.youtube.com/youtubei/v1/player',
+          body,
+          extraHeaders: {
+            'Origin': 'https://www.youtube.com',
+            'Referer': 'https://www.youtube.com/watch?v=$videoId',
+            'X-YouTube-Client-Name': '1',
+            'X-YouTube-Client-Version': version,
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate',
+            'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'User-Agent':
+                'Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
+          },
+          timeout: const Duration(seconds: 15),
+        );
+        
+        if (data is Map<String, dynamic>) {
+          final sd = data['streamingData'];
+          if (sd is Map<String, dynamic> &&
+              (sd['formats'] is List || sd['adaptiveFormats'] is List)) {
+            debugPrint('InnerTube success with client: $name');
+            return data;
+          }
         }
+      } catch (e) {
+        debugPrint('InnerTube client $name failed: $e');
+        continue;
       }
     }
     return null;
@@ -978,10 +1007,15 @@ class MusicService {
   }
 
   Future<List<AudioOnlyStreamInfo>> _audioStreams(String videoId) async {
-    final manifest = await _bounded(() => _yt.videos.streams.getManifest(videoId));
-    final audio = manifest.audioOnly.toList()
-      ..sort((a, b) => b.bitrate.compareTo(a.bitrate));
-    return audio;
+    try {
+      final manifest = await _bounded(() => _yt.videos.streams.getManifest(videoId));
+      final audio = manifest.audioOnly.toList()
+        ..sort((a, b) => b.bitrate.compareTo(a.bitrate));
+      return audio;
+    } catch (e) {
+      debugPrint('youtube_explode failed for $videoId: $e');
+      return const [];
+    }
   }
 
   // ─── Radyo ───

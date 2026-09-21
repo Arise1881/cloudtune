@@ -11,6 +11,7 @@ import '../services/download_manager.dart';
 import '../services/equalizer_service.dart';
 import '../services/player_service.dart';
 import '../services/repair_bot_service.dart';
+import '../services/music_service.dart';
 import '../services/theme_service.dart';
 import '../services/haptic_service.dart';
 import 'equalizer_screen.dart';
@@ -88,6 +89,14 @@ class SettingsScreen extends StatelessWidget {
               subtitle: 'Şarkı bitince benzer şarkılar otomatik çalsın',
               value: player.autoplay,
               onChanged: (_) { HapticService.instance.light(); player.toggleAutoplay(); },
+              showDivider: false,
+            ),
+            const SizedBox(height: 8),
+            _toggleTile(
+              title: 'YouTube Kaynagi',
+              subtitle: "YouTube'den sarki arama ve oynatma",
+              value: MusicService.youtubeEnabled,
+              onChanged: (v) { HapticService.instance.light(); MusicService.setYoutubeEnabled(v); },
               showDivider: false,
             ),
             const SizedBox(height: 16),
