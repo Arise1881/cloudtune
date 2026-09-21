@@ -112,7 +112,10 @@ class RepairBotService extends ChangeNotifier {
   static final RepairBotService instance = RepairBotService._();
 
   static const String _kStatusKey = 'repair_bot_status';
+  // Birincil: Cloudflare tüneli (kullanıcının verdiği ID).
   static const String _kWorkerUrl = 'https://23d9da7b-178f-424a-8f7d-671c7708445b.cfargotunnel.com/api/repair-log';
+  // Yedek: Cloudflare Worker (workers.dev) — tünel aşağıda olunca çalışır.
+  static const String _kWorkerUrlFallback = 'https://cloudtune-repair-log.cloudtune-5b3.workers.dev/api/repair-log';
   static const Duration _scanInterval = Duration(seconds: 10);
   static const Duration _heavyScanInterval = Duration(seconds: 60);
   static const int _maxRetriesBeforeEscalation = 3;
@@ -463,18 +466,21 @@ class RepairBotService extends ChangeNotifier {
     // 1. Yerel rapor dosyası (her zaman — cihazda iz bırakır).
     await _saveLocalReport(payload);
 
-    // 2. Cloudflare Worker'a logla (uzaktan ajanlar / operasyon ekibi).
-    try {
-      final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
-      final req = await client.postUrl(Uri.parse(_kWorkerUrl));
-      req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
-      req.write(jsonEncode(payload));
-      final res = await req.close().timeout(const Duration(seconds: 10));
-      if (res.statusCode == HttpStatus.ok) {
-        dev.log('RepairBot: Worker rapor alındı');
-        return;
-      }
-    } catch (_) {}
+    // 2. Cloudflare Worker'a logla (tünel + workers.dev sırayla denenir).
+    final urls = [_kWorkerUrl, _kWorkerUrlFallback];
+    for (final url in urls) {
+      try {
+        final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+        final req = await client.postUrl(Uri.parse(url));
+        req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+        req.write(jsonEncode(payload));
+        final res = await req.close().timeout(const Duration(seconds: 8));
+        if (res.statusCode == HttpStatus.ok) {
+          dev.log('RepairBot: Worker rapor alındı: $url');
+          return;
+        }
+      } catch (_) {}
+    }
 
     // 3. Worker yoksa/ulaşılamazsa rapor yerel kalır; ayarlar ekranındaki
     //    "Uzaktan Onarım Raporu" e-postayla göndermeyi sağlar.

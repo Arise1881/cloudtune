@@ -49,16 +49,32 @@ fi
 
 echo
 echo "==> 2) Tunnel: ${TUNNEL_NAME} (varsa al, yoksa olustur)"
-T=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${API}/accounts/${ACCOUNT_ID}/cfd_tunnel?is_deleted=false")
-TUNNEL_ID=$(echo "$T" | python3 -c "import json,sys; d=json.load(sys.stdin); r=[x for x in d.get('result',[]) if x['name']=='${TUNNEL_NAME}']; print(r[0]['id'] if r else '')")
-if [ -z "$TUNNEL_ID" ]; then
-  R=$(curl -fsS -X POST -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" \
-    -d "{\"name\":\"${TUNNEL_NAME}\",\"config_src\":\"cloudflare\"}" "${API}/accounts/${ACCOUNT_ID}/cfd_tunnel")
-  echo "$R" | jq_check
-  TUNNEL_ID=$(echo "$R" | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['id'])")
-  echo "    tunnel: ${TUNNEL_ID}"
+# CLOUDFLARE_TUNNEL_ID ile tünel sabitlenebilir (uygulamanın yazılı olduğu ID).
+if [ -n "${CLOUDFLARE_TUNNEL_ID:-}" ]; then
+  TUNNEL_ID="${CLOUDFLARE_TUNNEL_ID}"
+  # Sabitlenen tünel hesapta var mı kontrol et (name secmeli gecme).
+  T=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${API}/accounts/${ACCOUNT_ID}/cfd_tunnel/${TUNNEL_ID}")
+  if ! echo "$T" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+sys.exit(0 if d.get('success') else 1)
+"; then
+    echo "    HATA: sabit tünel bulunamadi: ${TUNNEL_ID}" >&2
+    exit 1
+  fi
+  echo "    sabit tünel doğrulandi: ${TUNNEL_ID}"
 else
-  echo "    tunnel zaten var: ${TUNNEL_ID}"
+  T=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${API}/accounts/${ACCOUNT_ID}/cfd_tunnel?is_deleted=false")
+  TUNNEL_ID=$(echo "$T" | python3 -c "import json,sys; d=json.load(sys.stdin); r=[x for x in d.get('result',[]) if x['name']=='${TUNNEL_NAME}']; print(r[0]['id'] if r else '')")
+  if [ -z "$TUNNEL_ID" ]; then
+    R=$(curl -fsS -X POST -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" \
+      -d "{\"name\":\"${TUNNEL_NAME}\",\"config_src\":\"cloudflare\"}" "${API}/accounts/${ACCOUNT_ID}/cfd_tunnel")
+    echo "$R" | jq_check
+    TUNNEL_ID=$(echo "$R" | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['id'])")
+    echo "    tunnel: ${TUNNEL_ID}"
+  else
+    echo "    tunnel zaten var: ${TUNNEL_ID}"
+  fi
 fi
 
 echo
@@ -78,7 +94,7 @@ else
 fi
 
 echo
-echo "==> 4) Worker deploy: ${WORKER}"
+echo "==> 4) Worker deploy: ${WORKER} (service-worker format)"
 BINDINGS="[]"
 if [ -n "${CLOUDFLARE_KV_NAMESPACE_ID:-}" ]; then
   BINDINGS="[{\"name\":\"KV\",\"type\":\"kv_namespace\",\"namespace_id\":\"${CLOUDFLARE_KV_NAMESPACE_ID}\"}]"
@@ -86,10 +102,19 @@ if [ -n "${CLOUDFLARE_KV_NAMESPACE_ID:-}" ]; then
 fi
 curl -fsS -X PUT \
   -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-  -F "main.js=@${DIR}/repair-log-worker.js;type=application/javascript+module" \
-  -F "metadata={\"body_part\":\"main.js\",\"bindings\":${BINDINGS}};type=application/json" \
-  "${API}/accounts/${ACCOUNT_ID}/workers/scripts/${WORKER}" >/dev/null
+  -F "metadata={\"body_part\":\"worker.js\",\"bindings\":${BINDINGS}};type=application/json" \
+  -F 'worker.js=@'"${DIR}/repair-log-worker.js"';type=application/javascript' \
+  "${API}/accounts/${ACCOUNT_ID}/workers/scripts/${WORKER}" | jq_check
 echo "    worker yuklendi"
+
+if [ -n "${CLOUDFLARE_KV_NAMESPACE_ID:-}" ]; then
+  echo
+  echo "==> 4b) Zone route: repair.cloudtune.app/* -> ${WORKER}"
+  curl -fsS -X POST -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" \
+    -d "{\"pattern\":\"repair.cloudtune.app/*\",\"script\":\"${WORKER}\"}" \
+    "${API}/zones/${ZONE_ID}/workers/routes" | jq_check
+  echo "    route eklendi"
+fi
 
 echo
 if [ -n "${SENDGRID_API_KEY:-}" ]; then
@@ -104,28 +129,26 @@ fi
 
 echo
 echo "==> 6) Custom domain: ${HOSTNAME} -> ${WORKER}"
-step6() (
-  set -o pipefail
-  curl -fsS -X POST -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" \
-    -d "{\"hostname\":\"${HOSTNAME}\",\"service\":\"${WORKER}\",\"environment\":\"production\",\"zone_id\":\"${ZONE_ID}\"}" \
-    "${API}/accounts/${ACCOUNT_ID}/workers/domains"
-)
-set +e
-R=$(step6)
-set -e
-echo "$R" | jq_check
-DID=$(echo "$R" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('result',{}).get('id','ALREADY')) if d.get('success') else print('')")
-if [ -n "$DID" ]; then echo "    domain baglandi: ${DID}"; fi
+echo "    NOT: Workers Domain API token ile calismaz (10405, legacy auth ister)."
+echo "    Zone route yukarida (4b) eklendiyse site zaten calisir:"
+echo "    curl https://${HOSTNAME}/api/health"
+echo "    Alternatif dashboard: Workers > ${WORKER} > Settings > Domains & Routes."
 
 echo
-echo "==> Bitti. Test:"
-echo "curl https://${HOSTNAME}/api/health"
+echo "==> Bitti. Testler:"
+echo "curl https://cloudtune-repair-log.cloudtune-5b3.workers.dev/api/health"
+echo "curl https://${HOSTNAME}/api/health   (zone aktifse)"
 echo "curl https://${HOSTNAME}/api/repair-log \\"
 echo "  -X POST -H 'Content-Type: application/json' \\"
 echo "  -d '{\"event_type\":\"test\",\"message\":\"test from setup\"}'"
 echo
+echo "ZONE AKTIFLESTIRME (kritik):"
+echo "  Durum: $(curl -sS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${API}/zones/${ZONE_ID}" | python3 -c "import json,sys;print(json.load(sys.stdin)['result']['status'])") (api)"
+echo "  cloudtune.app CF nameserver'larina yonelmediyse registrar'da (GoDaddy) nameserver degistir:"
+echo "  anita.ns.cloudflare.com  +  etienne.ns.cloudflare.com"
+echo
 echo "KV namespace (opsiyonel ama onerilir):"
-echo "  Yan panelde Workers > KV > Create namespace, sonra alpine:"
+echo "  Yan panelde Workers > KV > Create namespace, sonra:"
 echo "  export CLOUDFLARE_KV_NAMESPACE_ID='...'  # ve setup'i tekrar calistirin"
 echo
 echo "EPOSTA AKISI (SENDGRID_API_KEY onerilir):"
