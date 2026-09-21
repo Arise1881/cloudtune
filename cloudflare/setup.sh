@@ -79,10 +79,15 @@ fi
 
 echo
 echo "==> 4) Worker deploy: ${WORKER}"
+BINDINGS="[]"
+if [ -n "${CLOUDFLARE_KV_NAMESPACE_ID:-}" ]; then
+  BINDINGS="[{\"name\":\"KV\",\"type\":\"kv_namespace\",\"namespace_id\":\"${CLOUDFLARE_KV_NAMESPACE_ID}\"}]"
+  echo "    KV namespace bagli: ${CLOUDFLARE_KV_NAMESPACE_ID}"
+fi
 curl -fsS -X PUT \
   -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
   -F "main.js=@${DIR}/repair-log-worker.js;type=application/javascript+module" \
-  -F "metadata={\"body_part\":\"main.js\",\"bindings\":[]};type=application/json" \
+  -F "metadata={\"body_part\":\"main.js\",\"bindings\":${BINDINGS}};type=application/json" \
   "${API}/accounts/${ACCOUNT_ID}/workers/scripts/${WORKER}" >/dev/null
 echo "    worker yuklendi"
 
@@ -114,6 +119,15 @@ if [ -n "$DID" ]; then echo "    domain baglandi: ${DID}"; fi
 
 echo
 echo "==> Bitti. Test:"
+echo "curl https://${HOSTNAME}/api/health"
 echo "curl https://${HOSTNAME}/api/repair-log \\"
 echo "  -X POST -H 'Content-Type: application/json' \\"
 echo "  -d '{\"event_type\":\"test\",\"message\":\"test from setup\"}'"
+echo
+echo "KV namespace (opsiyonel ama onerilir):"
+echo "  Yan panelde Workers > KV > Create namespace, sonra alpine:"
+echo "  export CLOUDFLARE_KV_NAMESPACE_ID='...'  # ve setup'i tekrar calistirin"
+echo
+echo "EPOSTA AKISI (SENDGRID_API_KEY onerilir):"
+echo "  Worker > Settings > Variables/secrets > SENDGRID_API_KEY ekleyin,"
+echo "  veya worker kurulumu icin https://sendgrid.com (3.parti)."
