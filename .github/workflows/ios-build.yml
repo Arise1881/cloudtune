@@ -29,14 +29,14 @@ jobs:
           cd build/ios/iphoneos
           mkdir -p Payload
           cp -R Runner.app Payload/
-          rm -f Melody.ipa
-          zip -qr Melody.ipa Payload
-          ls -lh Melody.ipa
+          rm -f CloudTune.ipa
+          zip -qr CloudTune.ipa Payload
+          ls -lh CloudTune.ipa
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Melody-ipa
-          path: build/ios/iphoneos/Melody.ipa
+          name: CloudTune-ipa
+          path: build/ios/iphoneos/CloudTune.ipa
 
       - name: GitHub release'e yukle
         env:
@@ -49,14 +49,14 @@ jobs:
           API="https://api.github.com/repos/Arise1881/melody-dist/releases/tags/melody-latest"
           REL=$(curl -s -H "Authorization: token $GH_TOKEN" "$API")
           REL_ID=$(printf '%s' "$REL" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
-          OLD=$(printf '%s' "$REL" | python3 -c "import sys,json;[print(a['id']) for a in json.load(sys.stdin)['assets'] if a['name']=='Melody.ipa']")
+          OLD=$(printf '%s' "$REL" | python3 -c "import sys,json;[print(a['id']) for a in json.load(sys.stdin)['assets'] if a['name']=='CloudTune.ipa']")
           for id in $OLD; do
             curl -s -o /dev/null -X DELETE \
               -H "Authorization: token $GH_TOKEN" \
               "https://api.github.com/repos/Arise1881/melody-dist/releases/assets/$id"
           done
-          curl -s -o /dev/null -w "Melody.ipa -> %{http_code}\n" -X POST \
+          curl -s -o /dev/null -w "CloudTune.ipa -> %{http_code}\n" -X POST \
             -H "Authorization: token $GH_TOKEN" \
             -H "Content-Type: application/octet-stream" \
-            --data-binary @build/ios/iphoneos/Melody.ipa \
-            "https://uploads.github.com/repos/Arise1881/melody-dist/releases/$REL_ID/assets?name=Melody.ipa"
+            --data-binary @build/ios/iphoneos/CloudTune.ipa \
+            "https://uploads.github.com/repos/Arise1881/melody-dist/releases/$REL_ID/assets?name=CloudTune.ipa"

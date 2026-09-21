@@ -24,18 +24,27 @@ jobs:
       - name: Windows release derle
         run: flutter build windows --release
 
-      - name: ZIP paketle
+      - name: ZIP paketle (Windows)
         shell: pwsh
         run: |
-          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath Melody-windows.zip -Force
-          Get-Item Melody-windows.zip | Select-Object Name, Length
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath CloudTune-windows.zip -Force
+          Get-Item CloudTune-windows.zip | Select-Object Name, Length
+
+      - name: Web release derle
+        run: flutter build web --release
+
+      - name: ZIP paketle (Web)
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build/web/* -DestinationPath CloudTune-web.zip -Force
+          Get-Item CloudTune-web.zip | Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Melody-windows
-          path: Melody-windows.zip
+          name: CloudTune-windows
+          path: CloudTune-windows.zip
 
-      - name: GitHub release'e yukle
+      - name: GitHub release'e yukle (windows + web)
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           TOKEN_OK: ${{ secrets.GH_TOKEN != '' }}
@@ -46,11 +55,12 @@ jobs:
           $Headers = @{ Authorization = "token $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
           $Release = Invoke-RestMethod -Method Get -Headers $Headers -Uri "https://api.github.com/repos/Arise1881/melody-dist/releases/tags/melody-latest"
           foreach ($a in $Release.assets) {
-            if ($a.name -eq "Melody-windows.zip") {
+            if ($a.name -eq "CloudTune-windows.zip" -or $a.name -eq "CloudTune-web.zip") {
               Invoke-RestMethod -Method Delete -Headers $Headers -Uri "https://api.github.com/repos/Arise1881/melody-dist/releases/assets/$($a.id)" | Out-Null
             }
           }
-          $UploadHeaders = @{ Authorization = "token $env:GH_TOKEN"; "Content-Type" = "application/zip" }
-          $UploadUri = "https://uploads.github.com/repos/Arise1881/melody-dist/releases/$($Release.id)/assets?name=Melody-windows.zip"
-          Invoke-RestMethod -Method Post -Headers $UploadHeaders -InFile "Melody-windows.zip" -Uri $UploadUri | Out-Null
-          Write-Host "Melody-windows.zip -> release eklendi"
+          $ZipHeaders = @{ Authorization = "token $env:GH_TOKEN"; "Content-Type" = "application/zip" }
+          Invoke-RestMethod -Method Post -Headers $ZipHeaders -InFile "CloudTune-windows.zip" -Uri "https://uploads.github.com/repos/Arise1881/melody-dist/releases/$($Release.id)/assets?name=CloudTune-windows.zip" | Out-Null
+          Write-Host "CloudTune-windows.zip -> release eklendi"
+          Invoke-RestMethod -Method Post -Headers $ZipHeaders -InFile "CloudTune-web.zip" -Uri "https://uploads.github.com/repos/Arise1881/melody-dist/releases/$($Release.id)/assets?name=CloudTune-web.zip" | Out-Null
+          Write-Host "CloudTune-web.zip -> release eklendi"
