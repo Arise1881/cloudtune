@@ -152,113 +152,21 @@ class SettingsScreen extends StatelessWidget {
               },
             ),
             const SizedBox(height: 16),
-            _sectionTitle('Bağlantı'),
-            ValueListenableBuilder<String?>(
-              valueListenable: MusicService.proxyNotifier,
-              builder: (context, proxy, _) => _proxyTile(context, proxy),
-            ),
-            ValueListenableBuilder<bool>(
-              valueListenable: MusicService.youtubeEnabledNotifier,
-              builder: (context, enabled, _) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: _toggleTile(
-                  title: 'YouTube Kaynağı (Kişisel)',
-                  subtitle: enabled
-                      ? 'YouTube arama ve akış açık — proxy gerekebilir'
-                      : 'Kapalı — varsayılan Audius + Internet Archive (sunucusuz)',
-                  value: enabled,
-                  onChanged: MusicService.setYoutubeEnabled,
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: _toggleTile(
-                title: 'Çevrimdışı Mod',
-                subtitle: 'Ağ kontrolünü yok say, yalnızca indirilenleri oynat',
-                value: connectivity.forceOffline || connectivity.isOffline,
-                onChanged: (v) {
-                  connectivity.setForceOffline(v);
-                  connectivity.retry();
-                },
-                showDivider: false,
-              ),
+            _sectionTitle('Çevrimdışı Mod'),
+            _toggleTile(
+              title: 'Çevrimdışı Mod',
+              subtitle: 'Ağ kontrolünü yok say, yalnızca indirilenleri oynat',
+              value: connectivity.forceOffline || connectivity.isOffline,
+              onChanged: (v) {
+                connectivity.setForceOffline(v);
+                connectivity.retry();
+              },
+              showDivider: false,
             ),
           ],
         ),
       ),
     );
-  }
-
-  /// Akış proxy'si (Cloudflare Workers) ayar satırı.
-  Widget _proxyTile(BuildContext context, String? proxy) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: const Icon(Icons.cloud_outlined, color: AppColors.textSecondary),
-      title: const Text(
-        'Akış Proxy URL',
-        style: TextStyle(color: AppColors.textPrimary),
-      ),
-      subtitle: Text(
-        proxy ??
-            'Kapalı — ücretsiz Cloudflare Workers proxy adresi girerek '
-                'googlevideo engelini aş',
-        style: const TextStyle(color: AppColors.textSecondary),
-      ),
-      trailing: proxy != null
-          ? IconButton(
-              icon: const Icon(Icons.delete_outline,
-                  color: AppColors.textSecondary),
-              tooltip: 'Proxy\'yi kaldır',
-              onPressed: () => MusicService.setStreamProxy(null),
-            )
-          : const Icon(Icons.edit, color: AppColors.textSecondary),
-      onTap: () => _editProxyDialog(context, proxy),
-    );
-  }
-
-  Future<void> _editProxyDialog(BuildContext context, String? current) async {
-    final controller = TextEditingController(text: current ?? '');
-    final result = await showDialog<String?>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.card,
-        title: const Text('Akış Proxy URL'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Ücretsiz Cloudflare Workers proxy adresin. Boş bırakırsan '
-              'kapatılır.',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              autocorrect: false,
-              keyboardType: TextInputType.url,
-              style: const TextStyle(color: AppColors.textPrimary),
-              decoration: const InputDecoration(
-                hintText: 'https://cloudtune-stream.xxxx.workers.dev',
-                hintStyle: TextStyle(color: AppColors.textSecondary),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('İptal'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, controller.text),
-            child: const Text('Kaydet'),
-          ),
-        ],
-      ),
-    );
-    if (result != null) await MusicService.setStreamProxy(result);
   }
 
   Widget _speedSelector(PlayerService player) {    const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];

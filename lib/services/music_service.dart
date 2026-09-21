@@ -104,8 +104,7 @@ class MusicService {
   /// Varsayılan ücretsiz proxy (kullanıcının Cloudflare Workers hesabı).
   /// Kullanıcı ayarlardan silerse ayar `''` olarak saklanır ve proxy kapanır;
   /// hiç kayıt yoksa bu varsayılan kullanılır.
-  static const String _defaultProxyUrl =
-      'https://23d9da7b-178f-424a-8f7d-671c7708445b.cfargotunnel.com';
+  static const String _defaultProxyUrl = '';
 
   static String? get proxyBaseUrl => proxyNotifier.value;
 
