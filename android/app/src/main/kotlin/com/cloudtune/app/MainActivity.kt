@@ -1,4 +1,4 @@
-package com.melody.app
+package com.cloudtune.app
 
 import android.content.ContentValues
 import android.os.Build

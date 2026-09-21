@@ -42,7 +42,7 @@ dependencies:
   path_provider: ^2.1.6
   cached_network_image: ^3.4.1
   shared_preferences: ^2.5.5
-  package_info_plus: ^9.0.1
+  package_info_plus: ^10.2.1
   open_filex: ^4.7.0
   http: ^1.6.0
   speech_to_text: ^7.0.0
@@ -51,8 +51,8 @@ dependencies:
   just_audio_media_kit: ^2.1.0
   media_kit_libs_windows_audio: ^1.0.9
   media_kit_libs_linux: ^1.2.1
-  workmanager: ^0.5.2
-  device_info_plus: ^11.3.0
+  workmanager: ^0.10.10
+  device_info_plus: ^13.2.0
   image_picker: ^1.2.1
   url_launcher: ^6.3.1
 
