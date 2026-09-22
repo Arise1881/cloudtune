@@ -43,6 +43,12 @@ class MusicService {
   static final Map<String, List<Song>> _homeCache = {};
   static final Map<String, DateTime> _homeCacheAt = {};
 
+  /// Ana sayfa çeşitlilik sayacı: her Home tuşuna basışta artar; arama
+  /// sayfalama ve trending zaman penceresi bu sayaçla döner. Böylece aynı
+  /// sorgu bile her basışta FARKLI şarkılar döndürür.
+  static int _varietySalt = 0;
+  static int get varietySalt => _varietySalt;
+
   /// Halka açık Invidious örnekleri — biri kapanırsa diğeri kullanılır.
   /// Canlılık 2026-09-18 ölçüldü: yalnız kısıtsız JSON dönen tutulur; ölü
   /// örnekler mobil veride 7sn'lik timeout zinciri yaratıyordu.
@@ -101,41 +107,21 @@ class MusicService {
     // NOOP
   }
 
-  /// Varsayılan Cloudflare Worker proxy (stream-proxy.js deploy edilmiş).
-  /// Kullanıcı değiştiremez; gizli, her zaman aktif.
-  static const String _defaultProxyUrl = 'https://cloudtune-stream.cloudtune-5b3.workers.dev';
-
   static String? get proxyBaseUrl => proxyNotifier.value;
 
-  /// Proxy URL'sini sabit biçime getirir (sonundaki `/` temizlenir).
-  static String? get _proxyBase {
-    final v = proxyNotifier.value?.trim();
-    if (v == null || v.isEmpty) return null;
-    return v.endsWith('/') ? v.substring(0, v.length - 1) : v;
-  }
 
-
-  /// Uygulama açılışında proxy'yi varsayılan Worker URL ile başlatır.
-  /// Kullanıcı ayarı YOK - her zaman default aktif.
+  /// Uygulama açılışında proxy'yi KAPALI başlatır. Cloudflare Worker
+  /// deploy edilmedi (404); ölü URL aday listesinin başındayken her şarkıda
+  /// gereksiz bekleme yaratıyordu. Akış artık doğrudan Invidious local=true
+  /// (instance CDN proxy = googlevideo bypass) üzerinden çözülür.
   static Future<void> loadStreamProxy() async {
-    try {
-      // Her zaman hardcoded default proxy kullan
-      proxyNotifier.value = _defaultProxyUrl;
-
-    } catch (_) {
-      proxyNotifier.value = _defaultProxyUrl;
-
-    }
+    proxyNotifier.value = null;
   }
 
   /// NOOP - Proxy gizli, kullanıcı değiştiremez.
   static Future<void> setStreamProxy(String? url) async {
-    proxyNotifier.value = _defaultProxyUrl;
-
+    proxyNotifier.value = null;
   }
-  /// googlevideo URL'sini `/stream/<base64url>` yoluna çevirir.
-  static String _proxyEncodedStreamUrl(String proxy, String url) =>
-      '$proxy/stream/${base64Url.encode(utf8.encode(url)).replaceAll('=', '')}';
 
   /// Innertube player deneme sırası: bazı videolar için bazı istemciler
   /// akış döndürmez, diğerleri döndürür.
@@ -215,7 +201,7 @@ class MusicService {
           ? '${path.contains('?') ? '&' : '?'}local=true'
           : '';
       final data = await _getJson('$base$path$local',
-          timeout: const Duration(seconds: 7));
+          timeout: const Duration(seconds: 5));
       if (data != null) return data;
       _deadInvidious[base] = DateTime.now();
     }
@@ -273,6 +259,7 @@ class MusicService {
   static void bustHomeCache() {
     _homeCache.clear();
     _homeCacheAt.clear();
+    _varietySalt = (_varietySalt + 1) % 3;
   }
 
   /// Onarım botu API'si: süresi dolmuş ana sayfa önbellek girişlerini temizler,
@@ -442,9 +429,12 @@ class MusicService {
       return cached;
     }
     final out = <Song>[];
+    // Zaman penceresi dönüşü: her Home basışında farklı trending kümesi.
+    const times = ['week', 'month', 'allTime'];
+    final period = times[_varietySalt % times.length];
     try {
       final songs =
-          await AudiusSource.defaultHost().trending(limit: limit);
+          await AudiusSource.defaultHost().trending(limit: limit, time: period);
       for (final s in songs) {
         if (out.length >= limit) break;
         out.add(s);
@@ -532,10 +522,11 @@ class MusicService {
   /// Eski YouTube arama zinciri (Invidious → InnerTube → youtube_explode).
   Future<List<Song>> _searchYoutube(String query, {int limit = 25}) async {
     return _bounded(() async {
-      // 1) Invidious arama (type=video — yalnızca şarkı)
+      // 1) Invidious arama (type=video — yalnızca şarkı).
+      // _varietySalt sayfa dönüşü yapar: her Home basışında farklı sonuçlar.
       try {
         final data = await _invidious(
-            '/api/v1/search?q=${Uri.encodeQueryComponent(query)}&type=video');
+            '/api/v1/search?q=${Uri.encodeQueryComponent(query)}&type=video&page=${1 + _varietySalt}');
         if (data is List) {
           final songs = <Song>[];
           for (final item in data) {
@@ -683,18 +674,12 @@ class MusicService {
   /// Sonuç: aracı (proxyless) adaylar başa, googlevideo CDN'leri en sona.
   Future<List<String>> streamUrlCandidates(String videoId) async {
     final urls = <String>[];
-    final proxy = _proxyBase;
     void add(String u) {
       if (u.isNotEmpty && !urls.contains(u)) urls.add(u);
     }
 
-    // 0) Kullanıcı Cloudflare Workers proxy'si tanımlıysa
-    // Proxy URL'si doğrudan eklenmez; sadece googlevideo bypass için kullanılır.
-    if (proxy != null) {
-      add('$proxy/v1/stream/$videoId');
-    }
-
-    // 1) Invidious latest working
+    // 1) Invidious local=true (instance CDN proxy — googlevideo IP engeli bypass).
+    // Türkiye'de en hızlı ve en güvenilir ilk aday.
     try {
       final latest = await _invidiousLatestWorking(videoId);
       for (final u in latest) {
@@ -710,7 +695,7 @@ class MusicService {
       }
     } catch (_) {}
 
-    // 3) Invidious videos API
+    // 3) Invidious videos API (local=true'siz örnekler)
     try {
       final data = await _invidious(
           '/api/v1/videos/$videoId?fields=adaptiveFormats,formatStreams');
@@ -734,18 +719,19 @@ class MusicService {
           'Akış çözülemedi (Invidious: ${_liveInvidiousCount()}/${_invidiousInstances.length} kaynak canlı)');
     }
 
-    final proxied = <String>[];
+    // googlevideo CDN adaylarını sona al: Türkiye'de doğrudan IP engelli,
+    // sadece Invidious local added-linked instance'lar üzerinden dönenler
+    // önden test edilsin.
     final inline = <String>[];
     final cdn = <String>[];
     for (final u in urls) {
       if (u.contains('googlevideo')) {
         cdn.add(u);
-        if (proxy != null) proxied.add(_proxyEncodedStreamUrl(proxy, u));
       } else {
         inline.add(u);
       }
     }
-    return [...proxied, ...inline, ...cdn];
+    return [...inline, ...cdn];
   }
 
   /// Invidious videos API'den gerçek ses akış URL'lerini alır. `/latest_version`
@@ -761,12 +747,12 @@ class MusicService {
       final maxAttempts = entry.value ? 4 : 2;
       for (var attempt = 0; attempt < maxAttempts; attempt++) {
         if (attempt > 0) {
-          await Future.delayed(Duration(milliseconds: 350 * attempt));
+          await Future.delayed(Duration(milliseconds: 150 * attempt));
         }
         try {
           final data = await _getJson(
             '$base/api/v1/videos/$videoId?fields=adaptiveFormats$local',
-            timeout: const Duration(seconds: 7),
+            timeout: const Duration(seconds: 5),
           );
           if (data is Map<String, dynamic>) {
             final urls = _audioUrlsFromInvidious(data);
@@ -1214,28 +1200,34 @@ class MusicService {
   Future<List<Song>> playlistSongs(String playlistId,
       {int limit = 200}) async {
     final songs = <Song>[];
+    final seen = <String>{};
+
+    // 1) youtube_explode primary — Invidious playlist endpoint'i çoğu
+    // örnekte 404/boş döner; youtube_explode continuation ile sürekli gelir.
     try {
-      final data = await _invidious('/api/v1/playlists/$playlistId');
-      if (data is Map<String, dynamic> && data['videos'] is List) {
-        songs.addAll(_songFromInvidiousList(data['videos'] as List)
-            .where((s) => s.id.isNotEmpty));
-      }
+      await _bounded(() async {
+        await for (final video in _yt.playlists.getVideos(playlistId)) {
+          if (video.isLive) continue;
+          try {
+            final song = _videoToSong(video);
+            if (seen.add(song.id)) songs.add(song);
+          } catch (_) {}
+          if (songs.length >= limit) break;
+        }
+      });
     } catch (_) {}
 
-    if (songs.length >= limit) return songs.sublist(0, limit);
-
-    // Continuation fallback: Invidious sonu verdiği yerde devam edilir.
-    final known = songs.map((s) => s.id).toSet();
-    await _bounded(() async {
-      await for (final video in _yt.playlists.getVideos(playlistId)) {
-        if (video.isLive) continue;
-        try {
-          final song = _videoToSong(video);
-          if (known.add(song.id)) songs.add(song);
-        } catch (_) {}
-        if (songs.length >= limit) break;
-      }
-    });
+    // 2) Invidious fallback: youtube_explode az/boş döndüyse tamamla.
+    if (songs.length < limit) {
+      try {
+        final data = await _invidious('/api/v1/playlists/$playlistId');
+        if (data is Map<String, dynamic> && data['videos'] is List) {
+          for (final s in _songFromInvidiousList(data['videos'] as List)) {
+            if (s.id.isNotEmpty && seen.add(s.id)) songs.add(s);
+          }
+        }
+      } catch (_) {}
+    }
     return songs;
   }
 

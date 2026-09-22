@@ -94,10 +94,10 @@ class AudiusSource {
     return _tracksFrom(data);
   }
 
-  /// Trend şarkılar (tüm türler, varsayılan).
-  Future<List<Song>> trending({int limit = 12}) async {
+  /// Trend şarkılar (tüm türler, varsayılan). [time] pencere dönüşü yapar.
+  Future<List<Song>> trending({int limit = 12, String? time}) async {
     final data = await _getJson('/v1/tracks/trending',
-        query: {'limit': '$limit'});
+        query: {'limit': '$limit', 'time': ?time});
     return _tracksFrom(data);
   }
 

@@ -280,7 +280,7 @@ class PlayerService extends ChangeNotifier {
                 .firstWhere((s) =>
                     s.processingState == ProcessingState.ready ||
                     s.processingState == ProcessingState.completed)
-                .timeout(const Duration(seconds: 12));
+                .timeout(const Duration(seconds: 8));
             music.cacheStreamUrl(song.id, url);
             started = true;
             break;
@@ -310,7 +310,7 @@ class PlayerService extends ChangeNotifier {
                   .firstWhere((s) =>
                       s.processingState == ProcessingState.ready ||
                       s.processingState == ProcessingState.completed)
-                  .timeout(const Duration(seconds: 12));
+                  .timeout(const Duration(seconds: 8));
               music.cacheStreamUrl(song.id, url);
               started = true;
               failed.clear();

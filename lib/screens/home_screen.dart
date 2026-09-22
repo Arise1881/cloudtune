@@ -81,7 +81,6 @@ class HomeScreenState extends State<HomeScreen> {
             const SliverToBoxAdapter(child: _OfflineHome()),
           ] else ...[
             SliverToBoxAdapter(child: _quickAccess(context, library)),
-            const SliverToBoxAdapter(child: _MoodAssistant()),
             SliverToBoxAdapter(child: _ForYouSection(refreshTrigger: refreshTrigger)),
             SliverToBoxAdapter(
               child: _TrendSection(
@@ -123,19 +122,15 @@ class HomeScreenState extends State<HomeScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Flexible(
-            flex: 5,
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(
-                greeting,
-                maxLines: 1,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      color: AppColors.textPrimary,
-                      fontWeight: FontWeight.bold,
-                    ),
-              ),
+          Expanded(
+            child: Text(
+              greeting,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.bold,
+                  ),
             ),
           ),
           const SizedBox(width: 8),
@@ -274,66 +269,6 @@ class HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// Ruh hali asistanı: kullanıcı ruh halini seçer, uygun şarkılar listelenir.
-/// Gerçek LLM yok — sorgu tabanlı, önerilen müzik açık katalogdan çekilir.
-class _MoodAssistant extends StatelessWidget {
-  const _MoodAssistant();
-
-  static const _moods = [
-    (Icons.sentiment_very_satisfied, 'Mutlu'),
-    (Icons.bolt, 'Enerjik'),
-    (Icons.spa, 'Sakin'),
-    (Icons.music_note, 'Hüzünlü'),
-    (Icons.psychology_alt, 'Odak'),
-    (Icons.nightlight_round, 'Gece'),
-  ];
-
-  void _openMood(BuildContext context, String mood) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => PlaylistScreen(
-          title: '$mood Çalma Listesi',
-          songs: const [],
-          fetcher: (limit) =>
-              MusicService.instance.search('$mood şarkılar', limit: limit),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Ruh Haline Göre Keşfet',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.w700,
-                ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _moods
-                .map((m) => ActionChip(
-                      avatar: Icon(m.$1, size: 18, color: AppColors.accent),
-                      label: Text(m.$2),
-                      onPressed: () => _openMood(context, m.$2),
-                    ))
-                .toList(),
-          ),
-        ],
       ),
     );
   }
