@@ -8,6 +8,7 @@ import '../services/equalizer_service.dart';
 import '../services/player_service.dart';
 import '../services/theme_service.dart';
 import '../services/haptic_service.dart';
+import '../services/music_service.dart';
 import 'equalizer_screen.dart';
 
 /// Ayarlar ekranı: tema, vurgu rengi, kalite, ekolayzer, otomatik çalma.
@@ -136,6 +137,9 @@ class SettingsScreen extends StatelessWidget {
                     MaterialPageRoute(builder: (_) => const EqualizerScreen()));
               },
             ),
+            const SizedBox(height: 16),
+            _sectionTitle('Bağlantı'),
+            const _StreamProxyField(),
             const SizedBox(height: 16),
             _sectionTitle('Çevrimdışı Mod'),
             _toggleTile(
@@ -383,4 +387,85 @@ class QualityItems {
         'Düşük (48kbps)' => AudioQuality.low,
         _ => AudioQuality.auto,
       };
+}
+
+/// "Bağlantı" bölümü: yalnızca akış proxy alanı. Açıklama yazısı YOK —
+/// başlığın altında yalnızca düzenlenebilir alanı görürsünüz.
+class _StreamProxyField extends StatefulWidget {
+  const _StreamProxyField();
+
+  @override
+  State<_StreamProxyField> createState() => _StreamProxyFieldState();
+}
+
+class _StreamProxyFieldState extends State<_StreamProxyField> {
+  late final TextEditingController _controller;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: MusicService.streamProxyFieldValue);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    HapticService.instance.light();
+    setState(() => _saving = true);
+    final value = _controller.text.trim();
+    await MusicService.setStreamProxy(value.isEmpty ? null : value);
+    if (mounted) setState(() => _saving = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      keyboardType: TextInputType.url,
+      autocorrect: false,
+      enableSuggestions: false,
+      decoration: InputDecoration(
+        hintText: 'https://…workers.dev',
+        prefixIcon: const Icon(Icons.link, color: AppColors.textSecondary),
+        suffixIcon: _saving
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: Padding(
+                  padding: EdgeInsets.all(12),
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            : IconButton(
+                tooltip: 'Bağlantıyı kaydet',
+                icon: const Icon(Icons.save_outlined,
+                    color: AppColors.textPrimary),
+                onPressed: _save,
+              ),
+        filled: true,
+        fillColor: AppColors.card,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.card),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.accent, width: 1.5),
+        ),
+      ),
+      style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+      onSubmitted: (_) => _save(),
+    );
+  }
 }

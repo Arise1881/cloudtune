@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import '../models/music_source.dart';
@@ -84,15 +86,62 @@ class MusicService {
   /// Negatif önbellek: bir örnek son 10dk içinde yanıt vermediyse atlanır.
   static final Map<String, DateTime> _deadInvidious = {};
 
-  /// Kullanıcının kendi Cloudflare Workers akış proxy'si
-  /// (ör. `https://cloudtune-stream.<kullanıcı>.workers.dev`). Boşsa devre dışı.
+  /// Kullanıcının kendi Cloudflare Workers akış proxy'si (düzenlenebilir,
+  /// Ayarlar → Bağlantı alanıyla yönetilir).
   ///
   /// Proxy iki iş yapar: (1) `/v1/stream/{videoId}` ile ses URL'sini
   /// Cloudflare ağından çözer, (2) googlevideo akışını kendi üzerinden
-  /// aktarır. Böylece Türk operatörlerinin googlevideo CDN IP engeli aşılır
-  /// ve Invidious erişimi de gerektiğinde devreden çıkar.
+  /// aktarır. Böylece Türk operatörlerinin googlevideo CDN IP engeli aşılır.
+  ///
+  /// Varsayılan link entegre edildi (kullanıcı kendi Worker'ına deploy
+  /// edebilir). Ancak kullanıcı alana DOKUNMADIĞI sürece aktif değildir —
+  /// ölü/bakılmayan varsayılan, akış aday sırasını bozmaz. Değer değişince
+  /// aktive olur; onarım botu sağlığını SESSİZ doğrular, ölüyse devre dışı
+  /// bırakır.
   static final ValueNotifier<String?> proxyNotifier =
       ValueNotifier<String?>(null);
+
+  /// Varsayılan Cloudflare Workers akış proxy'si (Ayarlar alanının ön dolgusu).
+  static const String _defaultProxyUrl =
+      'https://cloudtune-stream.cloudtune-5b3.workers.dev';
+
+  /// Prefs anahtarı — kullanıcının kaydettiği proxy URL'si.
+  static const String _kProxyUrl = 'stream_proxy_url';
+
+  /// Kaydedilmiş (aktif) proxy. Null ise: varsayılanda takılı, alan ön dolgusu
+  /// `_defaultProxyUrl` gösterir ama akış DİREKT Invidious'ten çözülür.
+  static String? _configuredProxy;
+
+  /// Uygulama açılışında kaydedilmiş proxy'yi yükle. Yalnızca kullanıcının
+  /// kendisinin KAYDETTİĞİ URL aktif olur; dokunulmamış varsayılan null kalır.
+  static Future<void> loadStreamProxy() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _configuredProxy = prefs.getString(_kProxyUrl);
+      proxyNotifier.value = _configuredProxy;
+    } catch (_) {
+      proxyNotifier.value = null;
+    }
+  }
+
+  /// Ayarlar alanının ön dolgusu: kaydedilmişse o, değilse varsayılan link.
+  static String get streamProxyFieldValue => _configuredProxy ?? _defaultProxyUrl;
+
+  /// Kullanıcı Ayarlar'da proxy alanını değiştirdiğinde çağrılır. Boş değer
+  /// iniş değerine döner. Değişiklik kalıcıdır ve anında aktive olur.
+  static Future<void> setStreamProxy(String? url) async {
+    final value = url?.trim().isEmpty == true ? null : url?.trim();
+    _configuredProxy = value;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (value == null) {
+        await prefs.remove(_kProxyUrl);
+      } else {
+        await prefs.setString(_kProxyUrl, value);
+      }
+    } catch (_) {}
+    proxyNotifier.value = value;
+  }
 
   /// YouTube kaynağı her zaman AÇIK (gizli, sabit). Kullanıcı kapatılamaz.
   static const bool youtubeEnabled = true;
@@ -110,17 +159,51 @@ class MusicService {
   static String? get proxyBaseUrl => proxyNotifier.value;
 
 
-  /// Uygulama açılışında proxy'yi KAPALI başlatır. Cloudflare Worker
-  /// deploy edilmedi (404); ölü URL aday listesinin başındayken her şarkıda
-  /// gereksiz bekleme yaratıyordu. Akış artık doğrudan Invidious local=true
-  /// (instance CDN proxy = googlevideo bypass) üzerinden çözülür.
-  static Future<void> loadStreamProxy() async {
-    proxyNotifier.value = null;
-  }
-
-  /// NOOP - Proxy gizli, kullanıcı değiştiremez.
-  static Future<void> setStreamProxy(String? url) async {
-    proxyNotifier.value = null;
+  /// Kullanıcının KENDİSİNİN KAYDETTİĞİ Cloudflare Workers proxy'sinden TEK
+  /// akış URL'si çözer. Worker, Invidious videos API'nin `adaptiveFormats`
+  /// JSON'unu ya da doğrudan akış URL dizesini döndürür. Boş/bozuk/ölü yanıt
+  /// null → ölü URL onarım botu tarafından SESSİZ devre dışı bırakılır.
+  static Future<String?> _proxyStreamUrl(String url) async {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final req = await client.getUrl(Uri.parse(url));
+      req.headers.set(HttpHeaders.userAgentHeader, _webUa);
+      req.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final res = await req.close().timeout(const Duration(seconds: 5));
+      if (res.statusCode != HttpStatus.ok) return null;
+      final raw = await res
+          .transform(utf8.decoder)
+          .join()
+          .timeout(const Duration(seconds: 8));
+      final t = raw.trim();
+      if (t.isEmpty) return null;
+      if (t.startsWith('http')) return t; // doğrudan akış URL
+      final data = jsonDecode(t);
+      if (data is Map<String, dynamic>) {
+        final af = data['adaptiveFormats'];
+        if (af is List && af.isNotEmpty) {
+          final first = af.first;
+          if (first is Map<String, dynamic>) {
+            final u = first['url'];
+            if (u is String && u.isNotEmpty) return u;
+          }
+        }
+        final fs = data['formatStreams'];
+        if (fs is List && fs.isNotEmpty) {
+          final first = fs.first;
+          if (first is Map<String, dynamic>) {
+            final u = first['url'];
+            if (u is String && u.isNotEmpty) return u;
+          }
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close(force: true);
+    }
   }
 
   /// Innertube player deneme sırası: bazı videolar için bazı istemciler
@@ -678,7 +761,20 @@ class MusicService {
       if (u.isNotEmpty && !urls.contains(u)) urls.add(u);
     }
 
-    // 1) Invidious local=true (instance CDN proxy — googlevideo IP engeli bypass).
+    // 0) Kullanıcının KENDİSİNİN KAYDETTİĞİ akış proxy'si — yalnızca aktif
+    // URL varsa başa alınır. Onarım botu sağlığı sessiz doğrular; ölü proxy'yi
+    // anında devre dışı bırakır (varsayılan ölü worker asla aday OLMADIĞI için
+    // bu adım dokunulmamış kurulumda hiç çalışmaz — akış doğrudan Invidious).
+    final proxy = MusicService.proxyBaseUrl;
+    if (proxy != null) {
+      try {
+        final data = await _bounded(() => MusicService
+            ._proxyStreamUrl('$proxy/v1/stream/$videoId'));
+        if (data != null && data.isNotEmpty) add(data);
+      } catch (_) {}
+    }
+
+    // 1) Invidious local=true (instance CDN proxy — googlevideo IP engeli bye-pass).
     // Türkiye'de en hızlı ve en güvenilir ilk aday.
     try {
       final latest = await _invidiousLatestWorking(videoId);
