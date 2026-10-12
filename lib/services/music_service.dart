@@ -103,7 +103,7 @@ class MusicService {
 
   /// Varsayılan Cloudflare Workers akış proxy'si (Ayarlar alanının ön dolgusu).
   static const String _defaultProxyUrl =
-      'https://cloudtune-stream.cloudtune-5b3.workers.dev';
+      'https://wto-counsel-considers-delivery.trycloudflare.com';
 
   /// Prefs anahtarı — kullanıcının kaydettiği proxy URL'si.
   static const String _kProxyUrl = 'stream_proxy_url';
