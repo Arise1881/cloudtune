@@ -120,14 +120,12 @@ class MusicService {
     return t != null && DateTime.now().difference(t) < _proxyDeadTtl;
   }
 
-  /// Uygulama açılışında kaydedilmiş proxy'yi yükle. Yalnızca kullanıcının
-  /// kendisinin KAYDETTİĞİ URL aktif olur; dokunulmamış varsayılan null kalır.
   /// Uygulama açılışında proxy'yi yükle.
   ///
   /// Öncelik: kullanıcının KAYDETTİĞİ URL. Kayıtlı yoksa varsayılan Cloudflare
-  /// Worker'ı SESSİZCE sağlık kontrolünden geçirilir: canlıysa OTOMATİK aktif
-  /// olur (akış Cloudflare üzerinden relay edilir, TR googlevideo engeli aşılır);
-  /// ölüyse null kalır → hiçbir gecikme yaratmaz, akış doğrudan Invidious'tan.
+  /// Worker HER ZAMAN aktif edilir (sağlık kontrolü beklenmez) — akış Cloudflare
+  /// üzerinden relay edilir, TR googlevideo engeli aşılır. Worker o an ölüyse
+  /// Invidious yedeklerine düşülür; uygulama bloke olmaz.
   static Future<void> loadStreamProxy() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -138,28 +136,11 @@ class MusicService {
         return;
       }
     } catch (_) {}
-    final ok = _defaultProxyUrl.isNotEmpty &&
-        await _proxyHealthOk(_defaultProxyUrl);
-    _configuredProxy = ok ? _defaultProxyUrl : null;
+    // Varsayılan Cloudflare Worker her zaman aktif (kullanıcı kararı).
+    // Sağlık kontrolü beklenmez: deploy edilmişse doğrudan relay eder; o an
+    // ölüyse yedek Invidious adaylarına düşülür, uygulama bloke olmaz.
+    _configuredProxy = _defaultProxyUrl;
     proxyNotifier.value = _configuredProxy;
-  }
-
-  /// Cloudflare Worker canlılık kontrolü (`/health` → 200). Kısa timeout'lu,
-  /// sessiz — başarısızlıkta false döner, uygulama akışını bloke etmez.
-  static Future<bool> _proxyHealthOk(String base) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
-    try {
-      final req = await client.getUrl(Uri.parse('$base/health'));
-      req.headers.set(HttpHeaders.userAgentHeader, _webUa);
-      req.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final res = await req.close().timeout(const Duration(seconds: 2));
-      await res.drain();
-      return res.statusCode == HttpStatus.ok;
-    } catch (_) {
-      return false;
-    } finally {
-      client.close(force: true);
-    }
   }
 
   /// Ayarlar alanının ön dolgusu: kaydedilmişse o, değilse varsayılan link.
