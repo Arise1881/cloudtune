@@ -163,7 +163,7 @@ class CloudTuneApp extends StatelessWidget {
     final divider = dark ? const Color(0x1FFFFFFF) : const Color(0x14000000);
 
     final base = ThemeData(
-        brightness: brightness, useMaterial3: true, fontFamily: 'Roboto');
+        brightness: brightness, useMaterial3: true, fontFamily: 'Poppins');
 
     return base.copyWith(
       scaffoldBackgroundColor: background,
@@ -181,8 +181,9 @@ class CloudTuneApp extends StatelessWidget {
             ? SystemUiOverlayStyle.light
             : SystemUiOverlayStyle.dark,
       ),
-      textTheme: const TextTheme(
-        bodyMedium: TextStyle(color: AppColors.textPrimary),
+      textTheme: base.textTheme.apply(
+        bodyColor: textPrimary,
+        displayColor: textPrimary,
       ),
       sliderTheme: SliderThemeData(
         activeTrackColor: accent,

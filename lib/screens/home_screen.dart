@@ -117,26 +117,46 @@ class HomeScreenState extends State<HomeScreen> {
                 ? 'İyi günler'
                 : 'İyi akşamlar';
 
+    final textTheme = Theme.of(context).textTheme;
+
     return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(
-              greeting,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: AppColors.textPrimary,
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-          ),
-          const SizedBox(width: 8),
           Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
+              Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.accent.withValues(alpha: 0.28),
+                      blurRadius: 14,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.asset(
+                    'assets/icon/cloudtune_icon.png',
+                    width: 36,
+                    height: 36,
+                    filterQuality: FilterQuality.medium,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                AppStrings.appName,
+                style: textTheme.titleLarge?.copyWith(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.6,
+                ),
+              ),
+              const Spacer(),
               Consumer<RoomService>(
                 builder: (context, room, _) {
                   final inRoom = room.roomId != null;
@@ -144,7 +164,8 @@ class HomeScreenState extends State<HomeScreen> {
                     tooltip: 'Odalar',
                     icon: Icon(
                       inRoom ? Icons.groups : Icons.groups_outlined,
-                      color: inRoom ? AppColors.accent : AppColors.textSecondary,
+                      color:
+                          inRoom ? AppColors.accent : AppColors.textSecondary,
                     ),
                     onPressed: () {
                       Navigator.push(
@@ -169,6 +190,17 @@ class HomeScreenState extends State<HomeScreen> {
                 },
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            greeting,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: textTheme.headlineSmall?.copyWith(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.4,
+                ),
           ),
         ],
       ),

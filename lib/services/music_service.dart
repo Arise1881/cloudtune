@@ -108,19 +108,57 @@ class MusicService {
   /// Prefs anahtarı — kullanıcının kaydettiği proxy URL'si.
   static const String _kProxyUrl = 'stream_proxy_url';
 
-  /// Kaydedilmiş (aktif) proxy. Null ise: varsayılanda takılı, alan ön dolgusu
-  /// `_defaultProxyUrl` gösterir ama akış DİREKT Invidious'ten çözülür.
+  /// Kaydedilmiş (aktif) proxy. Null ise: akış DİREKT Invidious'ten çözülür.
   static String? _configuredProxy;
+
+  /// Ölü proxy negatif önbelleği: bir proxy kısa süre yanıt vermezse atlanır
+  /// (her şarkıda 2-4sn boşa bekleme olmaz → müzik hızlı açılır).
+  static DateTime? _proxyDeadAt;
+  static const Duration _proxyDeadTtl = Duration(minutes: 4);
+  static bool get _proxyRecentlyDead {
+    final t = _proxyDeadAt;
+    return t != null && DateTime.now().difference(t) < _proxyDeadTtl;
+  }
 
   /// Uygulama açılışında kaydedilmiş proxy'yi yükle. Yalnızca kullanıcının
   /// kendisinin KAYDETTİĞİ URL aktif olur; dokunulmamış varsayılan null kalır.
+  /// Uygulama açılışında proxy'yi yükle.
+  ///
+  /// Öncelik: kullanıcının KAYDETTİĞİ URL. Kayıtlı yoksa varsayılan Cloudflare
+  /// Worker'ı SESSİZCE sağlık kontrolünden geçirilir: canlıysa OTOMATİK aktif
+  /// olur (akış Cloudflare üzerinden relay edilir, TR googlevideo engeli aşılır);
+  /// ölüyse null kalır → hiçbir gecikme yaratmaz, akış doğrudan Invidious'tan.
   static Future<void> loadStreamProxy() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      _configuredProxy = prefs.getString(_kProxyUrl);
-      proxyNotifier.value = _configuredProxy;
+      final saved = prefs.getString(_kProxyUrl);
+      if (saved != null && saved.isNotEmpty) {
+        _configuredProxy = saved;
+        proxyNotifier.value = saved;
+        return;
+      }
+    } catch (_) {}
+    final ok = _defaultProxyUrl.isNotEmpty &&
+        await _proxyHealthOk(_defaultProxyUrl);
+    _configuredProxy = ok ? _defaultProxyUrl : null;
+    proxyNotifier.value = _configuredProxy;
+  }
+
+  /// Cloudflare Worker canlılık kontrolü (`/health` → 200). Kısa timeout'lu,
+  /// sessiz — başarısızlıkta false döner, uygulama akışını bloke etmez.
+  static Future<bool> _proxyHealthOk(String base) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+    try {
+      final req = await client.getUrl(Uri.parse('$base/health'));
+      req.headers.set(HttpHeaders.userAgentHeader, _webUa);
+      req.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final res = await req.close().timeout(const Duration(seconds: 2));
+      await res.drain();
+      return res.statusCode == HttpStatus.ok;
     } catch (_) {
-      proxyNotifier.value = null;
+      return false;
+    } finally {
+      client.close(force: true);
     }
   }
 
@@ -132,6 +170,7 @@ class MusicService {
   static Future<void> setStreamProxy(String? url) async {
     final value = url?.trim().isEmpty == true ? null : url?.trim();
     _configuredProxy = value;
+    _proxyDeadAt = null;
     try {
       final prefs = await SharedPreferences.getInstance();
       if (value == null) {
@@ -761,54 +800,72 @@ class MusicService {
       if (u.isNotEmpty && !urls.contains(u)) urls.add(u);
     }
 
-    // 0) Kullanıcının KENDİSİNİN KAYDETTİĞİ akış proxy'si — yalnızca aktif
-    // URL varsa başa alınır. Onarım botu sağlığı sessiz doğrular; ölü proxy'yi
-    // anında devre dışı bırakır (varsayılan ölü worker asla aday OLMADIĞI için
-    // bu adım dokunulmamış kurulumda hiç çalışmaz — akış doğrudan Invidious).
+    // Tüm bağımsız kaynaklar EŞZAMANLI başlatılır; hiçbiri diğerini beklemez.
+    // Zaman aşımına uğrayan kaynak atlanır → müzik HIZLI açılır.
+
+    // 0) Cloudflare Workers akış proxy'si (aktifse). Tek anycast istek: TR
+    // googlevideo engelini aşar. Ölü proxy negatif önbelleğiyle 4dk atlanır.
     final proxy = MusicService.proxyBaseUrl;
-    if (proxy != null) {
+    final Future<List<String>> proxyFuture =
+        (proxy == null || _proxyRecentlyDead)
+            ? Future<List<String>>.value(const <String>[])
+            : MusicService._proxyStreamUrl('$proxy/v1/stream/$videoId')
+                .timeout(const Duration(seconds: 3), onTimeout: () => null)
+                .then((d) {
+                if (d != null && d.isNotEmpty) {
+                  _proxyDeadAt = null;
+                  return <String>[d];
+                }
+                _proxyDeadAt = DateTime.now();
+                return const <String>[];
+              }).catchError((_) {
+                _proxyDeadAt = DateTime.now();
+                return const <String>[];
+              });
+
+    // 1) Invidious local=true (instance CDN proxy — googlevideo IP engeli
+    // bypass). Türkiye'de en güvenilir kaynak; içeride örnekler PARALEL yarışır.
+    final Future<List<String>> invFuture =
+        _invidiousLatestWorking(videoId).catchError((_) => const <String>[]);
+
+    // 2) InnerTube player — proxy/Invidious ile eşzamanlı.
+    final Future<List<String>> innerFuture = _innerTubePlayer(videoId)
+        .then((p) => _audioUrlsFromStreamingData(p?['streamingData']))
+        .catchError((_) => const <String>[]);
+
+    // Öncelik sırasıyla topla (hepsi zaten paralel çalışıyor).
+    for (final u in await proxyFuture) {
+      add(u);
+    }
+    for (final u in await invFuture) {
+      add(u);
+    }
+    for (final u in await innerFuture) {
+      add(u);
+    }
+
+    // 3) Invidious videos API (yalnızca öncekiler boşsa — gereksiz ağı önler)
+    if (urls.isEmpty) {
       try {
-        final data = await _bounded(() => MusicService
-            ._proxyStreamUrl('$proxy/v1/stream/$videoId'));
-        if (data != null && data.isNotEmpty) add(data);
+        final data = await _invidious(
+            '/api/v1/videos/$videoId?fields=adaptiveFormats,formatStreams');
+        if (data is Map<String, dynamic>) {
+          for (final u in _audioUrlsFromInvidious(data)) {
+            add(u);
+          }
+        }
       } catch (_) {}
     }
 
-    // 1) Invidious local=true (instance CDN proxy — googlevideo IP engeli bye-pass).
-    // Türkiye'de en hızlı ve en güvenilir ilk aday.
-    try {
-      final latest = await _invidiousLatestWorking(videoId);
-      for (final u in latest) {
-        add(u);
-      }
-    } catch (_) {}
-
-    // 2) InnerTube player
-    try {
-      final p = await _innerTubePlayer(videoId);
-      for (final u in _audioUrlsFromStreamingData(p?['streamingData'])) {
-        add(u);
-      }
-    } catch (_) {}
-
-    // 3) Invidious videos API (local=true'siz örnekler)
-    try {
-      final data = await _invidious(
-          '/api/v1/videos/$videoId?fields=adaptiveFormats,formatStreams');
-      if (data is Map<String, dynamic>) {
-        for (final u in _audioUrlsFromInvidious(data)) {
-          add(u);
+    // 4) youtube_explode manifest (son çare)
+    if (urls.isEmpty) {
+      try {
+        final audio = await _audioStreams(videoId);
+        for (final s in audio) {
+          add(s.url.toString());
         }
-      }
-    } catch (_) {}
-
-    // 4) youtube_explode manifest
-    try {
-      final audio = await _audioStreams(videoId);
-      for (final s in audio) {
-        add(s.url.toString());
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
 
     if (urls.isEmpty) {
       throw StreamUnavailableException(
@@ -836,35 +893,58 @@ class MusicService {
   /// `local=true` destekleyen örneklerde (darkness) URL'ler instance'ın kendi
   /// CDN'i üzerinden proxy'lenir: googlevideo IP engeli bypass edilir.
   Future<List<String>> _invidiousLatestWorking(String videoId) async {
-    for (final entry in _invidiousInstances.entries) {
-      final base = entry.key;
-      if (_invidiousDead(base)) continue;
-      final local = entry.value ? '&local=true' : '';
-      final maxAttempts = entry.value ? 4 : 2;
-      for (var attempt = 0; attempt < maxAttempts; attempt++) {
-        if (attempt > 0) {
-          await Future.delayed(Duration(milliseconds: 150 * attempt));
-        }
-        try {
-          final data = await _getJson(
-            '$base/api/v1/videos/$videoId?fields=adaptiveFormats$local',
-            timeout: const Duration(seconds: 5),
-          );
-          if (data is Map<String, dynamic>) {
-            final urls = _audioUrlsFromInvidious(data);
-            if (urls.isNotEmpty) {
-              // Başarılı: bu örneği canlı say, sıradaki aramalarda da dene.
-              _deadInvidious.remove(base);
-              return urls;
-            }
-            // Boş media: rate-limit'e takılmış olabilir — bir retry daha.
-            continue;
-          }
-        } catch (_) {}
-      }
-      _deadInvidious[base] = DateTime.now();
+    // Önce local=true örnekleri (TR googlevideo engelini aşan, güvenilir
+    // olanlar) PARALEL yarıştır; hiçbiri tutmazsa düz örnekleri yarıştır.
+    // Eski sıralı deneme (her örnek ~5sn, üst üste) yerine eşzamanlı yarış:
+    // ilk geçerli ses URL'si anında döner → müzik HIZLI açılır.
+    final local = <MapEntry<String, bool>>[];
+    final plain = <MapEntry<String, bool>>[];
+    for (final e in _invidiousInstances.entries) {
+      if (_invidiousDead(e.key)) continue;
+      (e.value ? local : plain).add(e);
     }
-    return const [];
+    final hit = await _raceInvidious(videoId, local) ??
+        await _raceInvidious(videoId, plain);
+    return hit ?? const [];
+  }
+
+  /// Verilen Invidious örneklerini PARALEL sorgular; ilk geçerli akış
+  /// URL'lerini döner. Hepsi başarısız/boşsa null. Ölü örnekler işaretlenir.
+  Future<List<String>?> _raceInvidious(
+      String videoId, List<MapEntry<String, bool>> entries) {
+    if (entries.isEmpty) return Future.value(null);
+    final completer = Completer<List<String>?>();
+    var pending = entries.length;
+    void settle() {
+      if (completer.isCompleted) return;
+      if (--pending == 0) completer.complete(null);
+    }
+
+    for (final entry in entries) {
+      final base = entry.key;
+      final local = entry.value ? '&local=true' : '';
+      _getJson(
+        '$base/api/v1/videos/$videoId?fields=adaptiveFormats$local',
+        timeout: const Duration(seconds: 4),
+      ).then((data) {
+        if (completer.isCompleted) return;
+        if (data is Map<String, dynamic>) {
+          final urls = _audioUrlsFromInvidious(data);
+          if (urls.isNotEmpty) {
+            _deadInvidious.remove(base);
+            completer.complete(urls);
+            return;
+          }
+        }
+        _deadInvidious[base] = DateTime.now();
+        settle();
+      }).catchError((_) {
+        if (completer.isCompleted) return;
+        _deadInvidious[base] = DateTime.now();
+        settle();
+      });
+    }
+    return completer.future;
   }
 
   /// streamingData'dan ses URL'lerini çıkarır (en iyi önce, mp4/m4a tercih).
