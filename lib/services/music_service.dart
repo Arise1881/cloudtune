@@ -226,18 +226,63 @@ class MusicService {
     }
   }
 
-  /// Innertube player deneme sırası: bazı videolar için bazı istemciler
-  /// akış döndürmez, diğerleri döndürür.
+  /// Innertube player deneme sırası. İstemci BAŞINA doğru bağlam (context) ve
+  /// User-Agent kullanmak zorunlu: aksi hâlde YouTube "UNPLAYABLE" döner.
+  /// ANDROID_VR şu an PoToken gerektirmeden doğrudan ses URL'i veren tek
+  /// güvenilir istemcidir → ilk sırada. WEB en sonda (URL'siz yanıt döner).
   static const List<Map<String, Object>> _playerClients = [
-    {'name': 'WEB', 'version': '2.20250101.00.00'},
-    {'name': 'WEB_EMBEDDED_PLAYER', 'version': '1.20250101.00.00'},
-    {'name': 'ANDROID', 'version': '19.50.37'},
-    {'name': 'IOS', 'version': '19.50.3'},
-    {'name': 'TVHTML5', 'version': '7.20250101.00.00'},
-    {'name': 'ANDROID_VR', 'version': '1.0.0'},
-    {'name': 'WEB_LIGHT', 'version': '2.20250101.00.00'},
-    {'name': 'ANDROID_MUSIC', 'version': '6.41.51'},
-    {'name': 'ANDROID_CREATOR', 'version': '24.10.100'},
+    {
+      'name': 'ANDROID_VR',
+      'ua': 'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12; GB) gzip',
+      'ctx': {
+        'clientName': 'ANDROID_VR',
+        'clientVersion': '1.60.19',
+        'deviceMake': 'Oculus',
+        'deviceModel': 'Quest 3',
+        'androidSdkVersion': 32,
+        'osName': 'Android',
+        'osVersion': '12',
+      },
+    },
+    {
+      'name': 'IOS',
+      'ua': 'com.google.ios.youtube/19.09.3 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)',
+      'ctx': {
+        'clientName': 'IOS',
+        'clientVersion': '19.09.3',
+        'deviceMake': 'Apple',
+        'deviceModel': 'iPhone14,3',
+        'osName': 'iOS',
+        'osVersion': '15.6.0.19G71',
+      },
+    },
+    {
+      'name': 'ANDROID',
+      'ua': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+      'ctx': {
+        'clientName': 'ANDROID',
+        'clientVersion': '19.09.37',
+        'androidSdkVersion': 30,
+        'osName': 'Android',
+        'osVersion': '11',
+      },
+    },
+    {
+      'name': 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+      'ua': 'Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0)',
+      'ctx': {
+        'clientName': 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+        'clientVersion': '2.0',
+      },
+    },
+    {
+      'name': 'WEB',
+      'ua': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'ctx': {
+        'clientName': 'WEB',
+        'clientVersion': '2.20250101.00.00',
+      },
+    },
   ];
 
   final YoutubeExplode _yt = YoutubeExplode();
@@ -391,86 +436,43 @@ class MusicService {
     _sourceStreamCache.clear();
   }
 
-  /// InnerTube player: çoklu client dener, akış içeren ilk yanıtı döner.
-  /// Daha gerçekçi başlıklar ve daha fazla istemci variétéyisi ile YouTube bot korumasını aşar.
+  /// InnerTube player: istemci başına doğru context/UA ile dener; YALNIZCA
+  /// doğrudan (imzasız `url` içeren) ses formatı olan yanıtı kabul eder.
+  /// Böylece URL'siz dönen WEB yanıtı erken dönüşe neden olmaz.
   Future<Map<String, dynamic>?> _innerTubePlayer(String videoId) async {
     for (final client in _playerClients) {
       final name = client['name'] as String;
-      final version = client['version'] as String;
-      
-      // Daha gerçekçi istemci bağlamı
-      final contextClient = <String, Object?>{
-        'clientName': name,
-        'clientVersion': version,
-        'hl': 'tr',
-        'gl': 'TR',
-        'clientScreen': 'NONEMBED',
-      };
-      
-      // Platform-specific bilgiler
-      if (name == 'ANDROID') {
-        contextClient['androidSdkVersion'] = 30;
-        contextClient['osName'] = 'Android';
-        contextClient['osVersion'] = '13';
-        contextClient['platform'] = 'MOBILE';
-      } else if (name == 'IOS') {
-        contextClient['osName'] = 'iPhone';
-        contextClient['osVersion'] = '17.2.0';
-        contextClient['platform'] = 'MOBILE';
-      } else if (name == 'TVHTML5') {
-        contextClient['platform'] = 'TV';
-      } else if (name == 'ANDROID_MUSIC') {
-        contextClient['androidSdkVersion'] = 33;
-        contextClient['osName'] = 'Android';
-        contextClient['osVersion'] = '14';
-        contextClient['platform'] = 'MOBILE';
-      } else if (name == 'ANDROID_CREATOR') {
-        contextClient['androidSdkVersion'] = 33;
-        contextClient['osName'] = 'Android';
-        contextClient['osVersion'] = '14';
-        contextClient['platform'] = 'MOBILE';
-      }
-      
+      final ua = client['ua'] as String;
+      final ctx = Map<String, Object?>.from(client['ctx'] as Map);
+      final version = (ctx['clientVersion'] ?? '').toString();
+
       final body = <String, Object?>{
-        'context': {'client': contextClient},
+        'context': {'client': ctx},
         'videoId': videoId,
-        'racyCheckOk': true,
         'contentCheckOk': true,
-        'playbackContext': {
-          'contentPlaybackContext': {
-            'html5Preference': 'HTML5_PREF_WANTED'
-          }
-        },
+        'racyCheckOk': true,
       };
-      
+
       try {
         final data = await _postJson(
           'https://www.youtube.com/youtubei/v1/player',
           body,
           extraHeaders: {
-            'Origin': 'https://www.youtube.com',
-            'Referer': 'https://www.youtube.com/watch?v=$videoId',
-            'X-YouTube-Client-Name': '1',
+            'X-YouTube-Client-Name': name,
             'X-YouTube-Client-Version': version,
-            'Accept': '*/*',
-            'Accept-Encoding': 'gzip, deflate',
             'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-            'User-Agent':
-                'Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
+            'User-Agent': ua,
           },
           timeout: const Duration(seconds: 15),
         );
-        
+
         if (data is Map<String, dynamic>) {
-          final sd = data['streamingData'];
-          if (sd is Map<String, dynamic> &&
-              (sd['formats'] is List || sd['adaptiveFormats'] is List)) {
-            debugPrint('InnerTube success with client: $name');
+          final n = _audioUrlsFromStreamingData(data['streamingData']).length;
+          if (n > 0) {
             return data;
           }
         }
-      } catch (e) {
-        debugPrint('InnerTube client $name failed: $e');
+      } catch (_) {
         continue;
       }
     }
@@ -791,7 +793,7 @@ class MusicService {
         (proxy == null || _proxyRecentlyDead)
             ? Future<List<String>>.value(const <String>[])
             : MusicService._proxyStreamUrl('$proxy/v1/stream/$videoId')
-                .timeout(const Duration(seconds: 3), onTimeout: () => null)
+                .timeout(const Duration(seconds: 9), onTimeout: () => null)
                 .then((d) {
                 if (d != null && d.isNotEmpty) {
                   _proxyDeadAt = null;
@@ -867,7 +869,6 @@ class MusicService {
     }
     return [...inline, ...cdn];
   }
-
   /// Invidious videos API'den gerçek ses akış URL'lerini alır. `/latest_version`
   /// endpoint'i artık çoğu örnekte bot-challenge/companion sayfasına (302 HTML)
   /// düşüyor, o yüzden doğrudan adaptiveFormats JSON'u tercih edilir.
