@@ -64,7 +64,7 @@ void _warmUpServices() {
     _safe('Arka plan', () => JustAudioBackground.init(
           androidNotificationChannelId: 'com.cloudtune.app.playback',
           androidNotificationChannelName: 'CloudTune Müzik Çalar',
-          androidNotificationOngoing: true,
+          androidNotificationOngoing: false,
           androidStopForegroundOnPause: false,
           preloadArtwork: true,
         ));

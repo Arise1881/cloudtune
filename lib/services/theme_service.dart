@@ -62,7 +62,7 @@ class ThemeService extends ChangeNotifier {
 
   Future<void> setCustomAccent(Color color) async {
     _accentIndex = accentColors.length - 1;
-    _customAccentHex = color.value.toRadixString(16).padLeft(8, '0');
+    _customAccentHex = color.toARGB32().toRadixString(16).padLeft(8, '0');
     notifyListeners();
     try {
       final prefs = await SharedPreferences.getInstance();

@@ -65,8 +65,8 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                     Expanded(child: _artwork(song)),
                     _visualizer(player),
                     _titleRow(player, song),
-                    // Hata bannerı gizli — onarım botu arka planda düzeltir
-                    // if (player.lastError != null) _errorBanner(player.lastError!),
+                    if (player.lastError != null && !player.isLoading)
+                      _errorBanner(player.lastError!),
                     _actionRow(context, player, song),
                     _progressBar(player, song),
                     _controls(player),

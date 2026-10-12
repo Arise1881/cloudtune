@@ -154,6 +154,12 @@ class PlayerService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get lastError => _lastError;
 
+  /// Ardışık akış hatası sayacı. Akış hiç çözülemiyorsa (ör. ağda YouTube
+  /// engeli ve proxy yok) autoplay sonsuza dek şarkı atlamasın; N hatadan
+  /// sonra durup anlaşılır hata gösterilir.
+  int _consecutiveStreamFailures = 0;
+  static const int _maxConsecutiveStreamFailures = 5;
+
   bool get playingOffline {
     final song = current;
     if (song == null) return false;
@@ -195,6 +201,7 @@ class PlayerService extends ChangeNotifier {
     _index = _shuffle
         ? 0
         : startIndex.clamp(0, _queue.length - 1);
+    _consecutiveStreamFailures = 0;
     library.pushRecent(current!);
     _buildAndPlay(initialSource: initialSource).catchError((_) {});
     notifyListeners();
@@ -217,6 +224,16 @@ class PlayerService extends ChangeNotifier {
   Future<void> _buildAndPlay({String? initialSource}) async {
     final songs = effectiveQueue;
     if (songs.isEmpty || _index < 0 || _index >= songs.length) return;
+
+    // Ardışık akış hatası sınırına ulaşıldıysa yeni deneme başlatma.
+    // (Kullanıcı bir şey çalınca / sıradaki'ne basınca sayaç sıfırlanır.)
+    if (_consecutiveStreamFailures >= _maxConsecutiveStreamFailures) {
+      _isLoading = false;
+      _lastError ??= 'Akış alınamıyor. Ağ engelli olabilir ya da akış '
+          'proxy sunucusu (Cloudflare Worker) devrede değil.';
+      notifyListeners();
+      return;
+    }
 
     _isLoading = true;
     _lastError = null;
@@ -241,6 +258,7 @@ class PlayerService extends ChangeNotifier {
           await _player.setSpeed(_speed);
           _applyEqualizer();
           await _player.play();
+          _consecutiveStreamFailures = 0;
           _saveSession();
           break;
         }
@@ -314,6 +332,7 @@ class PlayerService extends ChangeNotifier {
               music.cacheStreamUrl(song.id, url);
               started = true;
               failed.clear();
+              _consecutiveStreamFailures = 0;
               break;
             } catch (e) {
               lastError = e.toString();
@@ -332,10 +351,20 @@ class PlayerService extends ChangeNotifier {
               'Akış başlatılamadı: $brief',
               {'song': song.id, 'attempts': candidates.length}));
 
-          // Auto-skip to next song if autoplay is enabled, otherwise show error
-          if (_autoplay) {
+          // Autoplay açıksa sıradaki şarkıya geç — ama sonsuz atlamayı önle:
+          // üst üste N şarkı da çözülemezse dur ve anlaşılır hata göster.
+          _consecutiveStreamFailures++;
+          final giveUp =
+              _consecutiveStreamFailures >= _maxConsecutiveStreamFailures;
+          if (_autoplay && !giveUp) {
             debugPrint('Stream failed, auto-skipping to next song (autoplay enabled)');
-            unawaited(next());
+            unawaited(next(userTriggered: false));
+          } else if (giveUp) {
+            _lastError =
+                'Akış alınamıyor. Ağ engeli veya akış proxy (Cloudflare) gerekli.';
+            debugPrint(
+                'Stream failed $_consecutiveStreamFailures kez, autoplay durduruldu.');
+            break;
           } else {
             throw Exception(
                 lastError == null
@@ -358,11 +387,18 @@ class PlayerService extends ChangeNotifier {
             'Oynatma hatası: ${e.toString().replaceFirst('Exception: ', '')}',
             {'song': song.id}));
         
-        // Auto-skip to next song if autoplay is enabled
-        if (_autoplay) {
+        // Autoplay açıksa geç, ama üst üste N hatadan sonra dur.
+        _consecutiveStreamFailures++;
+        final giveUp =
+            _consecutiveStreamFailures >= _maxConsecutiveStreamFailures;
+        if (_autoplay && !giveUp) {
           debugPrint('Playback error, auto-skipping to next song (autoplay enabled)');
-          unawaited(next());
+          unawaited(next(userTriggered: false));
         } else {
+          if (giveUp) {
+            _lastError =
+                'Akış alınamıyor. Ağ engeli veya akış proxy (Cloudflare) gerekli.';
+          }
           break;
         }
       }
@@ -472,6 +508,7 @@ throw StreamUnavailableException(
 
   /// Sonraki şarkıya geç. Liste biterse ve autoplay açıksa rasgele şarkı getir.
   Future<void> next({bool userTriggered = true}) async {
+    if (userTriggered) _consecutiveStreamFailures = 0;
     if (effectiveQueue.isEmpty) return;
     if (_repeat == RepeatMode.one && !userTriggered) {
       await _player.seek(Duration.zero);
@@ -1204,6 +1241,7 @@ throw StreamUnavailableException(
   Future<void> retryCurrent() async {
     if (_index < 0 || _index >= effectiveQueue.length) return;
     _retryCount = 0;
+    _consecutiveStreamFailures = 0;
     await _retryLoad();
   }
 
@@ -1230,6 +1268,7 @@ throw StreamUnavailableException(
         state.processingState == ProcessingState.idle &&
         effectiveQueue.isNotEmpty &&
         _retryCount < 2 &&
+        _consecutiveStreamFailures < _maxConsecutiveStreamFailures &&
         !_isLoading) {
       _retryLoad();
     }
