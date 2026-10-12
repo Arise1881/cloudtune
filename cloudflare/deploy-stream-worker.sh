@@ -27,11 +27,11 @@ ACCOUNT_ID="$(
 )"
 echo "account: $ACCOUNT_ID"
 
-echo "==> stream relay worker yukleniyor: $WORKER_NAME"
+echo "==> stream relay worker yukleniyor (ES module): $WORKER_NAME"
 RESP="$(curl -sS -X PUT \
   -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/javascript" \
-  --data-binary @"$WORKER_FILE" \
+  -F "metadata={\"main_module\":\"worker.js\",\"compatibility_date\":\"2024-09-23\"};type=application/json" \
+  -F "worker.js=@${WORKER_FILE};type=application/javascript+module" \
   "${API}/accounts/${ACCOUNT_ID}/workers/scripts/${WORKER_NAME}")"
 echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print('OK script:', d['result']['id']) if d.get('success') else (print('HATA:', d.get('errors')), sys.exit(1))"
 
