@@ -159,7 +159,7 @@ with open('update.json') as f:
     d = json.load(f)
 d['version'] = '$NEW_VER'
 d['versionCode'] = $NEW_BUILD
-d["notes"] = "'CloudTune $NEW_VER'"
+d['notes'] = 'CloudTune $NEW_VER'
 d['platforms']['linux'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.deb'
 with open('update.json', 'w') as f:
     json.dump(d, f, indent=2, ensure_ascii=False)
