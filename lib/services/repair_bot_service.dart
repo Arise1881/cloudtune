@@ -112,10 +112,12 @@ class RepairBotService extends ChangeNotifier {
   static final RepairBotService instance = RepairBotService._();
 
   static const String _kStatusKey = 'repair_bot_status';
-  // Birincil: Cloudflare tüneli (kullanıcının verdiği ID).
-  static const String _kWorkerUrl = 'https://23d9da7b-178f-424a-8f7d-671c7708445b.cfargotunnel.com/api/repair-log';
-  // Yedek: Cloudflare Worker (workers.dev) — tünel aşağıda olunca çalışır.
-  static const String _kWorkerUrlFallback = 'https://cloudtune-repair-log.cloudtune-5b3.workers.dev/api/repair-log';
+  // Birincil: Cloudflare Worker (workers.dev) — sunucusuz, PC/cloudflared gerektirmez.
+  static const String _kWorkerUrl = 'https://cloudtune-repair-log.cloudtune-5b3.workers.dev/api/repair-log';
+  // Yedek: Cloudflare tüneli (yalnız PC'de cloudflared çalışırken erişilebilir).
+  static const String _kWorkerUrlFallback = 'https://23d9da7b-178f-424a-8f7d-671c7708445b.cfargotunnel.com/api/repair-log';
+  // İki uç da düşerse 5 dk boyunca ağı hiç denemeyiz (boşa gecikme olmasın).
+  static const Duration _workerDeadTtl = Duration(minutes: 5);
   static const Duration _scanInterval = Duration(seconds: 5);  // Daha hızlı tespit
   static const Duration _heavyScanInterval = Duration(seconds: 30);  // Daha sık ağ kontrolü
   static const int _maxRetriesBeforeEscalation = 3;
@@ -131,6 +133,7 @@ class RepairBotService extends ChangeNotifier {
   StreamSubscription? _connectivitySub;
   bool _isScanning = false;
   DateTime? _lastHeavyScan;
+  DateTime? _workerDeadAt;
 
   RepairBotStatus get status => _status;
   bool get isActive => _status.isActive;
@@ -465,22 +468,29 @@ class RepairBotService extends ChangeNotifier {
     // 1. Yerel rapor dosyası (her zaman — cihazda iz bırakır).
     await _saveLocalReport(payload);
 
-    // 2. Cloudflare Worker'a logla (tünel + workers.dev sırayla denenir) — ultra hızlı.
-    final urls = [_kWorkerUrl, _kWorkerUrlFallback];
-    for (final url in urls) {
-      try {
-        final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
-        final req = await client.postUrl(Uri.parse(url));
-        req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
-        req.write(jsonEncode(payload));
-        final res = await req.close().timeout(const Duration(seconds: 2));
-        if (res.statusCode == HttpStatus.ok) {
-          dev.log('RepairBot: Worker rapor alındı: $url');
-          return;
-        }
-        await res.drain();
-        client.close(force: true);
-      } catch (_) {}
+    // 2. Cloudflare Worker'a logla (workers.dev önce, tünel yedek) — ultra hızlı.
+    //    İki uç da yakın zamanda düştüyse ağı hiç denemeden geç (boşa gecikme yok).
+    final recentlyDead = _workerDeadAt != null &&
+        DateTime.now().difference(_workerDeadAt!) < _workerDeadTtl;
+    if (!recentlyDead) {
+      final urls = [_kWorkerUrl, _kWorkerUrlFallback];
+      for (final url in urls) {
+        try {
+          final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+          final req = await client.postUrl(Uri.parse(url));
+          req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+          req.write(jsonEncode(payload));
+          final res = await req.close().timeout(const Duration(seconds: 2));
+          if (res.statusCode == HttpStatus.ok) {
+            _workerDeadAt = null;
+            dev.log('RepairBot: Worker rapor alındı: $url');
+            return;
+          }
+          await res.drain();
+          client.close(force: true);
+        } catch (_) {}
+      }
+      _workerDeadAt = DateTime.now();
     }
     // Her ikisi de başarısız olsa bile uygulama akışı devam eder — sessizce.
 
