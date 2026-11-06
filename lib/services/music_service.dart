@@ -209,6 +209,20 @@ class MusicService {
             if (u is String && u.isNotEmpty) return u;
           }
         }
+        final sd = data['streamingData'];
+        if (sd is Map<String, dynamic>) {
+          final fmts = sd['formats'];
+          final auds = sd['audios'];
+          for (final lst in <dynamic>[fmts, auds]) {
+            if (lst is List && lst.isNotEmpty) {
+              final f = lst.first;
+              if (f is Map<String, dynamic>) {
+                final u = f['url'];
+                if (u is String && u.isNotEmpty) return u;
+              }
+            }
+          }
+        }
         final fs = data['formatStreams'];
         if (fs is List && fs.isNotEmpty) {
           final first = fs.first;
