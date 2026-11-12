@@ -153,6 +153,61 @@ class SettingsScreen extends StatelessWidget {
               },
               showDivider: false,
             ),
+            const SizedBox(height: 16),
+            _sectionTitle('Hakkında'),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.info_outline,
+                  color: AppColors.textSecondary),
+              title: const Text('CloudTune',
+                  style: TextStyle(color: AppColors.textPrimary)),
+              subtitle: const Text('Sürüm 2.2.65 · build 93',
+                  style: TextStyle(color: AppColors.textSecondary)),
+              onTap: () => showAboutDialog(
+                context: context,
+                applicationName: 'CloudTune',
+                applicationVersion: '2.2.65 (build 93)',
+                applicationIcon: const Icon(Icons.music_note,
+                    color: AppColors.accent),
+                children: [
+                  const SizedBox(height: 8),
+                  const Text(
+                    'YouTube destekli açık kaynak müzik çalar.\n'
+                    'Android · iOS · Linux · Windows 11\n'
+                    'Gizli Cloudflare proxy + onarım botu ile akış hataları otomatik düzeltilir.',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            _toggleTile(
+              title: 'Tüm ayarı sıfırla',
+              subtitle: 'Tema, kalite ve bağlantı ayarlarını varsayıla döndür',
+              value: false,
+              onChanged: (_) async {
+                await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    backgroundColor: AppColors.card,
+                    title: const Text('Ayarları sıfırla'),
+                    content: const Text(
+                        'Tüm tercihler varsayıla dönecek. İndirilenleriniz silinmez.'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Vazgeç'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Sıfırla'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+              showDivider: false,
+            ),
           ],
         ),
       ),
