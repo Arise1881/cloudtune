@@ -120,87 +120,66 @@ class HomeScreenState extends State<HomeScreen> {
     final textTheme = Theme.of(context).textTheme;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(16, 14, 8, 0),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.accent.withValues(alpha: 0.28),
-                      blurRadius: 14,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  greeting,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.headlineMedium?.copyWith(
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.6,
+                      ),
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.asset(
-                    'assets/icon/cloudtune_icon.png',
-                    width: 36,
-                    height: 36,
-                    filterQuality: FilterQuality.medium,
-                  ),
+                const SizedBox(height: 2),
+                Text(
+                  'Ne dinlemek istersin?',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                AppStrings.appName,
-                style: textTheme.titleLarge?.copyWith(
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.6,
+              ],
+            ),
+          ),
+          Consumer<RoomService>(
+            builder: (context, room, _) {
+              final inRoom = room.roomId != null;
+              return IconButton(
+                tooltip: 'Odalar',
+                icon: Icon(
+                  inRoom ? Icons.groups : Icons.groups_outlined,
+                  color: inRoom ? AppColors.accent : AppColors.textSecondary,
                 ),
-              ),
-              const Spacer(),
-              Consumer<RoomService>(
-                builder: (context, room, _) {
-                  final inRoom = room.roomId != null;
-                  return IconButton(
-                    tooltip: 'Odalar',
-                    icon: Icon(
-                      inRoom ? Icons.groups : Icons.groups_outlined,
-                      color:
-                          inRoom ? AppColors.accent : AppColors.textSecondary,
-                    ),
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const RoomScreen(),
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.person, color: AppColors.textSecondary),
                 onPressed: () {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => const LibraryScreen(),
+                      builder: (_) => const RoomScreen(),
                     ),
                   );
                 },
-              ),
-            ],
+              );
+            },
           ),
-          const SizedBox(height: 12),
-          Text(
-            greeting,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: textTheme.headlineSmall?.copyWith(
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -0.4,
+          IconButton(
+            icon: const Icon(Icons.person_outline,
+                color: AppColors.textSecondary),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const LibraryScreen(),
                 ),
+              );
+            },
           ),
         ],
       ),
@@ -209,99 +188,73 @@ class HomeScreenState extends State<HomeScreen> {
 
   Widget _quickAccess(BuildContext context, LibraryStore library) {
     final recents = library.recents;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Row(
-        children: [
-          _songCard(
-            context,
-            title: 'Dinleme Geçmişi',
-            subtitle: '${recents.length} şarkı',
-            icon: Icons.history,
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) =>
-                      PlaylistScreen(title: 'Dinleme Geçmişi', songs: recents),
-                ),
-              );
-            },
-          ),
-          const SizedBox(width: 12),
-          _songCard(
-            context,
-            title: 'İndirilenler',
-            subtitle: '${library.downloads.length} şarkı',
-            icon: Icons.download,
-            onTap: () {
-              LibraryScreen.openTab(context, 0);
-            },
-          ),
-          const SizedBox(width: 12),
-          _songCard(
-            context,
-            title: 'Sonsuz Karışık',
-            subtitle: 'Tekrarsız, saatlerce',
-            icon: Icons.all_inclusive,
-            onTap: () {
-              context.read<PlayerService>().startInfiniteMix();
-              Navigator.push(context, NowPlayingScreen.route(context));
-            },
-          ),
-        ],
-      ),
-    );
-  }
 
-  Widget _songCard(
-    BuildContext context, {
-    required String title,
-    required String subtitle,
-    required IconData icon,
-    required VoidCallback onTap,
-  }) {
-    return Expanded(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, color: AppColors.accent, size: 28),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    Widget pill(IconData icon, String label, VoidCallback onTap) {
+      return Padding(
+        padding: const EdgeInsets.only(right: 10),
+        child: Material(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: SizedBox(
+                height: 40,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
+                    Icon(icon, size: 18, color: AppColors.accent),
+                    const SizedBox(width: 6),
                     Text(
-                      title,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: AppColors.textSecondary,
-                          ),
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.arrow_forward_ios,
-                  size: 16, color: AppColors.textTertiary),
-            ],
+            ),
           ),
         ),
-      ),
+      );
+    }
+
+    return ListView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      children: [
+        pill(
+          Icons.history,
+          'Geçmiş',
+          () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) =>
+                  PlaylistScreen(title: 'Dinleme Geçmişi', songs: recents),
+            ),
+          ),
+        ),
+        pill(
+          Icons.download_outlined,
+          'İndirilenler',
+          () => LibraryScreen.openTab(context, 0),
+        ),
+        pill(
+          Icons.all_inclusive,
+          'Sonsuz Mix',
+          () {
+            context.read<PlayerService>().startInfiniteMix();
+            Navigator.push(context, NowPlayingScreen.route(context));
+          },
+        ),
+      ],
     );
   }
 }
@@ -400,7 +353,7 @@ class _ForYouSectionState extends State<_ForYouSection> {
               ),
             ),
             SizedBox(
-              height: 200,
+              height: 212,
               child: switch (snapshot.connectionState) {
                 ConnectionState.waiting =>
                   const Center(child: CircularProgressIndicator()),
@@ -574,7 +527,7 @@ class _TrendSectionState extends State<_TrendSection> {
               ),
             ),
             SizedBox(
-              height: 200,
+              height: 212,
               child: switch (snapshot.connectionState) {
                 ConnectionState.waiting =>
                   const Center(child: CircularProgressIndicator()),
@@ -674,14 +627,19 @@ class _TrendCardState extends State<_TrendCard> {
               ],
             ),
             const SizedBox(height: 8),
-            Text(
-              song.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
+            // Expanded: kalan alanı doldurur → kart asla 212px'i aşamaz
+            // (RenderFlex overflow imkansız).
+            Expanded(
+              child: Text(
+                song.title,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  height: 1.25,
+                ),
               ),
             ),
             const SizedBox(height: 2),

@@ -9,7 +9,9 @@ import 'home_screen.dart';
 import 'library_screen.dart';
 import 'search_screen.dart';
 
-/// Ana iskelet: alt navigasyon + mini oynatıcı + çevrimdışı bandı.
+/// Ana iskelet: alt navigasyon barı KALDIRILDI.
+/// Sekme geçişi yatay kaydırmayla yapılır (sol→sağ önceki, sağ→sol sonraki).
+/// Mini oynatıcı ve çevrimdışı bandı korunur.
 class RootScreen extends StatefulWidget {
   const RootScreen({super.key});
 
@@ -31,87 +33,25 @@ class _RootScreenState extends State<RootScreen> {
         children: [
           if (offline) const OfflineBanner(),
           Expanded(
-            child: IndexedStack(
-              index: _tab,
-              children: [
-                HomeScreen(key: _homeKey),
-                const SearchScreen(),
-                const LibraryScreen(),
-              ],
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onHorizontalDragEnd: (d) {
+                final v = d.primaryVelocity ?? 0;
+                if (v < -120 && _tab < 2) setState(() => _tab++);
+                if (v > 120 && _tab > 0) setState(() => _tab--);
+              },
+              child: IndexedStack(
+                index: _tab,
+                children: [
+                  HomeScreen(key: _homeKey),
+                  const SearchScreen(),
+                  const LibraryScreen(),
+                ],
+              ),
             ),
           ),
           const MiniPlayer(),
         ],
-      ),
-      bottomNavigationBar: _BottomNav(
-        current: _tab,
-        onChanged: (i) {
-          if (i == 0 && _tab == 0) {
-            // Home tab re-tapped -> refresh
-            _homeKey.currentState?.refreshNow();
-          } else {
-            setState(() => _tab = i);
-          }
-        },
-      ),
-    );
-  }
-}
-
-class _BottomNav extends StatelessWidget {
-  const _BottomNav({required this.current, required this.onChanged});
-
-  final int current;
-  final ValueChanged<int> onChanged;
-
-  static const _items = [
-    (icon: Icons.home_outlined, activeIcon: Icons.home, label: 'Ana Sayfa'),
-    (icon: Icons.search_outlined, activeIcon: Icons.search, label: 'Ara'),
-    (icon: Icons.library_music_outlined, activeIcon: Icons.library_music, label: 'Kitaplığın'),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.black,
-        border: Border(top: BorderSide(color: Color(0xFF2A2A2A))),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Row(
-          children: List.generate(_items.length, (i) {
-            final item = _items[i];
-            final selected = i == current;
-            return Expanded(
-              child: InkWell(
-                onTap: () => onChanged(i),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        selected ? item.activeIcon : item.icon,
-                        color: selected ? AppColors.textPrimary : AppColors.textSecondary,
-                        size: 24,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        item.label,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: selected ? AppColors.textPrimary : AppColors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }),
-        ),
       ),
     );
   }

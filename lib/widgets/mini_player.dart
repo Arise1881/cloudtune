@@ -44,7 +44,7 @@ class MiniPlayer extends StatelessWidget {
                 child: Row(
                   children: [
                     Padding(
-                      padding: const EdgeInsets.all(7),
+                      padding: const EdgeInsets.symmetric(horizontal: 7),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(5),
                         child: _MiniArt(song: song),

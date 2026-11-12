@@ -22,32 +22,34 @@ import 'screens/root_screen.dart';
 import 'screens/settings_screen.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  // Masaüstü (Windows/Linux/macOS) için media_kit tabanlı ses motoru.
-  // Mobilde native ExoPlayer/AVPlayer korunur.
-  if (!Platform.isAndroid && !Platform.isIOS) {
-    JustAudioMediaKit.ensureInitialized();
-  }
-  try {
-    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)
-        .timeout(const Duration(seconds: 3), onTimeout: () {});
-  } catch (e) {
-    debugPrint('Sistem UI modu uyarısı: $e');
-  }
+  // Zone uyumu: binding ile runApp AYNI zone içinde olmalı (Zone mismatch
+  // hatası yok). Tüm kurulum + runApp tek guarded zone içinde çalışır.
+  return runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    // Masaüstü (Windows/Linux/macOS) için media_kit tabanlı ses motoru.
+    // Mobilde native ExoPlayer/AVPlayer korunur.
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      JustAudioMediaKit.ensureInitialized();
+    }
+    try {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)
+          .timeout(const Duration(seconds: 3), onTimeout: () {});
+    } catch (e) {
+      debugPrint('Sistem UI modu uyarısı: $e');
+    }
 
-  // Release modunda bile hatalar görünürsün ama kullanıcıya teknik detay
-  // gösterilmez — boş ekran yerine sakin, maskeli bir yüzey. Detay debug
-  // logundadır (onarım botu aynı hatadan otomatik döner).
-  ErrorWidget.builder = (details) {
-    return Container(
-      color: const Color(0xFF121212),
-      alignment: Alignment.center,
-      child: const Icon(Icons.music_note, size: 56, color: Colors.white24),
-    );
-  };
+    // Release modunda bile hatalar görünürsün ama kullanıcıya teknik detay
+    // gösterilmez — boş ekran yerine sakin, maskeli bir yüzey. Detay debug
+    // logundadır (onarım botu aynı hatadan otomatik döner).
+    ErrorWidget.builder = (details) {
+      return Container(
+        color: const Color(0xFF121212),
+        alignment: Alignment.center,
+        child: const Icon(Icons.music_note, size: 56, color: Colors.white24),
+      );
+    };
 
-  // İlk kare asla engellenmez: servisler runApp sonrası arka planda kurulur.
-  runZonedGuarded(() {
+    // İlk kare asla engellenmez: servisler runApp sonrası arka planda kurulur.
     runApp(const CloudTuneApp());
     _warmUpServices();
   }, (error, stack) {
