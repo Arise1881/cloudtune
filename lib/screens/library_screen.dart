@@ -12,6 +12,7 @@ import '../services/music_service.dart';
 import '../services/player_service.dart';
 import '../widgets/artwork.dart';
 import 'now_playing_screen.dart';
+import 'root_screen.dart';
 import 'playlist_screen.dart';
 
 /// Kitaplık: İndirilenler / Beğeniler / Çalma Listeleri sekmeleri.
@@ -19,7 +20,13 @@ class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
 
   /// Root içindeki sekmeye geçmek için kullanılır (Ana sayfa hızlı erişimi).
+  /// Root yoksa (zaten push'la açılmışsa) yeni route açar.
   static void openTab(BuildContext context, int tab) {
+    final root = context.findAncestorStateOfType<RootScreenState>();
+    if (root != null) {
+      root.goTab(tab);
+      return;
+    }
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const LibraryScreen()),
     );
@@ -140,9 +147,12 @@ class _LibraryScreenState extends State<LibraryScreen>
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      bottom: false,
-      child: Column(
+    // Scaffold: push'la açılırsa (Root dışı) Material/ListTile doğru çalışsın.
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
@@ -195,6 +205,7 @@ class _LibraryScreenState extends State<LibraryScreen>
             ),
           ),
         ],
+        ),
       ),
     );
   }

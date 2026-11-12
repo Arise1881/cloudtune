@@ -16,12 +16,18 @@ class RootScreen extends StatefulWidget {
   const RootScreen({super.key});
 
   @override
-  State<RootScreen> createState() => _RootScreenState();
+  State<RootScreen> createState() => RootScreenState();
 }
 
-class _RootScreenState extends State<RootScreen> {
+class RootScreenState extends State<RootScreen> {
   int _tab = 0;
   final _homeKey = GlobalKey<HomeScreenState>();
+
+  /// Dışarıdan sekme geçişi (ör. "İndirilenler" kısayolu → Kitaplık).
+  void goTab(int index) {
+    if (index < 0 || index > 2) return;
+    setState(() => _tab = index);
+  }
 
   @override
   Widget build(BuildContext context) {

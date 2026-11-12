@@ -16,6 +16,7 @@ import '../services/room_service.dart';
 import '../widgets/artwork.dart';
 import '../widgets/song_tile.dart';
 import 'library_screen.dart';
+import 'root_screen.dart';
 import 'now_playing_screen.dart';
 import 'playlist_screen.dart';
 import 'room_screen.dart';
@@ -172,13 +173,19 @@ class HomeScreenState extends State<HomeScreen> {
           IconButton(
             icon: const Icon(Icons.person_outline,
                 color: AppColors.textSecondary),
+            // Kitaplık: push yerine Root sekmesi 2'ye geç (alt bar yok).
             onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const LibraryScreen(),
-                ),
-              );
+              final root = context.findAncestorStateOfType<RootScreenState>();
+              if (root != null) {
+                root.goTab(2);
+              } else {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const LibraryScreen(),
+                  ),
+                );
+              }
             },
           ),
         ],
