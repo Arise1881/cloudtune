@@ -478,12 +478,18 @@ throw StreamUnavailableException(
     return AudioSource.uri(Uri.parse(streamUrl!), tag: mediaItem);
   }
 
+  /// Sessiz ses ayarı: yük-kesilme yarışında (Loading interrupted) hata
+  /// fırlatmaz; autoplay akışını bozmaz.
+  void _sv(double v) {
+    unawaited(_player.setVolume(v).catchError((_) {}));
+  }
+
   void _applyEqualizer() {
     try {
       final v = EqualizerService.instance.volumeMultiplier();
-      _player.setVolume(v);
+      _sv(v);
     } catch (_) {
-      _player.setVolume(1.0);
+      _sv(1.0);
     }
   }
 
@@ -519,7 +525,7 @@ throw StreamUnavailableException(
     // Crossfade'i iptal et (sonraki şarkıya geçtik)
     _crossfadeTimer?.cancel();
     _crossfading = false;
-    _player.setVolume(1.0);
+    _sv(1.0);
 
     // Radio modunda ise radio kuyruğundan sonraki şarkı
     if (_isRadioMode && _radioQueue.isNotEmpty && _radioIndex >= 0) {
@@ -558,7 +564,7 @@ throw StreamUnavailableException(
     if (effectiveQueue.isEmpty) return;
     _crossfadeTimer?.cancel();
     _crossfading = false;
-    _player.setVolume(1.0);
+    _sv(1.0);
 
     if (_player.position > const Duration(seconds: 3)) {
       await _player.seek(Duration.zero);
@@ -581,7 +587,7 @@ throw StreamUnavailableException(
     if (i < 0 || i >= effectiveQueue.length) return;
     _crossfadeTimer?.cancel();
     _crossfading = false;
-    _player.setVolume(1.0);
+    _sv(1.0);
 
     _index = i;
     library.pushRecent(current!);
@@ -813,7 +819,7 @@ throw StreamUnavailableException(
     Timer.periodic(Duration(milliseconds: stepDuration), (timer) {
       step++;
       final newVolume = (1.0 - step * volumeStep).clamp(0.0, 1.0);
-      _player.setVolume(newVolume);
+      _sv(newVolume);
 
       if (step >= steps || !_player.playing) {
         timer.cancel();
@@ -891,7 +897,7 @@ throw StreamUnavailableException(
       _isRadioMode = false;
       _crossfadeTimer?.cancel();
       _crossfading = false;
-      _player.setVolume(1.0);
+      _sv(1.0);
       try {
         await _buildAndPlay(initialSource: stream);
       } catch (_) {}
