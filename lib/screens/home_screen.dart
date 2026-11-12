@@ -226,35 +226,38 @@ class HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return ListView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-      children: [
-        pill(
-          Icons.history,
-          'Geçmiş',
-          () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) =>
-                  PlaylistScreen(title: 'Dinleme Geçmişi', songs: recents),
+    return SizedBox(
+      height: 40,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+        children: [
+          pill(
+            Icons.history,
+            'Geçmiş',
+            () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    PlaylistScreen(title: 'Dinleme Geçmişi', songs: recents),
+              ),
             ),
           ),
-        ),
-        pill(
-          Icons.download_outlined,
-          'İndirilenler',
-          () => LibraryScreen.openTab(context, 0),
-        ),
-        pill(
-          Icons.all_inclusive,
-          'Sonsuz Mix',
-          () {
-            context.read<PlayerService>().startInfiniteMix();
-            Navigator.push(context, NowPlayingScreen.route(context));
-          },
-        ),
-      ],
+          pill(
+            Icons.download_outlined,
+            'İndirilenler',
+            () => LibraryScreen.openTab(context, 0),
+          ),
+          pill(
+            Icons.all_inclusive,
+            'Sonsuz Mix',
+            () {
+              context.read<PlayerService>().startInfiniteMix();
+              Navigator.push(context, NowPlayingScreen.route(context));
+            },
+          ),
+        ],
+      ),
     );
   }
 }

@@ -21,21 +21,17 @@ import 'services/theme_service.dart';
 import 'screens/root_screen.dart';
 import 'screens/settings_screen.dart';
 
-Future<void> main() async {
+void main() {
   // Zone uyumu: binding ile runApp AYNI zone içinde olmalı (Zone mismatch
-  // hatası yok). Tüm kurulum + runApp tek guarded zone içinde çalışır.
-  return runZonedGuarded(() async {
+  // hatası yok). Closure SENKRON olmalı — runApp öncesi await yapılmaz,
+  // yoksa ilk kare deferral yarışı assert fırtınası yaratır (debug:
+  // debugFrameWasSentToEngine döngüsü + çökme).
+  runZonedGuarded(() {
     WidgetsFlutterBinding.ensureInitialized();
     // Masaüstü (Windows/Linux/macOS) için media_kit tabanlı ses motoru.
     // Mobilde native ExoPlayer/AVPlayer korunur.
     if (!Platform.isAndroid && !Platform.isIOS) {
       JustAudioMediaKit.ensureInitialized();
-    }
-    try {
-      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)
-          .timeout(const Duration(seconds: 3), onTimeout: () {});
-    } catch (e) {
-      debugPrint('Sistem UI modu uyarısı: $e');
     }
 
     // Release modunda bile hatalar görünürsün ama kullanıcıya teknik detay
@@ -60,6 +56,14 @@ Future<void> main() async {
 /// Uygulama açıldıktan SONRA servisleri kurar.
 /// Her adım zaman aşımlı ve hata korumalıdır; hiçbiri çalışmayı engelleyemez.
 void _warmUpServices() {
+  // Kenardan kenara sistem UI (mobil): runApp SONRASI engellemesiz uygulanır.
+  if (Platform.isAndroid || Platform.isIOS) {
+    _safe(
+      'Sistem UI',
+      () => SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)
+          .timeout(const Duration(seconds: 3), onTimeout: () {}),
+    );
+  }
   // Arka plan bildirimi yalnız mobilde (just_audio_background desktop
   // backend'i yok; masaüstünde media_kit kullanılıyor).
   if (Platform.isAndroid || Platform.isIOS) {
