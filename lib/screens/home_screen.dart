@@ -11,6 +11,7 @@ import '../services/music_service.dart';
 import '../services/player_service.dart';
 import '../services/repair_bot_service.dart';
 import '../widgets/artwork.dart';
+import '../widgets/update_banner.dart';
 import 'library_screen.dart';
 import 'now_playing_screen.dart';
 import 'playlist_screen.dart';
@@ -67,6 +68,8 @@ class HomeScreenState extends State<HomeScreen> {
       bottom: false,
       child: CustomScrollView(
         slivers: [
+          SliverToBoxAdapter(child: UpdateBanner()),
+
           // Sabit üst bar: selamlama + ikonlar (kaydırılmaz).
           SliverPersistentHeader(
             pinned: true,
