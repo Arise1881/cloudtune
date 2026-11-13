@@ -10,10 +10,10 @@ import 'package:path_provider/path_provider.dart';
 
 /// Bu uygulamanın (CloudTune) kendi dağıtım manifest'i.
 /// Musify ile hiçbir bağlantısı yoktur; yalnızca kendi repo'sundan beslenir.
-// Manifest GitHub Pages üzerinden sunulur (raw.githubusercontent CDN'i birkaç
-// dakika eski içerik dönebildiği için Pages daha güvenilirdir).
+// Manifest GitHub raw content üzerinden beslenir (dist repo'nun main branch'i).
+// GitHub Releases APK'ları: https://github.com/Arise1881/cloudtune-dist/releases
 const String kUpdateManifestUrl =
-    'https://arise1881.github.io/cloudtune-dist/update.json';
+    'https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/update.json';
 const String kSourceUrl =
     'altstore://source?url=https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/apps.json';
 
