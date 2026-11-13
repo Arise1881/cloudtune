@@ -42,7 +42,7 @@ class SettingsScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _sectionTitle('Görünüm'),
+            _sectionTitle('Görünüm', isDark),
             _toggleTile(
               title: 'Karanlık Mod',
               subtitle: 'Açık/koyu tema arasında geçiş yap',
@@ -51,9 +51,10 @@ class SettingsScreen extends StatelessWidget {
                 HapticService.instance.light();
                 themeService.toggleMode();
               },
+              isDark: isDark,
             ),
             const SizedBox(height: 8),
-            _sectionTitle('Vurgu Rengi'),
+            _sectionTitle('Vurgu Rengi', isDark),
             const SizedBox(height: 4),
             _accentSelector(themeService),
             const SizedBox(height: 4),
@@ -65,10 +66,11 @@ class SettingsScreen extends StatelessWidget {
                 value: themeService.emojiEnabled,
                 onChanged: (v) { HapticService.instance.light(); themeService.setEmojiEnabled(v); },
                 showDivider: false,
+                isDark: isDark,
               ),
             ),
             const SizedBox(height: 8),
-            _sectionTitle('Çalma'),
+            _sectionTitle('Çalma', isDark),
             _dropdownTile(
               title: 'Ses Kalitesi',
               subtitle: 'YouTube Music benzeri dinamik kalite',
@@ -76,6 +78,7 @@ class SettingsScreen extends StatelessWidget {
               items: QualityItems.items,
               onChanged: (label) =>
                   player.setQuality(QualityItems.qualityFor(label)),
+              isDark: isDark,
             ),
             const SizedBox(height: 8),
             _toggleTile(
@@ -84,9 +87,10 @@ class SettingsScreen extends StatelessWidget {
               value: player.autoplay,
               onChanged: (_) { HapticService.instance.light(); player.toggleAutoplay(); },
               showDivider: false,
+              isDark: isDark,
             ),
             const SizedBox(height: 16),
-            _sectionTitle('Oynatma Hızı'),
+            _sectionTitle('Oynatma Hızı', isDark),
             const SizedBox(height: 4),
             _speedSelector(player),
             const SizedBox(height: 16),
@@ -95,14 +99,16 @@ class SettingsScreen extends StatelessWidget {
               subtitle: 'Şarkı geçişlerinde yumuşak ses geçişi',
               value: player.crossfadeEnabled,
               onChanged: (v) { HapticService.instance.light(); player.setCrossfadeEnabled(v); },
+              isDark: isDark,
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Row(
                 children: [
                   Text('Süre: ${player.crossfadeSeconds} sn',
-                      style: const TextStyle(
-                          color: AppColors.textSecondary, fontSize: 13)),
+                      style: TextStyle(
+                          color: isDark ? AppColors.textSecondary : const Color(0xFF6B6B6B),
+                          fontSize: 13)),
                   Expanded(
                     child: Slider(
                       min: 2,
@@ -119,10 +125,10 @@ class SettingsScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            _sectionTitle('Depolama'),
+            _sectionTitle('Depolama', isDark),
             _StorageTile(),
             const SizedBox(height: 16),
-            _sectionTitle('Ekolayzer'),
+            _sectionTitle('Ekolayzer', isDark),
             _dropdownTile(
               title: 'Hazır Ayar',
               subtitle: 'Ses karakterini değiştir',
@@ -136,12 +142,13 @@ class SettingsScreen extends StatelessWidget {
                 Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const EqualizerScreen()));
               },
+              isDark: isDark,
             ),
             const SizedBox(height: 16),
-            _sectionTitle('Bağlantı'),
+            _sectionTitle('Bağlantı', isDark),
             const _StreamProxyField(),
             const SizedBox(height: 16),
-            _sectionTitle('Çevrimdışı Mod'),
+            _sectionTitle('Çevrimdışı Mod', isDark),
             _toggleTile(
               title: 'Çevrimdışı Mod',
               subtitle: 'Sadece indirilen şarkıları çal',
@@ -152,30 +159,34 @@ class SettingsScreen extends StatelessWidget {
                 connectivity.retry();
               },
               showDivider: false,
+              isDark: isDark,
             ),
             const SizedBox(height: 16),
-            _sectionTitle('Hakkında'),
+            _sectionTitle('Hakkında', isDark),
             ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.info_outline,
-                  color: AppColors.textSecondary),
-              title: const Text('CloudTune',
-                  style: TextStyle(color: AppColors.textPrimary)),
-              subtitle: const Text('Sürüm 2.2.65 · build 93',
-                  style: TextStyle(color: AppColors.textSecondary)),
+              leading: Icon(Icons.info_outline,
+                  color: isDark ? AppColors.textSecondary : const Color(0xFF6B6B6B)),
+              title: Text('CloudTune',
+                  style: TextStyle(
+                      color: isDark ? AppColors.textPrimary : const Color(0xFF111111))),
+              subtitle: Text('Sürüm 2.2.69 · build 96',
+                  style: TextStyle(
+                      color: isDark ? AppColors.textSecondary : const Color(0xFF6B6B6B))),
               onTap: () => showAboutDialog(
                 context: context,
                 applicationName: 'CloudTune',
-                applicationVersion: '2.2.65 (build 93)',
+                applicationVersion: '2.2.69 (build 96)',
                 applicationIcon: const Icon(Icons.music_note,
                     color: AppColors.accent),
                 children: [
                   const SizedBox(height: 8),
-                  const Text(
+                  Text(
                     'YouTube destekli açık kaynak müzik çalar.\n'
                     'Android · iOS · Linux · Windows 11\n'
                     'Gizli Cloudflare proxy + onarım botu ile akış hataları otomatik düzeltilir.',
-                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                    style: TextStyle(
+                      color: isDark ? AppColors.textSecondary : Color(0xFF6B6B6B), fontSize: 12),
                   ),
                 ],
               ),
@@ -207,6 +218,7 @@ class SettingsScreen extends StatelessWidget {
                 );
               },
               showDivider: false,
+              isDark: isDark,
             ),
           ],
         ),
@@ -236,13 +248,13 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _sectionTitle(String title) {
+  Widget _sectionTitle(String title, bool isDark) {
     return Padding(
       padding: const EdgeInsets.only(top: 12, bottom: 4),
       child: Text(
         title,
-        style: const TextStyle(
-          color: AppColors.textPrimary,
+        style: TextStyle(
+          color: isDark ? AppColors.textPrimary : const Color(0xFF111111),
           fontSize: 16,
           fontWeight: FontWeight.bold,
         ),
@@ -292,6 +304,7 @@ class SettingsScreen extends StatelessWidget {
     required String subtitle,
     required bool value,
     required ValueChanged<bool> onChanged,
+    bool isDark = true,
     bool showDivider = true,
   }) {
     return Column(
@@ -300,18 +313,25 @@ class SettingsScreen extends StatelessWidget {
           contentPadding: EdgeInsets.zero,
           title: Text(
             title,
-            style: const TextStyle(color: AppColors.textPrimary),
+            style: TextStyle(
+              color: isDark ? AppColors.textPrimary : const Color(0xFF111111),
+            ),
           ),
           subtitle: Text(
             subtitle,
-            style: const TextStyle(color: AppColors.textSecondary),
+            style: TextStyle(
+              color: isDark ? AppColors.textSecondary : const Color(0xFF6B6B6B),
+            ),
           ),
           value: value,
           onChanged: onChanged,
           activeThumbColor: AppColors.accent,
         ),
         if (showDivider)
-          const Divider(height: 1, color: Color(0x1FFFFFFF)),
+          Divider(
+            height: 1,
+            color: isDark ? const Color(0x1FFFFFFF) : const Color(0x14000000),
+          ),
       ],
     );
   }
@@ -322,23 +342,31 @@ class SettingsScreen extends StatelessWidget {
     required String value,
     required List<DropdownItem> items,
     required ValueChanged<String> onChanged,
+    bool isDark = true,
   }) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       title: Text(
         title,
-        style: const TextStyle(color: AppColors.textPrimary),
+        style: TextStyle(
+          color: isDark ? AppColors.textPrimary : const Color(0xFF111111),
+        ),
       ),
       subtitle: Text(
         subtitle,
-        style: const TextStyle(color: AppColors.textSecondary),
+        style: TextStyle(
+          color: isDark ? AppColors.textSecondary : const Color(0xFF6B6B6B),
+        ),
       ),
       trailing: DropdownButton<String>(
         value: value,
-        icon: const Icon(Icons.arrow_drop_down, color: AppColors.textSecondary),
+        icon: Icon(Icons.arrow_drop_down, color: isDark ? AppColors.textSecondary : const Color(0xFF6B6B6B)),
         underline: const SizedBox.shrink(),
         borderRadius: BorderRadius.circular(12),
-        style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+        style: TextStyle(
+          color: isDark ? AppColors.textPrimary : const Color(0xFF111111),
+          fontSize: 14,
+        ),
         items: items
             .map((e) => DropdownMenuItem(value: e.label, child: Text(e.label)))
             .toList(),
@@ -398,14 +426,17 @@ class _StorageTileState extends State<_StorageTile> {
   @override
   Widget build(BuildContext context) {
     final bytes = _bytes;
+    final isDark = ThemeService.instance.isDark;
     final label = bytes == null
         ? 'Hesaplanıyor…'
         : 'İndirilenler: ${DownloadManager.instance.formatBytes(bytes)}';
     return ListTile(
       contentPadding: EdgeInsets.zero,
-      leading: const Icon(Icons.sd_storage_outlined, color: AppColors.textSecondary),
+      leading: Icon(Icons.sd_storage_outlined,
+          color: isDark ? AppColors.textSecondary : const Color(0xFF6B6B6B)),
       title: Text(label,
-          style: const TextStyle(color: AppColors.textPrimary, fontSize: 14)),
+          style: TextStyle(
+              color: isDark ? AppColors.textPrimary : const Color(0xFF111111), fontSize: 14)),
       trailing: TextButton(
         onPressed: _clearing ? null : _clearAll,
         child: _clearing
@@ -479,6 +510,7 @@ class _StreamProxyFieldState extends State<_StreamProxyField> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = ThemeService.instance.isDark;
     return TextField(
       controller: _controller,
       keyboardType: TextInputType.url,
@@ -486,7 +518,8 @@ class _StreamProxyFieldState extends State<_StreamProxyField> {
       enableSuggestions: false,
       decoration: InputDecoration(
         hintText: 'https://…workers.dev',
-        prefixIcon: const Icon(Icons.link, color: AppColors.textSecondary),
+        prefixIcon: Icon(Icons.link,
+            color: isDark ? AppColors.textSecondary : const Color(0xFF6B6B6B)),
         suffixIcon: _saving
             ? const SizedBox(
                 width: 18,
@@ -498,12 +531,12 @@ class _StreamProxyFieldState extends State<_StreamProxyField> {
               )
             : IconButton(
                 tooltip: 'Bağlantıyı kaydet',
-                icon: const Icon(Icons.save_outlined,
-                    color: AppColors.textPrimary),
+                icon: Icon(Icons.save_outlined,
+                    color: isDark ? AppColors.textPrimary : const Color(0xFF111111)),
                 onPressed: _save,
               ),
         filled: true,
-        fillColor: AppColors.card,
+        fillColor: isDark ? AppColors.card : const Color(0xFFF5F5F5),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         border: OutlineInputBorder(
@@ -512,14 +545,16 @@ class _StreamProxyFieldState extends State<_StreamProxyField> {
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.card),
+          borderSide: BorderSide(
+              color: isDark ? AppColors.card : const Color(0xFF9E9E9E), width: 1),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: AppColors.accent, width: 1.5),
         ),
       ),
-      style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+      style: TextStyle(
+          color: isDark ? AppColors.textPrimary : const Color(0xFF111111), fontSize: 14),
       onSubmitted: (_) => _save(),
     );
   }
