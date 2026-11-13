@@ -74,7 +74,7 @@ class PlayerService extends ChangeNotifier {
   Timer? _crossfadeTimer;
   bool _crossfading = false;
   bool _crossfadeEnabled = true;
-  int _crossfadeSeconds = 4;
+  int _crossfadeSeconds = 2;
   Duration get _crossfadeDuration => Duration(seconds: _crossfadeSeconds);
 
   // ─── Smart Automix ───
@@ -854,7 +854,7 @@ throw StreamUnavailableException(
     _quality = AudioQuality.values[idx.clamp(0, AudioQuality.values.length - 1)];
     _speed = (_prefs?.getDouble('playback_speed') ?? 1.0).clamp(0.5, 2.0);
     _crossfadeEnabled = _prefs?.getBool('crossfade_enabled') ?? true;
-    _crossfadeSeconds = (_prefs?.getInt('crossfade_seconds') ?? 4).clamp(2, 10);
+    _crossfadeSeconds = (_prefs?.getInt('crossfade_seconds') ?? 2).clamp(2, 10);
     _smartAutomix = _prefs?.getBool('smart_automix') ?? false;
     _transitionType = TransitionType.values[_prefs?.getInt('transition_type') ?? 0];
   }
