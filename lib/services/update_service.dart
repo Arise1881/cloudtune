@@ -252,8 +252,9 @@ class UpdateService extends ChangeNotifier {
 
   /// Basit semver karşılaştırması: a>b -> 1, a==b -> 0, a<b -> -1
   int _cmpVersion(String a, String b) {
-    final pa = a.split('.').map(int.tryParse).map((e) => e ?? 0).toList();
-    final pb = b.split('.').map(int.tryParse).map((e) => e ?? 0).toList();
+    // Build suffix'i (+103) semver bölümünde olmamalı: "2.2.76+103" -> [2,2,76].
+    final pa = a.split('+').first.split('.').map(int.tryParse).map((e) => e ?? 0).toList();
+    final pb = b.split('+').first.split('.').map(int.tryParse).map((e) => e ?? 0).toList();
     final len = pa.length > pb.length ? pa.length : pb.length;
     for (var i = 0; i < len; i++) {
       final x = i < pa.length ? pa[i] : 0;
