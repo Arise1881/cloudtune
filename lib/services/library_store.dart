@@ -23,6 +23,17 @@ class LibraryStore extends ChangeNotifier {
   File? _file;
 
   List<Song> get favorites => List.unmodifiable(_favorites);
+  /// Spotify "Beğenilen Şarkılar" alias'ı.
+  List<Song> get likedSongs => favorites;
+  /// Tüm kaynaklardan benzersiz sanatçı listesi.
+  List<String> get artists {
+    final set = <String>{};
+    for (final s in [..._recents, ..._downloads.values, ..._favorites]) {
+      final a = s.artist.trim();
+      if (a.isNotEmpty) set.add(a);
+    }
+    return set.toList()..sort();
+  }
   List<Song> get downloads => _downloads.values.toList()
     ..sort((a, b) => b.downloadedAtMs.compareTo(a.downloadedAtMs));
   Map<String, List<Song>> get playlists =>
