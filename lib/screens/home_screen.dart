@@ -32,7 +32,7 @@ class HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     RepairBotService.instance.initialize();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (mounted) setState(() => _refreshCounter++);
     });
   }
