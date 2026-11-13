@@ -66,7 +66,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                     _visualizer(player),
                     _titleRow(player, song),
                     if (player.lastError != null && !player.isLoading)
-                      _errorBanner(player.lastError!),
+                      _errorBanner(player, player.lastError!),
                     _actionRow(context, player, song),
                     _progressBar(player, song),
                     _controls(player),
@@ -149,19 +149,21 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
     return Center(
       child: AspectRatio(
         aspectRatio: 1,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 20),
-          child: Hero(
-            tag: 'art-${song.id}',
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                boxShadow: const [
-                  BoxShadow(color: Colors.black54, blurRadius: 30),
-                ],
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: const [
+              BoxShadow(color: Colors.black54, blurRadius: 30),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 20),
+              child: Hero(
+                tag: 'art-${song.id}',
+                child: image,
               ),
-              child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10), child: image),
             ),
           ),
         ),
@@ -213,8 +215,9 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
   }
 
   /// Akış/çalma hatası şeridi: çalınamayan şarkıda kullanıcı sorunu görür.
-  Widget _errorBanner(String message) {
-    final msg = message.length > 160 ? '${message.substring(0, 157)}…' : message;
+  /// Ham teknik hata yerine kullanıcı dostu metin + "Tekrar Dene" içerir.
+  Widget _errorBanner(PlayerService player, String message) {
+    final friendly = _friendlyStreamError(message);
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 2),
@@ -230,13 +233,30 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              msg,
+              friendly,
               style: const TextStyle(color: Colors.white, fontSize: 12),
             ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh,
+                color: AppColors.accentBright, size: 18),
+            onPressed: () => player.loadAndPlay(),
+            tooltip: 'Tekrar dene',
           ),
         ],
       ),
     );
+  }
+
+  String _friendlyStreamError(String message) {
+    final m = message.toLowerCase();
+    if (m.contains('source error') ||
+        m.contains('googlevideo') ||
+        m.contains('stream')) {
+      return 'Akış yüklenemedi. Bağlantı hatası veya sunucu çalışmıyor. '
+          'Tekrar dene.';
+    }
+    return 'Şu an bu şarkı oynatılamıyor. Lütfen daha sonra tekrar deneyin.';
   }
 
   Widget _titleRow(PlayerService player, Song song) {

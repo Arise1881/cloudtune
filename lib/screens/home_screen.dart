@@ -275,7 +275,7 @@ class _MadeForYouSection extends StatelessWidget {
             ),
           ),
           SizedBox(
-            height: 210,
+            height: 230,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
