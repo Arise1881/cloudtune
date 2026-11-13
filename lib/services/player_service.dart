@@ -154,6 +154,10 @@ class PlayerService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get lastError => _lastError;
 
+  /// Kullanıcı manuel olarak bir şarkı seçtiyse true; akış hatasında otomatik
+  /// atlama yapılmaz, anlaşılır hata gösterilir.
+  bool _userTriggered = false;
+
   /// Ardışık akış hatası sayacı. Akış hiç çözülemiyorsa (ör. ağda YouTube
   /// engeli ve proxy yok) autoplay sonsuza dek şarkı atlamasın; N hatadan
   /// sonra durup anlaşılır hata gösterilir.
@@ -202,6 +206,7 @@ class PlayerService extends ChangeNotifier {
         ? 0
         : startIndex.clamp(0, _queue.length - 1);
     _consecutiveStreamFailures = 0;
+    _userTriggered = true; // Kullanıcı manuel tıkladı → hatada otomatik atlama yok
     library.pushRecent(current!);
     _buildAndPlay(initialSource: initialSource).catchError((_) {});
     notifyListeners();
@@ -259,6 +264,7 @@ class PlayerService extends ChangeNotifier {
           _applyEqualizer();
           await _player.play();
           _consecutiveStreamFailures = 0;
+          _userTriggered = false; // Başarılı (indirilmiş) çözüm — otomatik devam normal
           _saveSession();
           break;
         }
@@ -356,7 +362,7 @@ class PlayerService extends ChangeNotifier {
           _consecutiveStreamFailures++;
           final giveUp =
               _consecutiveStreamFailures >= _maxConsecutiveStreamFailures;
-          if (_autoplay && !giveUp) {
+          if (_autoplay && !_userTriggered && !giveUp) {
             debugPrint('Stream failed, auto-skipping to next song (autoplay enabled)');
             unawaited(next(userTriggered: false));
           } else if (giveUp) {
@@ -375,6 +381,7 @@ class PlayerService extends ChangeNotifier {
         _saveSession();
         // Ön yükleme: sıradaki şarkının stream URL'ini arka planda çöz
         _prefetchNext();
+        _userTriggered = false; // Manuel tetikleme bitti, sonraki otomatik geçişler normal atlar
         break;
       } catch (e) {
         // Çalınamayan şarkı SIRADAKİNE ATLANMAZ: kullanıcı hangi şarkıyı
@@ -391,7 +398,7 @@ class PlayerService extends ChangeNotifier {
         _consecutiveStreamFailures++;
         final giveUp =
             _consecutiveStreamFailures >= _maxConsecutiveStreamFailures;
-        if (_autoplay && !giveUp) {
+        if (_autoplay && !_userTriggered && !giveUp) {
           debugPrint('Playback error, auto-skipping to next song (autoplay enabled)');
           unawaited(next(userTriggered: false));
         } else {
@@ -494,6 +501,7 @@ throw StreamUnavailableException(
   }
 
   Future<void> loadAndPlay() async {
+    _userTriggered = true; // Kullanıcı "çal" dedi → hataysa otomatik atlama yok
     await _buildAndPlay();
   }
 
@@ -502,6 +510,7 @@ throw StreamUnavailableException(
       await _player.pause();
     } else {
       if (_player.processingState == ProcessingState.idle && current != null) {
+        _userTriggered = true; // Kullanıcı play'a bastı → otomatik atlama yok
         try {
           await _buildAndPlay();
         } catch (_) {}
@@ -514,7 +523,10 @@ throw StreamUnavailableException(
 
   /// Sonraki şarkıya geç. Liste biterse ve autoplay açıksa rasgele şarkı getir.
   Future<void> next({bool userTriggered = true}) async {
-    if (userTriggered) _consecutiveStreamFailures = 0;
+    if (userTriggered) {
+      _consecutiveStreamFailures = 0;
+      _userTriggered = true; // Kullanıcı "sonraki" dedi → hataysa otomatik atlama yok
+    }
     if (effectiveQueue.isEmpty) return;
     if (_repeat == RepeatMode.one && !userTriggered) {
       await _player.seek(Duration.zero);
@@ -565,6 +577,7 @@ throw StreamUnavailableException(
     _crossfadeTimer?.cancel();
     _crossfading = false;
     _sv(1.0);
+    _userTriggered = true; // Kullanıcı "önceki" dedi → hataysa otomatik atlama yok
 
     if (_player.position > const Duration(seconds: 3)) {
       await _player.seek(Duration.zero);
@@ -588,6 +601,7 @@ throw StreamUnavailableException(
     _crossfadeTimer?.cancel();
     _crossfading = false;
     _sv(1.0);
+    _userTriggered = true; // Kullanıcı index seçti → hataysa otomatik atlama yok
 
     _index = i;
     library.pushRecent(current!);
