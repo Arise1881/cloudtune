@@ -181,6 +181,8 @@ class _LibraryScreenState extends State<LibraryScreen>
               ],
             ),
           ),
+          _ListeningSummary(library: context.watch<LibraryStore>()),
+
           TabBar(
             controller: _tabs,
             indicatorColor: AppColors.accentBright,
@@ -214,6 +216,57 @@ class _LibraryScreenState extends State<LibraryScreen>
 // ---------------------------------------------------------------------------
 // Ortak parçalar
 // ---------------------------------------------------------------------------
+
+class _ListeningSummary extends StatelessWidget {
+  const _ListeningSummary({required this.library});
+
+  final LibraryStore library;
+
+  @override
+  Widget build(BuildContext context) {
+    MapEntry<String, int>? topEntry;
+    for (final e in library.artistPlays.entries) {
+      if (e.value > 0 && (topEntry == null || e.value >= topEntry.value)) {
+        topEntry = e;
+      }
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Dinleme Özeti',
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            topEntry == null
+                ? 'Henüz dinlenen şarkı yok.'
+                : 'En çok dinlediğin: ${topEntry.key} (${topEntry.value} kez)',
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Toplam ${library.recents.length} şarkı, ${library.totalPlays} dinlenme.',
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _EmptyState extends StatelessWidget {
   const _EmptyState({required this.icon, required this.text, this.hint});

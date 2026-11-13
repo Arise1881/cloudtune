@@ -183,6 +183,12 @@ class LibraryStore extends ChangeNotifier {
     return best;
   }
 
+  /// Toplam dinlenme sayısı.
+  int get totalPlays => _artistPlays.values.fold<int>(0, (a, b) => a + b);
+
+  /// Sanatçı → dinlenme sayısı haritası.
+  Map<String, int> get artistPlays => Map.unmodifiable(_artistPlays);
+
   Future<int> downloadsSizeBytes() async {
     var total = 0;
     for (final song in _downloads.values) {
