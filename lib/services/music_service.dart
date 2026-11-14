@@ -831,13 +831,16 @@ class MusicService {
         .catchError((_) => const <String>[]);
 
     // Öncelik sırasıyla topla (hepsi zaten paralel çalışıyor).
-    for (final u in await proxyFuture) {
-      add(u);
-    }
+    // ÖNCEKİ SÜRÜM: Cloudflare proxy ilk, sonra Invidious/InnerTube.
+    // → Kullanıcı isteği: Cloudflare YERİNE doğrudan bağlantı (Invidious
+    //   local / InnerTube) öncelikli; Cloudflare yalnızca son çare adayı.
     for (final u in await invFuture) {
       add(u);
     }
     for (final u in await innerFuture) {
+      add(u);
+    }
+    for (final u in await proxyFuture) {
       add(u);
     }
 
