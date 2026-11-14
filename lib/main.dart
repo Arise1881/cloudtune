@@ -6,6 +6,7 @@ import 'package:just_audio_background/just_audio_background.dart';
 
 import 'core/link_handler.dart';
 import 'core/link_resolver.dart';
+import 'core/theme_state.dart';
 import 'ui/home_page.dart';
 
 final GlobalKey<ScaffoldMessengerState> messengerKey =
@@ -63,23 +64,28 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
 
   @override
   Widget build(BuildContext context) {
-    const green = Color(0xFF1DB954);
-    return MaterialApp(
-      title: 'CloudTune',
-      debugShowCheckedModeBanner: false,
-      scaffoldMessengerKey: messengerKey,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF121212),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: green,
-          brightness: Brightness.dark,
-          primary: green,
-          surface: const Color(0xFF181818),
-        ),
-      ),
-      home: const HomePage(),
+    return ListenableBuilder(
+      listenable: ThemeState.accent,
+      builder: (context, _) {
+        final green = ThemeState.accent.value;
+        return MaterialApp(
+          title: 'CloudTune',
+          debugShowCheckedModeBanner: false,
+          scaffoldMessengerKey: messengerKey,
+          theme: ThemeData(
+            useMaterial3: true,
+            brightness: Brightness.dark,
+            scaffoldBackgroundColor: const Color(0xFF121212),
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: green,
+              brightness: Brightness.dark,
+              primary: green,
+              surface: const Color(0xFF181818),
+            ),
+          ),
+          home: const HomePage(),
+        );
+      },
     );
   }
 }

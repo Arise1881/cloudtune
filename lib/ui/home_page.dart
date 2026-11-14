@@ -4,9 +4,11 @@ import 'package:flutter/services.dart';
 
 import '../core/link_handler.dart';
 import '../core/link_resolver.dart';
+import '../core/theme_state.dart';
 import '../core/models.dart';
 import '../core/player_controller.dart';
 import '../core/youtube_service.dart';
+import '../screens/settings_screen.dart';
 import 'mini_player.dart';
 
 const Map<String, String> _sections = {
@@ -134,7 +136,17 @@ class _HomePageState extends State<HomePage> {
                           .headlineSmall
                           ?.copyWith(fontWeight: FontWeight.w800)),
                   const Spacer(),
-                  const Icon(Icons.graphic_eq, color: Color(0xFF1DB954)),
+                  IconButton(
+                    icon: const Icon(Icons.settings),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                    ),
+                  ),
+                  ValueListenableBuilder<Color>(
+                    valueListenable: ThemeState.accent,
+                    builder: (context, color, _) =>
+                        Icon(Icons.graphic_eq, color: color),
+                  ),
                 ],
               ),
             ),
