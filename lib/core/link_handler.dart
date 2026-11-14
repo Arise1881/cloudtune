@@ -9,7 +9,15 @@ import 'youtube_service.dart';
 class LinkHandler {
   LinkHandler._();
 
+  /// Desteklenen bağlantılar (deep link) uygulama içinde açılsın
+  /// ya da sistem default handler'ına geçsin. Android'de kullanici
+  /// bu degistirmis olabilir.
+  static bool deepLinkEnabled = true;
+
+  static bool get enabled => deepLinkEnabled;
+
   static Future<String?> open(String raw) async {
+    if (!deepLinkEnabled) return null;
     final videoId = YoutubeLinkResolver.videoId(raw);
     final playlistId = YoutubeLinkResolver.playlistId(raw);
     final yt = YoutubeService.instance;

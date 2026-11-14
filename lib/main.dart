@@ -47,6 +47,7 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
   }
 
   Future<void> _openLink(String link) async {
+    if (!LinkHandler.enabled) return;
     if (!YoutubeLinkResolver.isYoutubeLink(link)) return;
     final error = await LinkHandler.open(link);
     if (error != null) {

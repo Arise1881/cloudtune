@@ -15,7 +15,7 @@ export ANDROID_SDK_ROOT=/home/msi/android-sdk
 PROJECT="/home/msi/Belgeler/Default Project/sonora"
 DIST="/tmp/opencode/cloudtune-dist"
 STAGING="/tmp/opencode/cloudtune-release"
-GH_TOKEN="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"
+GH_TOKEN="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"
 RELEASE_TAG="cloudtune-latest"
 
 cd "$PROJECT"
