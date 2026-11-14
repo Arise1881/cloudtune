@@ -108,6 +108,9 @@ class PlayerController extends ChangeNotifier {
     }
   }
 
+  /// Onarim botu / harici tetikleyiciler icin: mevcut indeksden yeniden dene.
+  Future<void> retry() => _playAt(_index, retry: true);
+
   Future<void> toggle() async {
     if (_player.playing) {
       await _player.pause();

@@ -7,6 +7,7 @@ import '../core/link_resolver.dart';
 import '../core/theme_state.dart';
 import '../core/models.dart';
 import '../core/player_controller.dart';
+import '../core/repair_bot.dart';
 import '../core/youtube_service.dart';
 import '../screens/settings_screen.dart';
 import 'mini_player.dart';
@@ -41,6 +42,7 @@ class _HomePageState extends State<HomePage> {
       for (final e in _sections.entries) e.key: _load(e.value),
     };
     PlayerController.instance.addListener(_onPlayerChanged);
+    RepairBot.start();
   }
 
   void _onPlayerChanged() {
@@ -65,6 +67,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     PlayerController.instance.removeListener(_onPlayerChanged);
+    RepairBot.stop();
     _input.dispose();
     super.dispose();
   }
