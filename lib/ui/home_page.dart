@@ -30,6 +30,7 @@ class _HomePageState extends State<HomePage> {
 
   List<Track>? _results;
   bool _busy = false;
+  Track? _lastTrack;
 
   @override
   void initState() {
@@ -37,6 +38,23 @@ class _HomePageState extends State<HomePage> {
     _futures = {
       for (final e in _sections.entries) e.key: _load(e.value),
     };
+    PlayerController.instance.addListener(_onPlayerChanged);
+  }
+
+  void _onPlayerChanged() {
+    final t = PlayerController.instance.current;
+    if (t?.id != _lastTrack?.id) {
+      _lastTrack = t;
+      if (t != null) _reloadSections();
+    }
+  }
+
+  void _reloadSections() {
+    setState(() {
+      _futures = {
+        for (final e in _sections.entries) e.key: _load(e.value),
+      };
+    });
   }
 
   Future<List<Track>> _load(String query) =>
@@ -44,6 +62,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    PlayerController.instance.removeListener(_onPlayerChanged);
     _input.dispose();
     super.dispose();
   }
