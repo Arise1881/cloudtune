@@ -18,8 +18,12 @@ class YoutubeService {
       );
 
   Future<List<Track>> search(String query, {int limit = 24}) async {
-    final results = await _yt.search.search(query);
-    return results.take(limit).map(_fromVideo).toList();
+    try {
+      final results = await _yt.search.search(query);
+      return results.take(limit).map(_fromVideo).toList();
+    } catch (_) {
+      return const [];
+    }
   }
 
   Future<Track> trackById(String id) async {
@@ -29,10 +33,12 @@ class YoutubeService {
 
   Future<List<Track>> playlist(String id, {int limit = 50}) async {
     final out = <Track>[];
-    await for (final video in _yt.playlists.getVideos(id)) {
-      out.add(_fromVideo(video));
-      if (out.length >= limit) break;
-    }
+    try {
+      await for (final video in _yt.playlists.getVideos(id)) {
+        out.add(_fromVideo(video));
+        if (out.length >= limit) break;
+      }
+    } catch (_) {}
     return out;
   }
 
