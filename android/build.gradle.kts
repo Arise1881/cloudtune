@@ -1,9 +1,4 @@
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
+allprojects {}
 
 val newBuildDir: Directory =
     rootProject.layout.buildDirectory
