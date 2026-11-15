@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../core/link_handler.dart';
 import '../core/link_resolver.dart';
 import '../core/theme_state.dart';
+import '../core/update_service.dart';
 import '../core/models.dart';
 import '../core/player_controller.dart';
 import '../core/repair_bot.dart';
@@ -153,6 +154,7 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
             ),
+            const UpdateBanner(),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: TextField(

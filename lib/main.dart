@@ -7,6 +7,7 @@ import 'package:just_audio_background/just_audio_background.dart';
 import 'core/link_handler.dart';
 import 'core/link_resolver.dart';
 import 'core/theme_state.dart';
+import 'core/update_service.dart';
 import 'ui/home_page.dart';
 
 final GlobalKey<ScaffoldMessengerState> messengerKey =
@@ -19,6 +20,7 @@ Future<void> main() async {
     androidNotificationChannelName: 'CloudTune',
     androidNotificationOngoing: true,
   );
+  await UpdateService.instance.init();
   runApp(const CloudTuneApp());
 }
 

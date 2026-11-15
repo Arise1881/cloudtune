@@ -73,7 +73,7 @@ fi
 # ─── 5. Artifact'leri hazırla ───
 echo "── Artifact hazırlama ──"
 mkdir -p "$STAGING"
-cp -f build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "$STAGING/CloudTune-universal.apk"
+cp -f build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "$STAGING/CloudTune-arm64.apk"
 cp -f build/app/outputs/flutter-apk/app-release.apk "$STAGING/CloudTune-universal.apk"
 cp -f build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk "$STAGING/CloudTune-armv7.apk"
 cp -f build/app/outputs/flutter-apk/app-x86_64-release.apk "$STAGING/CloudTune-x86_64.apk"
@@ -161,6 +161,13 @@ d['version'] = '$NEW_VER'
 d['versionCode'] = $NEW_BUILD
 d['notes'] = 'CloudTune $NEW_VER'
 d['platforms']['linux'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.deb'
+d['platforms']['linux-targz'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.tar.gz'
+d['platforms']['android-arm64'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-arm64.apk'
+d['platforms']['android-armv7'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-armv7.apk'
+d['platforms']['android-x86_64'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-x86_64.apk'
+d['platforms']['android-universal'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-universal.apk'
+d['platforms']['windows'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-windows.zip'
+d['platforms']['web'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-web.zip'
 with open('update.json', 'w') as f:
     json.dump(d, f, indent=2, ensure_ascii=False)
 print(f'update.json -> {d[\"version\"]} / {d[\"versionCode\"]}')
@@ -175,6 +182,7 @@ with open(p) as f:
 app = a['apps'][0]
 app['version'] = '$NEW_VER'
 app['versionDate'] = '$NEW_DATE'
+app['versionDescription'] = 'CloudTune $NEW_FULL'
 with open(p, 'w') as f:
     json.dump(a, f, indent=2, ensure_ascii=False)
 print(f'apps.json -> {app[\"version\"]} / {app[\"versionDate\"]}')
@@ -185,6 +193,13 @@ echo "── Eski asset'leri sil ──"
 RELEASE_ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
   "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/tags/$RELEASE_TAG" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+
+# Release başlığını gerçek sürümle güncelle
+curl -s -o /dev/null -X PATCH \
+  -H "Authorization: token $GH_TOKEN" \
+  "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/$RELEASE_ID" \
+  -d "{\"name\":\"CloudTune $NEW_VER (build $NEW_BUILD)\",\"tag_name\":\"$RELEASE_TAG\"}"
+echo "Release başlığı -> CloudTune $NEW_VER (build $NEW_BUILD)"
 
 ASSET_IDS=$(curl -s -H "Authorization: token $GH_TOKEN" \
   "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/tags/$RELEASE_TAG" \
@@ -205,7 +220,7 @@ done
 
 echo "── Yeni asset'leri yükle ──"
 UPLOAD="https://uploads.github.com/repos/Arise1881/cloudtune-dist/releases/$RELEASE_ID/assets"
-for f in CloudTune-universal.apk CloudTune-universal.apk CloudTune-armv7.apk CloudTune-x86_64.apk CloudTune-linux.tar.gz; do
+for f in CloudTune-arm64.apk CloudTune-armv7.apk CloudTune-x86_64.apk CloudTune-universal.apk CloudTune-linux.tar.gz; do
   MIME="application/octet-stream"
   [[ "$f" == *.apk ]] && MIME="application/vnd.android.package-archive"
   [[ "$f" == *.tar.gz ]] && MIME="application/gzip"
@@ -288,7 +303,7 @@ curl -s "https://arise1881.github.io/cloudtune-dist/update.json" | python3 -c "i
 
 echo ""
 echo "✅ Yayın tamamlandı: v$NEW_FULL"
-echo "   CloudTune APK (arm64): $(ls -lh $STAGING/CloudTune-universal.apk | awk '{print $5}')"
+echo "   CloudTune APK (arm64): $(ls -lh $STAGING/CloudTune-arm64.apk | awk '{print $5}')"
 echo "   CloudTune APK (universal): $(ls -lh $STAGING/CloudTune-universal.apk | awk '{print $5}')"
 echo "   DEB: $(ls -lh $STAGING/$DEB_FILE | awk '{print $5}')"
 echo "   tar.gz: $(ls -lh $STAGING/CloudTune-linux.tar.gz | awk '{print $5}')"
