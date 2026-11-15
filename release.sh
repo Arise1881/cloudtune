@@ -206,9 +206,7 @@ ASSET_IDS=$(curl -s -H "Authorization: token $GH_TOKEN" \
   "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/tags/$RELEASE_TAG" \
   | python3 -c "
 import sys,json,os.path
-skip = set()
-if os.path.exists('$STAGING/CloudTune.ipa'): skip.add('CloudTune.ipa')
-if os.path.exists('$STAGING/CloudTune-windows.zip'): skip.add('CloudTune-windows.zip')
+skip = {'CloudTune.ipa', 'CloudTune-windows.zip', 'CloudTune-web.zip'}
 for a in json.load(sys.stdin)['assets']:
     if a['name'] not in skip:
         print(a['id'])
