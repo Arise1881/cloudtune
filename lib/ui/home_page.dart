@@ -4,22 +4,33 @@ import 'package:flutter/services.dart';
 
 import '../core/link_handler.dart';
 import '../core/link_resolver.dart';
-import '../core/theme_state.dart';
-import '../core/update_service.dart';
+import '../core/library.dart';
 import '../core/models.dart';
 import '../core/player_controller.dart';
 import '../core/repair_bot.dart';
+import '../core/theme_state.dart';
+import '../core/update_service.dart';
 import '../core/youtube_service.dart';
+import '../screens/artist_page.dart';
+import '../screens/playlist_page.dart';
+import '../screens/room_page.dart';
 import '../screens/settings_screen.dart';
 import 'mini_player.dart';
 
-const Map<String, String> _sections = {
-  'Türkçe Pop': 'türkçe pop müzik 2026',
-  'Rap & Hip-Hop': 'türkçe rap hit şarkılar',
-  'Rock': 'rock müzik en iyi şarkılar',
-  'Lo-fi & Sakin': 'lofi chill müzik',
-  'Dünya Hitleri': 'top global hits 2026',
-};
+class _Category {
+  const _Category(this.title, this.query);
+  final String title;
+  final String query;
+}
+
+const List<_Category> _categories = [
+  _Category('Türkçe Pop', 'türkçe pop müzik 2026'),
+  _Category('Rap & Hip-Hop', 'türkçe rap hit şarkılar'),
+  _Category('Rock', 'rock müzik en iyi şarkılar'),
+  _Category('Lo-fi & Sakin', 'lofi chill müzik'),
+  _Category('Dünya Hitleri', 'top global hits 2026'),
+  _Category('Akustik', 'akustik türkçe şarkılar'),
+];
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -30,7 +41,9 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final TextEditingController _input = TextEditingController();
-  late final Map<String, Future<List<Track>>> _futures;
+  final ScrollController _scroll = ScrollController();
+  late List<_Category> _feed;
+  late Map<String, Future<List<Track>>> _futures;
 
   List<Track>? _results;
   bool _busy = false;
@@ -39,27 +52,45 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    _futures = {
-      for (final e in _sections.entries) e.key: _load(e.value),
-    };
+    Library.instance.addListener(_onLibraryChanged);
     PlayerController.instance.addListener(_onPlayerChanged);
+    _buildFeed();
     RepairBot.start();
+  }
+
+  void _buildFeed() {
+    final library = Library.instance;
+    _feed = [..._categories];
+    // Kisisel bolum: dinleme gecmisine gore en cok dinlenen sanatci.
+    final top = library.topArtist;
+    if (top != null) {
+      _feed.insert(0, _Category('$top senin için', '$top en iyi şarkılar'));
+    }
+    final liked = library.liked;
+    if (liked.isNotEmpty && liked.first.artist.isNotEmpty) {
+      _feed.insert(
+        0,
+        _Category(
+          '${liked.first.artist} & benzerleri',
+          '${liked.first.artist} benzer sanatçılar',
+        ),
+      );
+    }
+    _futures = {for (final c in _feed) c.title: _load(c.query)};
+  }
+
+  void _onLibraryChanged() {
+    if (!mounted) return;
+    setState(_buildFeed);
   }
 
   void _onPlayerChanged() {
     final t = PlayerController.instance.current;
     if (t?.id != _lastTrack?.id) {
       _lastTrack = t;
-      if (t != null) _reloadSections();
+      // Calinan sarkinin sanatcisina gore akisi tazele.
+      if (t != null && mounted) setState(_buildFeed);
     }
-  }
-
-  void _reloadSections() {
-    setState(() {
-      _futures = {
-        for (final e in _sections.entries) e.key: _load(e.value),
-      };
-    });
   }
 
   Future<List<Track>> _load(String query) =>
@@ -67,9 +98,11 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    Library.instance.removeListener(_onLibraryChanged);
     PlayerController.instance.removeListener(_onPlayerChanged);
     RepairBot.stop();
     _input.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -86,19 +119,36 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     FocusScope.of(context).unfocus();
+    if (YoutubeLinkResolver.isYoutubeLink(value)) {
+      final playlistId = YoutubeLinkResolver.playlistId(value);
+      final videoId = YoutubeLinkResolver.videoId(value);
+      if (playlistId != null && videoId == null) {
+        // Yalnizca calma listesi baglantisi: liste sayfasini ac.
+        _input.clear();
+        if (!mounted) return;
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => PlaylistPage(id: playlistId),
+          ),
+        );
+        return;
+      }
+      final ok = await LinkHandler.open(value);
+      if (ok) {
+        _input.clear();
+      } else {
+        RepairBot.instance.reportEvent('link_open_failed', {'link': value});
+      }
+      return;
+    }
     setState(() => _busy = true);
     try {
-      if (YoutubeLinkResolver.isYoutubeLink(value)) {
-        final error = await LinkHandler.open(value);
-        if (error != null) _toast(error);
-        if (error == null) _input.clear();
-      } else {
-        final found = await YoutubeService.instance.search(value);
-        if (mounted) setState(() => _results = found);
-        if (found.isEmpty) _toast('Sonuç bulunamadı.');
-      }
+      final found = await YoutubeService.instance.search(value);
+      if (mounted) setState(() => _results = found);
+      if (found.isEmpty) _toast('Sonuç bulunamadı.');
     } catch (_) {
-      _toast('Arama başarısız. İnternetini kontrol edip tekrar dene.');
+      // Sessiz yedek: onarim botu tekrar dener, kullaniciya bilgi gosterilmez.
+      RepairBot.instance.reportEvent('search_failed', {'query': value});
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -123,6 +173,18 @@ class _HomePageState extends State<HomePage> {
     return 'İyi akşamlar';
   }
 
+  void _openArtist(Track track) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ArtistPage(
+          name: track.artist,
+          channelId: track.artistId,
+          seedTrack: track,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -131,7 +193,7 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
               child: Row(
                 children: [
                   Text(_greeting,
@@ -140,6 +202,13 @@ class _HomePageState extends State<HomePage> {
                           .headlineSmall
                           ?.copyWith(fontWeight: FontWeight.w800)),
                   const Spacer(),
+                  IconButton(
+                    tooltip: 'Oda',
+                    icon: const Icon(Icons.person_outline),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const RoomPage()),
+                    ),
+                  ),
                   IconButton(
                     icon: const Icon(Icons.settings),
                     onPressed: () => Navigator.of(context).push(
@@ -154,7 +223,6 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
             ),
-            const UpdateBanner(),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: TextField(
@@ -180,7 +248,7 @@ class _HomePageState extends State<HomePage> {
             ),
             if (_busy) const LinearProgressIndicator(minHeight: 2),
             Expanded(
-              child: _results != null ? _buildResults() : _buildSections(),
+              child: _results != null ? _buildResults() : _buildFeedList(),
             ),
             const MiniPlayer(),
           ],
@@ -205,25 +273,135 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
         Expanded(
-          child: ListView.builder(
-            itemCount: results.length,
+          child: results.isEmpty
+              ? const Center(child: Text('Sonuç yok.'))
+              : ListView.builder(
+                  itemCount: results.length,
+                  itemBuilder: (context, i) {
+                    final t = results[i];
+                    return ListTile(
+                      leading: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: CachedNetworkImage(
+                          imageUrl: t.thumb,
+                          width: 56,
+                          height: 56,
+                          fit: BoxFit.cover,
+                          errorWidget: (_, __, ___) =>
+                              const Icon(Icons.music_note, size: 40),
+                        ),
+                      ),
+                      title: Text(t.title,
+                          maxLines: 2, overflow: TextOverflow.ellipsis),
+                      subtitle: GestureDetector(
+                        onTap: () => _openArtist(t),
+                        child: Text(t.artist, maxLines: 1),
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.radio),
+                        tooltip: 'Radyo olarak çal',
+                        onPressed: () => PlayerController.instance
+                            .playQueue(results, i, radio: true),
+                      ),
+                      onTap: () =>
+                          PlayerController.instance.playQueue(results, i),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFeedList() {
+    final library = Library.instance;
+    return ListenableBuilder(
+      listenable: library,
+      builder: (context, _) {
+        final history = library.history;
+        return ListView(
+          controller: _scroll,
+          padding: const EdgeInsets.only(bottom: 12),
+          children: [
+            const UpdateBanner(),
+            if (history.isNotEmpty)
+              _HistoryStrip(history: history, onArtistTap: _openArtist),
+            for (final c in _feed)
+              _Section(
+                title: c.title,
+                future: _futures[c.title] ?? _load(c.query),
+                onArtistTap: _openArtist,
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _HistoryStrip extends StatelessWidget {
+  const _HistoryStrip({required this.history, required this.onArtistTap});
+  final List<Track> history;
+  final ValueChanged<Track> onArtistTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+          child: Text('Dinlemeye devam et',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w800)),
+        ),
+        SizedBox(
+          height: 190,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: history.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
             itemBuilder: (context, i) {
-              final t = results[i];
-              return ListTile(
-                leading: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: CachedNetworkImage(
-                    imageUrl: t.thumb,
-                    width: 56,
-                    height: 56,
-                    fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) =>
-                        const Icon(Icons.music_note, size: 40),
+              final t = history[i];
+              return SizedBox(
+                width: 130,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () =>
+                      PlayerController.instance.playQueue(history, i),
+                  onLongPress: () => onArtistTap(t),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: CachedNetworkImage(
+                          imageUrl: t.thumb,
+                          width: 130,
+                          height: 130,
+                          fit: BoxFit.cover,
+                          errorWidget: (_, __, ___) => Container(
+                            color: const Color(0xFF242424),
+                            child: const Icon(Icons.music_note, size: 40),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(t.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      Text(t.artist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white54, fontSize: 12)),
+                    ],
                   ),
                 ),
-                title: Text(t.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-                subtitle: Text(t.artist, maxLines: 1),
-                onTap: () => PlayerController.instance.playQueue(results, i),
               );
             },
           ),
@@ -231,21 +409,18 @@ class _HomePageState extends State<HomePage> {
       ],
     );
   }
-
-  Widget _buildSections() {
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 12),
-      children: [
-        for (final title in _sections.keys) _Section(title, _futures[title]!),
-      ],
-    );
-  }
 }
 
 class _Section extends StatelessWidget {
-  const _Section(this.title, this.future);
+  const _Section({
+    required this.title,
+    required this.future,
+    required this.onArtistTap,
+  });
+
   final String title;
   final Future<List<Track>> future;
+  final ValueChanged<Track> onArtistTap;
 
   @override
   Widget build(BuildContext context) {
@@ -271,8 +446,7 @@ class _Section extends StatelessWidget {
               final tracks = snap.data;
               if (snap.hasError || tracks == null || tracks.isEmpty) {
                 return const Center(
-                  child: Text('Bu bölüm yüklenemedi.',
-                      style: TextStyle(color: Colors.white54)),
+                  child: Text('—', style: TextStyle(color: Colors.white24)),
                 );
               }
               return ListView.separated(
@@ -282,7 +456,9 @@ class _Section extends StatelessWidget {
                 separatorBuilder: (_, __) => const SizedBox(width: 12),
                 itemBuilder: (context, i) => _Card(
                   track: tracks[i],
-                  onTap: () => PlayerController.instance.playQueue(tracks, i),
+                  onTap: () =>
+                      PlayerController.instance.playQueue(tracks, i),
+                  onLongPress: () => onArtistTap(tracks[i]),
                 ),
               );
             },
@@ -294,15 +470,21 @@ class _Section extends StatelessWidget {
 }
 
 class _Card extends StatelessWidget {
-  const _Card({required this.track, required this.onTap});
+  const _Card({
+    required this.track,
+    required this.onTap,
+    required this.onLongPress,
+  });
   final Track track;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(10),
       onTap: onTap,
+      onLongPress: onLongPress,
       child: SizedBox(
         width: 150,
         child: Column(

@@ -1,26 +1,33 @@
 import 'dart:async';
 
 import 'package:app_links/app_links.dart';
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 
+import 'core/library.dart';
 import 'core/link_handler.dart';
 import 'core/link_resolver.dart';
+import 'core/player_controller.dart';
+import 'core/repair_bot.dart';
 import 'core/theme_state.dart';
 import 'core/update_service.dart';
 import 'ui/home_page.dart';
 
-final GlobalKey<ScaffoldMessengerState> messengerKey =
-    GlobalKey<ScaffoldMessengerState>();
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await JustAudioBackground.init(
-    androidNotificationChannelId: 'com.cloudtune.app.audio',
-    androidNotificationChannelName: 'CloudTune',
-    androidNotificationOngoing: true,
+  await Library.instance.init();
+  await AudioService.init(
+    builder: () => PlayerController.instance,
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.cloudtune.app.audio',
+      androidNotificationChannelName: 'CloudTune',
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: true,
+      androidNotificationIcon: 'mipmap/ic_launcher',
+    ),
   );
-  await UpdateService.instance.init();
+  unawaited(UpdateService.instance.init());
+  unawaited(RepairBot.start());
   runApp(const CloudTuneApp());
 }
 
@@ -44,18 +51,18 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
   Future<void> _initLinks() async {
     try {
       final initial = await _appLinks.getInitialLink();
-      if (initial != null) _openLink(initial.toString());
+      if (initial != null) unawaited(_openLink(initial.toString()));
     } catch (_) {}
-    _sub = _appLinks.uriLinkStream.listen((uri) => _openLink(uri.toString()));
+    _sub = _appLinks.uriLinkStream.listen(
+      (uri) => unawaited(_openLink(uri.toString())),
+      onError: (_) {},
+    );
   }
 
   Future<void> _openLink(String link) async {
-    if (!LinkHandler.enabled) return;
     if (!YoutubeLinkResolver.isYoutubeLink(link)) return;
-    final error = await LinkHandler.open(link);
-    if (error != null) {
-      messengerKey.currentState?.showSnackBar(SnackBar(content: Text(error)));
-    }
+    // Baglantilar sessizce acilir; basarisizlikta onarim botu devralir.
+    await LinkHandler.open(link);
   }
 
   @override
@@ -69,19 +76,18 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
     return ListenableBuilder(
       listenable: ThemeState.accent,
       builder: (context, _) {
-        final green = ThemeState.accent.value;
+        final accent = ThemeState.accent.value;
         return MaterialApp(
           title: 'CloudTune',
           debugShowCheckedModeBanner: false,
-          scaffoldMessengerKey: messengerKey,
           theme: ThemeData(
             useMaterial3: true,
             brightness: Brightness.dark,
             scaffoldBackgroundColor: const Color(0xFF121212),
             colorScheme: ColorScheme.fromSeed(
-              seedColor: green,
+              seedColor: accent,
               brightness: Brightness.dark,
-              primary: green,
+              primary: accent,
               surface: const Color(0xFF181818),
             ),
           ),

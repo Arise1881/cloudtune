@@ -73,6 +73,7 @@ fi
 # ─── 5. Artifact'leri hazırla ───
 echo "── Artifact hazırlama ──"
 mkdir -p "$STAGING"
+rm -f "$STAGING"/CloudTune-* "$STAGING"/CloudTune.ipa "$STAGING"/*.deb 2>/dev/null || true
 cp -f build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "$STAGING/CloudTune-arm64.apk"
 cp -f build/app/outputs/flutter-apk/app-release.apk "$STAGING/CloudTune-universal.apk"
 cp -f build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk "$STAGING/CloudTune-armv7.apk"
@@ -121,7 +122,7 @@ EOF
 mkdir -p "$DEB_DIR/usr/share/applications" \
   "$DEB_DIR/usr/share/icons/hicolor/512x512/apps" \
   "$DEB_DIR/DEBIAN"
-cat > "$DEB_DIR/usr/share/applications/melody.desktop" <<EOF
+cat > "$DEB_DIR/usr/share/applications/cloudtune.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=CloudTune
@@ -269,8 +270,8 @@ if [ -n "$OLD_DEB_ID" ]; then
 fi
 
 # index.html ve README'deki deb linklerini güncelle
-sed -i "s|melody_[0-9.]*_amd64.deb|$DEB_FILE|g" index.html
-sed -i "s|melody_[0-9.]*_amd64.deb|$DEB_FILE|g" README.md
+sed -i "s|cloudtune_[0-9.]*_amd64.deb|$DEB_FILE|g" index.html
+sed -i "s|cloudtune_[0-9.]*_amd64.deb|$DEB_FILE|g" README.md
 
 # ─── 8. index.html + README + update.json push et ───
 echo "── Push ──"

@@ -1,7 +1,11 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../core/download_service.dart';
+import '../core/library.dart';
 import '../core/player_controller.dart';
+import '../core/theme_state.dart';
+import '../screens/artist_page.dart';
 
 class PlayerPage extends StatelessWidget {
   const PlayerPage({super.key});
@@ -10,6 +14,20 @@ class PlayerPage extends StatelessWidget {
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return d.inHours > 0 ? '${d.inHours}:$m:$s' : '$m:$s';
+  }
+
+  void _openArtist(BuildContext context) {
+    final track = PlayerController.instance.current;
+    if (track == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ArtistPage(
+          name: track.artist,
+          channelId: track.artistId,
+          seedTrack: track,
+        ),
+      ),
+    );
   }
 
   @override
@@ -48,7 +66,7 @@ class PlayerPage extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 20),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Text(track.title,
@@ -61,15 +79,13 @@ class PlayerPage extends StatelessWidget {
                 ),
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: Text(track.artist,
-                      style: const TextStyle(color: Colors.white54)),
-                ),
-                if (player.error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(player.error!,
-                        style: const TextStyle(color: Colors.redAccent)),
+                  child: GestureDetector(
+                    onTap: () => _openArtist(context),
+                    child: Text(track.artist,
+                        style: TextStyle(
+                            color: ThemeState.accent.value.withValues(alpha: 0.9))),
                   ),
+                ),
                 const SizedBox(height: 12),
                 StreamBuilder<Duration?>(
                   stream: player.durationStream,
@@ -111,22 +127,37 @@ class PlayerPage extends StatelessWidget {
                     );
                   },
                 ),
-                const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
+                    ListenableBuilder(
+                      listenable: Library.instance,
+                      builder: (context, _) {
+                        final liked = Library.instance.isLiked(track.id);
+                        return IconButton(
+                          tooltip: 'Begen',
+                          icon: Icon(
+                            liked ? Icons.favorite : Icons.favorite_border,
+                            color: liked ? ThemeState.accent.value : null,
+                          ),
+                          onPressed: () =>
+                              Library.instance.toggleLike(track),
+                        );
+                      },
+                    ),
+                    const SizedBox(width: 4),
                     IconButton(
                       iconSize: 40,
                       icon: const Icon(Icons.skip_previous),
                       onPressed: player.previous,
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     if (player.loading)
                       const SizedBox(
-                        width: 72,
-                        height: 72,
+                        width: 64,
+                        height: 64,
                         child: Padding(
-                          padding: EdgeInsets.all(20),
+                          padding: EdgeInsets.all(16),
                           child: CircularProgressIndicator(),
                         ),
                       )
@@ -141,20 +172,66 @@ class PlayerPage extends StatelessWidget {
                           onPressed: player.toggle,
                         ),
                       ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     IconButton(
                       iconSize: 40,
                       icon: const Icon(Icons.skip_next),
                       onPressed: player.hasNext ? player.next : null,
                     ),
+                    const SizedBox(width: 4),
+                    _DownloadButton(trackId: track.id),
                   ],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
               ],
             ),
           );
         },
       ),
+    );
+  }
+}
+
+class _DownloadButton extends StatelessWidget {
+  const _DownloadButton({required this.trackId});
+  final String trackId;
+
+  @override
+  Widget build(BuildContext context) {
+    final service = DownloadService.instance;
+    return ListenableBuilder(
+      listenable: service,
+      builder: (context, _) {
+        if (service.isDownloading(trackId)) {
+          return Padding(
+            padding: const EdgeInsets.all(12),
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                value: service.progressOf(trackId),
+                strokeWidth: 2,
+              ),
+            ),
+          );
+        }
+        final saved = service.savedPathOf(trackId) != null;
+        return IconButton(
+          tooltip: 'Indir',
+          icon: Icon(saved ? Icons.download_done : Icons.download_outlined),
+          onPressed: () async {
+            final track = PlayerController.instance.current;
+            if (track == null) return;
+            final messenger = ScaffoldMessenger.maybeOf(context);
+            final path = await service.download(track);
+            if (path != null) {
+              messenger?.showSnackBar(
+                SnackBar(content: Text('Cihaza kaydedildi: $path')),
+              );
+            }
+          },
+        );
+      },
     );
   }
 }

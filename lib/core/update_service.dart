@@ -233,13 +233,7 @@ class UpdateBanner extends StatelessWidget {
                               fontSize: 14,
                             ),
                           ),
-                          if (update.error != null)
-                            Text(
-                              update.error!,
-                              style: const TextStyle(color: Colors.black, fontSize: 11),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+
                         ],
                       ),
                     ),

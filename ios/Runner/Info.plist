@@ -70,6 +70,10 @@
 		<array>
 			<string>audio</string>
 		</array>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>Oda avatarınız için galerinizden bir görsel seçmenize izin verir.</string>
+		<key>NSPhotoLibraryAddUsageDescription</key>
+		<string>İndirilen şarkıları ve seçtiğiniz avatarı kaydetmek için kullanılır.</string>
 		<key>UIFileSharingEnabled</key>
 		<true/>
 		<key>LSSupportsOpeningDocumentsInPlace</key>

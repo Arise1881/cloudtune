@@ -42,6 +42,37 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Desteklenen baglantilar: youtu.be, m.youtube.com,
+                 youtube.com, www.youtube.com. Uygulama ici anahtar
+                 (Ayarlar > Desteklenen baglantilar) kapaliysa yok sayilir. -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="youtu.be"/>
+                <data android:scheme="http" android:host="youtu.be"/>
+            </intent-filter>
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="m.youtube.com"/>
+                <data android:scheme="http" android:host="m.youtube.com"/>
+            </intent-filter>
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="youtube.com"/>
+                <data android:scheme="http" android:host="youtube.com"/>
+            </intent-filter>
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="www.youtube.com"/>
+                <data android:scheme="http" android:host="www.youtube.com"/>
+            </intent-filter>
         </activity>
         <!-- Arka plan ses servisi (just_audio_background / audio_service) + Android Auto -->
         <service

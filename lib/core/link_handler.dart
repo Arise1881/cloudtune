@@ -1,23 +1,21 @@
+import 'library.dart';
 import 'link_resolver.dart';
 import 'models.dart';
 import 'player_controller.dart';
 import 'youtube_service.dart';
 
-/// Bir YouTube bağlantısını (youtu.be, m.youtube.com, youtube.com,
-/// www.youtube.com) açıp çalar. Hata varsa kullanıcıya gösterilecek
-/// mesajı, başarılıysa null döndürür.
+/// Bir YouTube baglantisini (youtu.be, m.youtube.com, youtube.com,
+/// www.youtube.com) acip calar. Kullaniciya hata bilgisi gosterilmez;
+/// basarisizlikta null doner ve onarim botu devralir.
 class LinkHandler {
   LinkHandler._();
 
-  /// Desteklenen bağlantılar (deep link) uygulama içinde açılsın
-  /// ya da sistem default handler'ına geçsin. Android'de kullanici
-  /// bu degistirmis olabilir.
-  static bool deepLinkEnabled = true;
+  /// Android'de "Desteklenen baglantilar" anahtari. Kapaliysa uygulama
+  /// YouTube baglantilarini icerde acmaz.
+  static bool get enabled => Library.instance.linkHandlerEnabled;
 
-  static bool get enabled => deepLinkEnabled;
-
-  static Future<String?> open(String raw) async {
-    if (!deepLinkEnabled) return null;
+  static Future<bool> open(String raw) async {
+    if (!enabled) return false;
     final videoId = YoutubeLinkResolver.videoId(raw);
     final playlistId = YoutubeLinkResolver.playlistId(raw);
     final yt = YoutubeService.instance;
@@ -25,7 +23,7 @@ class LinkHandler {
 
     try {
       if (playlistId != null) {
-        final tracks = await yt.playlist(playlistId);
+        final tracks = await yt.playlist(playlistId, seed: videoId);
         if (tracks.isNotEmpty) {
           var start = 0;
           if (videoId != null) {
@@ -33,18 +31,18 @@ class LinkHandler {
             if (found >= 0) start = found;
           }
           await player.playQueue(tracks, start);
-          return null;
+          return true;
         }
-        if (videoId == null) return 'Çalma listesi boş veya erişilemiyor.';
+        if (videoId == null) return false;
       }
       if (videoId != null) {
         final Track track = await yt.trackById(videoId);
         await player.playQueue([track], 0);
-        return null;
+        return true;
       }
-      return 'Geçerli bir YouTube bağlantısı bulunamadı.';
-    } catch (e) {
-      return 'Bağlantı açılamadı. İnternetini kontrol edip tekrar dene.';
+      return false;
+    } catch (_) {
+      return false;
     }
   }
 }
