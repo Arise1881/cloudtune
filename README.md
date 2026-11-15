@@ -1,30 +1,56 @@
-# CloudTune 3.0
+# CloudTune
 
-YouTube destekli müzik çalar. **Cloudflare, Worker veya tünel kullanmaz**; tüm istekler doğrudan YouTube'a gider.
+Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan YouTube** üzerinden
+aranır ve çalınır; aracı sunucu, reklam veya hesap gerekmez.
 
-Kabul edilen bağlantı adresleri: `youtu.be`, `m.youtube.com`, `youtube.com`, `www.youtube.com`
-(video, shorts, embed ve `list=` çalma listesi bağlantıları). Başka alan adları reddedilir.
+| Platform | Durum |
+|---|---|
+| Android (arm64 / armv7 / x86_64 / evrensel) | ✅ |
+| Linux (deb + tar.gz) | ✅ |
+| Windows 11 (zip) | ✅ |
+| iOS (imzasız IPA, AltStore/SideStore) | ✅ |
 
-## Neler var
+## Özellikler
 
-- Yeni anasayfa: arama + bağlantı yapıştırma, yatay şarkı bölümleri, mini oynatıcı
-- Tam ekran oynatıcı, arka planda çalma ve bildirim kontrolleri
-- Android'de bu dört adrese ait bağlantılara dokununca CloudTune ile açma
-- Akış adresi süresi dolarsa aynı konumdan otomatik devam
+- **Doğrudan YouTube** — arama, video ve çalma listesi çözümlemesi cihazda yapılır
+- **Sonsuz radyo** — kuyruk bitince ilgili parçalarla devam eder
+- **Kilit ekranı / bildirim kontrolleri** — şarkı bilgisi, ileri–geri, beğeni
+- **Çalma listeleri** — tek kaydırmalı liste, “Tümünü çal”
+- **Sanatçı profilleri** — sanatçının tüm parçaları tek listede
+- **Kişisel ana sayfa** — dinleme geçmişine göre şekillenen bölümler
+- **Oda** — kendi görselini avatar yap, beğendiklerini topla
+- **Cihaza indirme** — Android’de `Download/CloudTune`, masaüstünde Belgeler
+- **Bağlantı desteği** — `youtu.be`, `m.youtube.com`, `youtube.com`,
+  `www.youtube.com`; Ayarlar’dan açılıp kapatılabilir
+- **Gizli onarım botu** — akış hatalarını sessizce onarır, düşük pil/CPU kullanır
+- **18 vurgu rengi** ve uygulama içi güncelleme
 
-Eski sürümdeki çevrimdışı indirme, ekolayzer, oda sistemi, OTA güncelleme vb. özellikler bu sürümde **yok**.
+Kullanıcıya bağlantı bilgisi veya hata mesajı gösterilmez.
+
+## Onarım zinciri
+
+1. Doğrudan YouTube akışını yeniden dene
+2. Cloudflare yedek akışı (`cloudflare/`)
+3. Cihaz raporunu `CloudTune@hotmail.com` adresine ilet
 
 ## Derleme
 
-GitHub'a yükleyip `main` dalına push et: **Actions → Android APK** çalışır, APK'lar artifact olarak iner.
-
-Kendi bilgisayarında (Flutter kuruluysa):
-
-```
-bash tool/bootstrap.sh
+```bash
+bash tool/bootstrap.sh          # Android platform dosyalarını üret/yamala
 flutter test
 flutter build apk --release --split-per-abi
 ```
 
-`tool/bootstrap.sh`, `flutter create` ile android klasörünü üretir ve `tool/patch_android.py` ile
-izinleri, ses servisini ve YouTube bağlantı filtrelerini ekler.
+Sürüm yayınlama (APK + Linux + release güncelleme + `update.json`):
+
+```bash
+bash release.sh patch           # major | minor | patch | current
+```
+
+## Altyapı
+
+Cloudflare tüneli ve worker’ları: [`cloudflare/README.md`](cloudflare/README.md)
+
+## Lisans
+
+MIT

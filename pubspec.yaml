@@ -1,5 +1,5 @@
 name: cloudtune
-description: CloudTune - YouTube destekli müzik çalar (Cloudflare gerektirmez).
+description: CloudTune - açık kaynak, YouTube destekli müzik çalar.
 publish_to: "none"
 version: 3.0.3+204
 
@@ -11,7 +11,6 @@ dependencies:
     sdk: flutter
   youtube_explode_dart: ^3.1.0
   just_audio: ^0.10.6
-  just_audio_background: ^0.0.1-beta.17
   app_links: ^7.2.2
   cached_network_image: ^4.0.7
   http: ^1.6.0

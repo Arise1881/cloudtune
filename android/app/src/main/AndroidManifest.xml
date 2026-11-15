@@ -8,12 +8,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-    <!-- Sesle arama (mikrofon) -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <!-- Uygulama içinden güncelleme APK'sı kurulumu için -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
-    <!-- Android Auto -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
 
     <application
         android:label="CloudTune"
@@ -94,17 +90,6 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON"/>
             </intent-filter>
         </receiver>
-        <!-- Workmanager arka plan onarım botu -->
-        <receiver
-            android:name="be.tramckrijte.workmanager.WorkManagerBroadcastReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED"/>
-            </intent-filter>
-        </receiver>
-        <service
-            android:name="be.tramckrijte.workmanager.ScheduledTaskService"
-            android:exported="false"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
