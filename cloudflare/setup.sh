@@ -32,28 +32,36 @@ cf "$API/accounts/$ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID" >/dev/null \
   || { echo "HATA: tünel bulunamadi. Dashboard > Zero Trust > Tunnels uzerinden olusturun." >&2; exit 1; }
 echo "    OK"
 
-echo "==> Zone: $ZONE_NAME"
-ZONE_ID="$(cf "$API/zones?name=$ZONE_NAME" | jqp "[0]['id']")"
-echo "    $ZONE_ID"
+echo "==> Zone: $ZONE_NAME (opsiyonel)"
+ZONE_ID=""
+if [ -n "$ZONE_NAME" ]; then
+  ZONE_ID="$(cf "$API/zones?name=$ZONE_NAME" \
+    | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['result'][0]['id'] if d.get('result') else '')")"
+fi
 
-echo "==> DNS CNAME"
-for host in repair stream; do
-  NAME="$host"
-  CONTENT="$TUNNEL_ID.cfargotunnel.com"
-  RID="$(cf "$API/zones/$ZONE_ID/dns_records?type=CNAME&name=$host.$ZONE_NAME" \
-        | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['result'][0]['id'] if d.get('result') else '')")"
-  if [ -n "$RID" ]; then
-    cf -X PATCH -H "Content-Type: application/json" \
-      -d "{\"content\":\"$CONTENT\",\"proxied\":true}" \
-      "$API/zones/$ZONE_ID/dns_records/$RID" >/dev/null
-    echo "    $NAME -> guncellendi"
-  else
-    cf -X POST -H "Content-Type: application/json" \
-      -d "{\"type\":\"CNAME\",\"name\":\"$NAME\",\"content\":\"$CONTENT\",\"proxied\":true}" \
-      "$API/zones/$ZONE_ID/dns_records" >/dev/null
-    echo "    $NAME -> eklendi"
-  fi
-done
+if [ -z "$ZONE_ID" ]; then
+  echo "    zone yok — DNS adimi atlandi (workers.dev uzerinden calisir)"
+else
+  echo "    $ZONE_ID"
+  echo "==> DNS CNAME"
+  for host in repair stream; do
+    NAME="$host"
+    CONTENT="$TUNNEL_ID.cfargotunnel.com"
+    RID="$(cf "$API/zones/$ZONE_ID/dns_records?type=CNAME&name=$host.$ZONE_NAME" \
+          | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['result'][0]['id'] if d.get('result') else '')")"
+    if [ -n "$RID" ]; then
+      cf -X PATCH -H "Content-Type: application/json" \
+        -d "{\"content\":\"$CONTENT\",\"proxied\":true}" \
+        "$API/zones/$ZONE_ID/dns_records/$RID" >/dev/null
+      echo "    $NAME -> guncellendi"
+    else
+      cf -X POST -H "Content-Type: application/json" \
+        -d "{\"type\":\"CNAME\",\"name\":\"$NAME\",\"content\":\"$CONTENT\",\"proxied\":true}" \
+        "$API/zones/$ZONE_ID/dns_records" >/dev/null
+      echo "    $NAME -> eklendi"
+    fi
+  done
+fi
 
 echo "==> Worker: $REPAIR_WORKER"
 BINDINGS="[]"
@@ -88,8 +96,8 @@ for W in "$REPAIR_WORKER" "$STREAM_WORKER"; do
     "$API/accounts/$ACCOUNT_ID/workers/scripts/$W/subdomain" >/dev/null || true
 done
 
-if [ -n "${CLOUDFLARE_KV_NAMESPACE_ID:-}" ]; then
-  echo "==> Zone route: repair.cloudtune.app/*"
+if [ -n "${CLOUDFLARE_KV_NAMESPACE_ID:-}" ] && [ -n "$ZONE_ID" ]; then
+  echo "==> Zone route: repair.$ZONE_NAME/*"
   cf -X POST -H "Content-Type: application/json" \
     -d "{\"pattern\":\"repair.$ZONE_NAME/*\",\"script\":\"$REPAIR_WORKER\"}" \
     "$API/zones/$ZONE_ID/workers/routes" >/dev/null || true

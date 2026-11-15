@@ -12,7 +12,6 @@ class CloudflareFallback {
   /// Akis aktarma (relay) uclari. Sirasiyla denenir.
   static const List<String> streamBases = [
     'https://cloudtune-stream.cloudtune-5b3.workers.dev',
-    'https://stream.cloudtune.app',
   ];
 
   static const String repairLogUrl =

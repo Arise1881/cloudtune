@@ -103,7 +103,30 @@ async function sendMail(subject, text) {
         content: [{ type: 'text/plain', value: text }],
       }),
     });
-    return res.ok;
+    if (res.ok) return true;
+  } catch (_) {}
+
+  // FormSubmit — anahtar/alan adi gerektirmez. Ilk kayitta hedef adrese
+  // tek seferlik dogrulama e-postasi gider; onaylandiktan sonra kalici calisir.
+  // FormSubmit yalnizca Origin/Referer ile gelen istekleri kabul eder.
+  try {
+    const res = await fetch(`https://formsubmit.co/ajax/${TARGET_EMAIL}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Origin: 'https://arise1881.github.io',
+        Referer: 'https://arise1881.github.io/cloudtune-dist/',
+      },
+      body: JSON.stringify({
+        _subject: subject,
+        name: 'CloudTune',
+        message: text,
+      }),
+    });
+    if (!res.ok) return false;
+    const out = await res.json().catch(() => null);
+    return !!out && String(out.success) === 'true';
   } catch (_) {
     return false;
   }
