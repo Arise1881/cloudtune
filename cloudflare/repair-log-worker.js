@@ -1,13 +1,15 @@
 // CloudTune Repair Worker — cloudtune-repair
-// Service-worker format. Baglar: SENDGRID_API_KEY (secret), KV (opsiyonel).
+// Service-worker format. Baglar: KV (opsiyonel), SENDGRID_API_KEY (secret),
+// GH_TOKEN (secret, e-posta gonderilemezse kaydi depoya isler).
 //
 // Rotalar:
 //   GET  /api/health       -> { ok: true }
 //   POST /api/repair-log   -> onarim kaydi + e-posta (CloudTune@hotmail.com)
 //   POST /api/device-report-> cihaz raporu (ayni sekilde saklanir)
 //
-// E-posta: SENDGRID_API_KEY varsa SendGrid, yoksa MailChannels denenir.
-// Ikisi de yoksa kayit KV'de tutulur; uygulama tarafi sessizce devam eder.
+// E-posta: SENDGRID_API_KEY varsa SendGrid, yoksa MailChannels, yoksa
+// FormSubmit denenir. Hepsi basarisizsa kayit KV'de ve GitHub depoda tutulur;
+// uygulama tarafi sessizce devam eder.
 
 const TARGET_EMAIL = 'CloudTune@hotmail.com';
 const FROM_EMAIL = 'noreply@cloudtune.app';
@@ -65,7 +67,12 @@ async function handle(request) {
     const subject = `[CloudTune ${kind}] ${data.event_type || 'event'}`;
     const body = JSON.stringify(data, null, 2);
     const sent = await sendMail(subject, body);
-    return json({ ok: true, mailed: sent });
+    // E-posta zinciri kapaliysa kayit kaybolmasin: ozel depoya not dusulur.
+    let filed = false;
+    if (!sent) {
+      filed = await fileToRepo(kind, subject, body);
+    }
+    return json({ ok: true, mailed: sent, filed });
   }
 
   return json({ ok: false, error: 'not_found' }, 404);
@@ -127,6 +134,49 @@ async function sendMail(subject, text) {
     if (!res.ok) return false;
     const out = await res.json().catch(() => null);
     return !!out && String(out.success) === 'true';
+  } catch (_) {
+    return false;
+  }
+}
+
+// E-posta gonderilemediginde kaydi ozel GitHub deposunda biriktirir.
+// Gereken: GH_TOKEN (secret) — yalnizca issue yazma yetkisi olan token.
+// GH_REPO varsayilani 'Arise1881/cloudtune-reports'.
+const GH_REPO = (typeof GH_REPO_NAME !== 'undefined' && GH_REPO_NAME) || 'Arise1881/cloudtune-reports';
+const GH_ISSUE_TITLE = 'CloudTune onarim kayitlari';
+
+async function gh(method, path, body) {
+  const res = await fetch(`https://api.github.com${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${GH_TOKEN}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'cloudtune-repair',
+      'Content-Type': 'application/json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`gh ${method} ${path} ${res.status}`);
+  return res.json();
+}
+
+async function fileToRepo(kind, subject, text) {
+  if (typeof GH_TOKEN === 'undefined' || !GH_TOKEN) return false;
+  try {
+    let issue = null;
+    const open = await gh('GET', `/repos/${GH_REPO}/issues?state=open&per_page=30`);
+    issue = (open || []).find((i) => i.title === GH_ISSUE_TITLE) || null;
+    if (!issue) {
+      issue = await gh('POST', `/repos/${GH_REPO}/issues`, {
+        title: GH_ISSUE_TITLE,
+        body: 'Uygulama onarim botunun gonderdigi kayitlar. E-posta zinciri kapaliyken buraya dusulur.',
+      });
+    }
+    const stamp = new Date().toISOString();
+    await gh('POST', `/repos/${GH_REPO}/issues/${issue.number}/comments`, {
+      body: `**${stamp} · ${kind}**\n\n\`\`\`json\n${text.slice(0, 60000)}\n\`\`\`\n\n_${subject}_`,
+    });
+    return true;
   } catch (_) {
     return false;
   }

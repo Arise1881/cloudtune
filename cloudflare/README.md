@@ -40,6 +40,27 @@ adresine bir "Activate Form" e-postası gönderir. O bağlantı bir kez
 tıklanınca e-posta zinciri kalıcı olarak çalışır. Onaydan önce worker
 `{"ok":true,"mailed":false}` döner; uygulama tarafı sessizce devam eder.
 
+> **Durum (15.11.2026):** FormSubmit aktivasyonu henüz etkin değil —
+> `mailed:false` sürüyor. Zincir açılana kadar kayıtlar kaybolmuyor:
+> worker son adım olarak kaydı **özel** `Arise1881/cloudtune-reports`
+> deposunda "CloudTune onarim kayitlari" başlıklı issue'ya yorum olarak
+> ekler (`{"ok":true,"mailed":false,"filed":true}`).
+
+## E-posta yedeği (GitHub deposit)
+
+`GH_TOKEN` secret'ı tanımlıysa ve e-posta gönderilemezse kayıt özel depoya
+işlenir. Secret'ı eklemek için:
+
+```bash
+curl -X PUT -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"name":"GH_TOKEN","text":"<token>","type":"secret_text"}' \
+  "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/workers/scripts/cloudtune-repair/secrets"
+```
+
+Token yalnızca `cloudtune-reports` deposuna issue yazabilmelidir (fine-grained
+token önerilir). `mailed:true` alındığında bu adım hiç çalışmaz.
+
 ## Tünel hakkında
 
 `23d9da7b-178f-424a-8f7d-671c7708445b` kimliğiyle tünel hesapta mevcut.
