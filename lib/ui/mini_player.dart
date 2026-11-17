@@ -110,15 +110,14 @@ class MiniPlayer extends StatelessWidget {
                                   ),
                                 ),
                               )
-                            : StreamBuilder<bool>(
-                                stream: player.playingStream,
-                                builder: (context, snap) => IconButton(
-                                  iconSize: 32,
-                                  icon: Icon((snap.data ?? false)
-                                      ? Icons.pause
-                                      : Icons.play_arrow),
-                                  onPressed: player.toggle,
-                                ),
+                            : IconButton(
+                                iconSize: 32,
+                                // Broadcast stream ilk durumu kaçırabiliyor;
+                                // _broadcast() zaten notifyListeners() çağırır.
+                                icon: Icon(player.playing
+                                    ? Icons.pause
+                                    : Icons.play_arrow),
+                                onPressed: player.toggle,
                               ),
                       ],
                     ),

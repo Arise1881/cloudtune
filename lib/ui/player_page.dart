@@ -225,14 +225,13 @@ class _Controls extends StatelessWidget {
                   child: CircularProgressIndicator(),
                 ),
               )
-            : StreamBuilder<bool>(
-                stream: player.playingStream,
-                builder: (context, snap) => IconButton.filled(
-                  iconSize: 48,
-                  icon: Icon(
-                      (snap.data ?? false) ? Icons.pause : Icons.play_arrow),
-                  onPressed: player.toggle,
-                ),
+            : IconButton.filled(
+                iconSize: 48,
+                // Broadcast stream ilk durumu kaçırabiliyor;
+                // _broadcast() zaten notifyListeners() çağırır.
+                icon:
+                    Icon(player.playing ? Icons.pause : Icons.play_arrow),
+                onPressed: player.toggle,
               ),
         const SizedBox(width: 8),
         IconButton(
