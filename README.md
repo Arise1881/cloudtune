@@ -99,7 +99,7 @@ Kullanıcıya bağlantı bilgisi veya ham hata mesajı gösterilmez; hatalar Tü
 ```
 README.md                  Bu dosya: özellikler, kurulum, uyum, güncelleme, gizlilik
 LICENSE                    MIT lisans
-pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.36+237)
+pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.37+238)
 analysis_options.yaml      Dart/Flutter linter kuralları
 .metadata                  Flutter proje metadata
 release.sh                 Build → analyze/test → artifact → GitHub release → push
@@ -192,7 +192,7 @@ ADB_SERIAL=emulator-xxxx python3 ct_full_test.py   # 20/20 (debug APK)
 #   uninstall → release APK install → ilk açılış → izinler → tema → arama
 ```
 
-Gerçek kullanıcı simülasyonunda kontrol edilenler: sürüm `3.0.36 / 237`,
+Gerçek kullanıcı simülasyonunda kontrol edilenler: sürüm `3.0.37 / 238`,
 `minSdk=24`, uygulama foreground, mikrofon ilk dokunuşta açılıyor, açık temada
 zemin açık/metin koyu, arama sonuçlarında “Çalma Listeleri ve Şarkılar” ve
 “Arama Sonuçları” başlıkları, logcat'te crash yok.
