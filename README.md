@@ -9,8 +9,10 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 | Android armv7 | ✅ | `CloudTune-armv7.apk` |
 | Android x86_64 | ✅ | `CloudTune-x86_64.apk` |
 | Linux x86_64 | ✅ | `CloudTune-linux.deb`, `CloudTune-linux.tar.gz` |
-| Windows 11 | ✅ | `CloudTune-windows.zip` |
-| iOS (AltStore / SideStore) | ✅ | `apps.json` kaynağı, imzasız IPA |
+| Windows 11 | ⚠️ Eski paket | `CloudTune-windows.zip` (3.0.5+206); güncel CI ödeme limiti nedeniyle üretilemedi |
+| iOS (AltStore / SideStore) | ⚠️ Eski paket | `CloudTune.ipa`; güncel CI ödeme limiti nedeniyle üretilemedi |
+
+> **Windows/iOS:** GitHub Actions job'ları “recent account payments have failed or spending limit needs to be increased” nedeniyle hiç başlamıyor. Billing/spending limiti düzeltildikten sonra `gh workflow run windows-build.yml` ve `gh workflow run ios-build.yml` ile güncel `3.0.35+236` paketleri üretilebilir. Android ve Linux paketleri güncel ve doğrulandı.
 
 > **Hangi APK?** Cihazınızın mimarisini bilmiyorsanız `CloudTune-universal.apk`'yı indirin. Uygulama içi güncelleyici cihazın ABI'sini algılar (`Abi.current`) ve doğru paketi seçer; uygun paket yoksa evrensel APK'ya düşer.
 
