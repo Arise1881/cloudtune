@@ -32,15 +32,14 @@ Future<void> main() async {
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'com.cloudtune.app.audio',
       androidNotificationChannelName: 'CloudTune',
-      androidNotificationOngoing: true,
-      androidStopForegroundOnPause: true,
+      // Duraklatınca foreground servisi kapatmak ses oturumunu dağıtıyor,
+      // geri açarken klik/kırılma oluyordu. Servis açık kalsın. audio_service
+      // bunun için ongoing=false zorunlu kılar.
+      androidNotificationOngoing: false,
+      androidStopForegroundOnPause: false,
       androidNotificationIcon: 'mipmap/ic_launcher',
     ),
   );
-
-  // Ekolayzer efektini bir kez, açılışta uygula. Parça başına uygulanırsa
-  // ExoPlayer'da kısa ses kesintileri/çizirti oluşuyordu.
-  unawaited(PlayerController.instance.refreshEqualizer());
 
   unawaited(UpdateService.instance.init());
   unawaited(RepairBot.start());

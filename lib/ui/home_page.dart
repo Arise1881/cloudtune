@@ -291,20 +291,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _startListening(String localeId) async {
+    _voiceLocale = localeId;
     try {
-      final started = await _speech.listen(
+      // 7.x API'sinde listen() hata callback'i almaz; hata initialize()
+      // sırasında verilen errorListener üzerinden gelir (bkz. _toggleVoice).
+      await _speech.listen(
         onResult: _onVoiceResult,
-        onError: (error) {
-          // Bazı cihazlarda tr-TR ses verisi kurulu değildir. Bir kez cihazın
-          // varsayılan locale'ine düşerek aramayı yaşat.
-          if (!_voiceFallbackTried && localeId == 'tr-TR') {
-            _voiceFallbackTried = true;
-            unawaited(_startListening(''));
-            return;
-          }
-          _voiceError(error.errorMsg);
-          unawaited(_stopVoice());
-        },
         listenOptions: SpeechListenOptions(
           localeId: localeId,
           partialResults: true,
@@ -313,7 +305,6 @@ class _HomePageState extends State<HomePage> {
           listenFor: const Duration(seconds: 30),
         ),
       );
-      if (!started) throw StateError('listen returned false');
       if (mounted) setState(() => _listening = true);
     } catch (_) {
       if (!_voiceFallbackTried && localeId == 'tr-TR') {
@@ -336,7 +327,17 @@ class _HomePageState extends State<HomePage> {
       // speech_to_text izni initialize() sırasında ister; hasPermission
       // yalnızca mevcut durumu okur. Bu yüzden önce initialize çağrılır.
       final available = await _speech.initialize(
-        onError: (e) => _voiceError(e.errorMsg),
+        onError: (e) {
+          // Bazı cihazlarda tr-TR ses verisi yoktur. Bir kez cihazın varsayılan
+          // locale'ine düşerek sesli aramayı çalışır tut.
+          if (!_voiceFallbackTried && _voiceLocale == 'tr-TR') {
+            _voiceFallbackTried = true;
+            unawaited(_startListening(''));
+            return;
+          }
+          _voiceError(e.errorMsg);
+          unawaited(_stopVoice());
+        },
         onStatus: (s) {
           if (s == 'done' || s == 'notListening' || s == 'aborted') {
             if (mounted) setState(() => _listening = false);

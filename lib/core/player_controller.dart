@@ -10,7 +10,6 @@ import 'download_service.dart';
 import 'library.dart';
 import 'models.dart';
 import 'repair_bot.dart';
-import 'settings_service.dart';
 import 'youtube_service.dart';
 
 /// Merkezi çalar. Bildirim, kilit ekranı, Bluetooth ve Android Auto
@@ -20,30 +19,23 @@ import 'youtube_service.dart';
 /// önbellek/ısıtma, hata kurtarma ve parça atlama mantığı.
 class PlayerController extends BaseAudioHandler with ChangeNotifier {
   PlayerController._() {
-    _equalizer = AndroidEqualizer();
-    // Çizirti/kırılma önlemi: düşük bufferForPlayback değeri ağ titremesinde
-    // ExoPlayer'ı sık sık yeniden tamponlamaya zorluyor. Başlangıç gecikmesi
-    // biraz artsa da 1,5 sn / 2,5 sn eşikleri akıcı ses sağlıyor. Lazy
-    // preparation kapalı: kaynak tam hazır olmadan play() çağrısı ilk
-    // milisaniyelerde klik/kırılma üretiyordu.
-    _player = AudioPlayer(
-      audioPipeline: AudioPipeline(androidAudioEffects: [_equalizer]),
-      audioLoadConfiguration: AudioLoadConfiguration(
-        androidLoadControl: AndroidLoadControl(
-          minBufferDuration: const Duration(seconds: 12),
-          maxBufferDuration: const Duration(seconds: 30),
-          bufferForPlaybackDuration: const Duration(milliseconds: 1500),
-          bufferForPlaybackAfterRebufferDuration:
-              const Duration(milliseconds: 2500),
-          prioritizeTimeOverSizeThresholds: true,
-        ),
-      ),
-      useLazyPreparation: false,
-    );
+    // Özel AndroidLoadControl (12/30 sn, prioritizeTime) ağ dalgalanmasında
+    // ExoPlayer'ı yeniden tamponlama döngüsüne sokuyordu. Varsayılan
+    // yapılandırmaya (2,5/5 sn eşik) dönüldü. Lazy preparation kapalı: kaynak
+    // tam hazır olmadan play() ilk milisaniyelerde klik üretiyordu.
+    // AndroidEqualizer ses zincirine takıldığında kapalı olsa bile tüm
+    // parçalarda çizirti/underrun ürettiği için efekti tamamen kaldırdık.
+    _player = AudioPlayer(useLazyPreparation: false);
 
     _player.playerStateStream.listen(_onPlayerState);
+    // playbackEventStream pozisyon her tick'inde (~4 Hz) akıyor. Her olayda
+    // _broadcast() çağırmak media-session/notification'ı ve tüm UI dinleyicilerini
+    // saniyede 4 kez güncelliyordu; ana thread'deki bu yük ses yolunda
+    // mikro kesintilere (çizirti) yol açıyordu. Durum/pozisyon/süre zaten
+    // kendi kontrollü kanallarından broadcast ediliyor. Burada yalnızca hata
+    // yakalanır.
     _player.playbackEventStream.listen(
-      (_) => _broadcast(),
+      (_) {},
       onError: (Object error, StackTrace _) => _onPlaybackError(error),
     );
     _player.positionStream.listen(_onPosition);
@@ -59,7 +51,6 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   static final PlayerController instance = PlayerController._();
 
-  late final AndroidEqualizer _equalizer;
   late final AudioPlayer _player;
 
   List<Track> _queue = const <Track>[];
@@ -94,8 +85,10 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   bool get sleepTimerActive => _sleepEndsAt != null;
 
-  static const int _lookahead = 5;
-  static const int _maxPreloads = 3;
+  // Arka planda 3 parçanın adresini çözmek aktif ses akışının bant genişliğini
+  // yiyor ve takılmaya yol açıyordu. Bir parça, iki adım ileri yeterli.
+  static const int _lookahead = 2;
+  static const int _maxPreloads = 1;
   final Set<String> _preloaded = <String>{};
   int _activePreloads = 0;
 
@@ -182,10 +175,10 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
       await _player.play();
       unawaited(Library.instance.remember(track));
-      unawaited(_preloadUpcoming());
-      // Ekolayzer efekti her parçada yeniden yapılandırılırsa ExoPlayer
-      // kısa bir ses kesintisi/çizirti üretiyor. Yalnızca ayar değişiminde
-      // uygulanır (bkz. refreshEqualizer).
+      // İlk tampon tamamlanmadan prefetch başlarsa aktif akışa rakip oluyor.
+      Timer(const Duration(seconds: 4), () {
+        if (!_isStale(transition, generation)) unawaited(_preloadUpcoming());
+      });
     } on AudioBlocked catch (error) {
       if (_isStale(transition, generation)) return;
       if (kDebugMode) debugPrint('CT AudioBlocked ${track.id}: ${error.reason}');
@@ -282,15 +275,14 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   }
 
   void _onPosition(Duration position) {
-    final second = position.inSeconds;
-    if (second == _lastBroadcastSecond) return;
-    _lastBroadcastSecond = second;
+    // Bildirim/media session 1 sn'de bir güncellenince bazı cihazlarda ses
+    // yolunda mikro kesintiler oluyordu. Arayüz kendi positionStream'ini
+    // kullandığı için 3 sn'lik kova yeterli.
+    final bucket = position.inSeconds ~/ 3;
+    if (bucket == _lastBroadcastSecond) return;
+    _lastBroadcastSecond = bucket;
     _broadcast();
   }
-
-  /// Ayarlar ekranından ekolayzer açılıp/kapatıldığında veya başlangıçta
-  /// bir kez çağrılır. Parça başına çağrılmaz; aksi halde ses kırılır.
-  Future<void> refreshEqualizer() => _applyEqualizer();
 
   /// Sesli arama mikrofona basıldığında müziği duraklatıp geri vermek için
   /// kullanılır. `play()` bir toggle olduğu için onun yerine bunu kullan.
@@ -299,30 +291,6 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     await _player.play();
     _broadcast();
   }
-
-  Future<void> _applyEqualizer() async {
-    if (kIsWeb || !Platform.isAndroid) return;
-    final settings = SettingsService.instance;
-    try {
-      await _equalizer.setEnabled(settings.equalizerEnabled);
-      if (!settings.equalizerEnabled) return;
-      final params = await _equalizer.parameters;
-      final bands = params.bands;
-      if (bands.isEmpty) return;
-      final gains = _eqGains(settings.equalizerPreset);
-      for (var i = 0; i < bands.length; i++) {
-        await bands[i].setGain(gains[i % gains.length]);
-      }
-    } catch (_) {}
-  }
-
-  static List<double> _eqGains(String preset) => switch (preset) {
-        'flat' => [0, 0, 0, 0, 0],
-        'bass' => [8, 5, 0, -1, 1],
-        'treble' => [-1, 0, 2, 6, 8],
-        'vocal' => [-2, 1, 5, 3, 0],
-        _ => [0, 0, 0, 0, 0],
-      };
 
   void _onPlayerState(PlayerState state) {
     _broadcast();
