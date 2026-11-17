@@ -69,51 +69,134 @@ Kullanıcıya bağlantı bilgisi veya ham hata mesajı gösterilmez; hatalar Tü
 
 ---
 
-## Depo yapısı
+## Android sürüm ve cihaz uyumu
+
+| Android | API | Destek | Not |
+|---|---|---|---|
+| 7.0 – 7.1 | 24 – 25 | ✅ | `minSdk 24` — Flutter 3.x ve `app_links` alt sınırı |
+| 8.0 – 8.1 | 26 – 27 | ✅ | Evrensel veya ABI'ye özel APK |
+| 9 – 10 | 28 – 29 | ✅ | Depolama izni `Download/CloudTune` için istenir |
+| 11 – 14 | 30 – 34 | ✅ | Bildirim izni, kilit ekranı kontrolleri |
+| 15+ | 35+ | ✅ | `targetSdk 36`, `resizeableActivity`, tablet/katlanabilir |
+
+| Mimari | Paket | Cihaz |
+|---|---|---|
+| `arm64-v8a` | `CloudTune-arm64.apk` | Çoğu modern telefon/tablet |
+| `armeabi-v7a` | `CloudTune-armv7.apk` | Eski 32-bit cihazlar |
+| `x86_64` | `CloudTune-x86_64.apk` | x86 tablet, emülatör, ChromeOS |
+| Tümü | `CloudTune-universal.apk` | Bilinmeyen mimari / GUI indirmede varsayılan |
+
+`minSdk` değeri `android/gradle.properties` içindeki `cloudtune.minSdk=24`'ten okunur. Flutter'ın minSdk migrasyonu `app/build.gradle.kts` dosyasını geri yazsa bile değer korunur. `AndroidManifest.xml` içindeki `supports-screens` (small→xlarge, anyDensity) ve `resizeableActivity=true` telefon, tablet, katlanabilir ve geniş ekran cihazları kapsar.
+
+---
+
+## Dosya haritası (kaynak depo)
 
 ```
+README.md                  Bu dosya: özellikler, kurulum, uyum, güncelleme, gizlilik
+LICENSE                    MIT lisans
+pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.35+236)
+analysis_options.yaml      Dart/Flutter linter kuralları
+.metadata                  Flutter proje metadata
+release.sh                 Build → analyze/test → artifact → GitHub release → push
+.gitignore                 Geçici/üretilmiş dosya hariç tutmaları
+
 lib/
-  main.dart                  Uygulama girişi, ThemeData, sistem teması dinleyicisi
+  main.dart                Giriş, AudioService init, ThemeData, sistem teması dinleyicisi,
+                           uygulama bağlantıları (app_links)
   core/
-    app_palette.dart         Tema duyarlı renk paleti (açık/koyu yüzeyler, metin, ayırıcı)
-    theme_state.dart         Vurgu rengi + çözümlenmiş parlaklık (ThemeMode.system dahil)
-    settings_service.dart    Yerel tercihler (tema, ekolayzer, dil, radyo, indirme)
-    player_controller.dart   ExoPlayer kuyruğu, geçişler, ses, ekolayzer, prefetch
-    youtube_service.dart     InnerTube arama, sanatçı parçaları, akış çözümleme
-    library.dart             Geçmiş, beğeniler, çalma listeleri
-    download_service.dart    Cihaza indirme ve çevrimdışı çalma
-    update_service.dart      OTA manifest, ABI'ye göre APK seçimi, kurulum
-    room_service.dart        MQTT oda durumu
-    repair_bot.dart          Sessiz hata onarımı
-    link_resolver.dart       YouTube bağlantı çözümleme
-    link_handler.dart        Uygulama içi bağlantı yönlendirme
-    models.dart              Track ve veri modelleri
-    test_tracks.dart         Debug/emülatör test parçaları
+    app_palette.dart       Tema duyarlı renk paleti (yüzey, metin, ayırıcı, ikon)
+    theme_state.dart       Vurgu rengi + çözümlenmiş Brightness (system dahil)
+    settings_service.dart  Cihaz içi tercihler (tema, ekolayzer, dil, radyo, indirme)
+    player_controller.dart ExoPlayer kuyruğu, geçiş koruması, ses, ekolayzer, prefetch
+    youtube_service.dart   InnerTube arama, sanatçı parçaları, akış çözümleme
+    library.dart           Geçmiş, beğeniler, çalma listeleri
+    models.dart            Track ve veri modelleri
+    download_service.dart  Cihaza indirme, çevrimdışı çalma
+    update_service.dart    OTA manifest, ABI seçimi, APK indirme/kurulum
+    room_service.dart      MQTT oda durumu
+    repair_bot.dart        Sessiz akış onarımı
+    link_resolver.dart     YouTube bağlantı çözümleme (5 host)
+    link_handler.dart      Uygulama içi bağlantı yönlendirme
+    test_tracks.dart       Debug/emülatör test parçaları
   ui/
-    home_page.dart           Ana sayfa, arama, sesli arama, feed/sonuç yenileme
-    player_page.dart         Tam ekran oynatıcı
-    mini_player.dart         Alt mini oynatıcı
-    track_tile.dart          Parça satırı
+    home_page.dart         Ana sayfa, arama, sesli arama, feed/sonuç yenileme
+    player_page.dart       Tam ekran oynatıcı
+    mini_player.dart       Alt mini oynatıcı
+    track_tile.dart        Parça satırı
   screens/
-    settings_screen.dart     Tema, ekolayzer, bağlantılar, indirme ayarları
-    artist_page.dart         Sanatçı parçaları
-    playlist_page.dart       Çalma listesi detayı
-    my_playlists_page.dart   Çalma listelerim
-    downloads_page.dart      İndirilenler
-    room_page.dart           Oda ekranı
-android/                     Android Gradle + manifest (minSdk 24, tüm ABI'ler)
-linux/ windows/ ios/ web/    Masaüstü ve web runner'ları
-tool/bootstrap.sh            Android platform dosyalarını üret/yamala
-tool/patch_android.py        Android yapılandırma yamaları
-test/                        Birim testler
-release.sh                   Build → artifact → GitHub release → manifest push
+    settings_screen.dart   Tema, ekolayzer, bağlantılar, indirme ayarları
+    artist_page.dart       Sanatçı parçaları
+    playlist_page.dart     Çalma listesi detayı
+    my_playlists_page.dart Çalma listelerim
+    downloads_page.dart    İndirilenler
+    room_page.dart         Oda ekranı
+
+test/link_resolver_test.dart  Bağlantı çözümleme birim testleri (11 test)
+tool/bootstrap.sh             flutter create sonrası Android dosyalarını üret/yamala
+tool/patch_android.py         Manifest izinleri, intent-filter, servisler, minSdk yaması
+.github/workflows/build.yml   Android + Linux CI
+.github/workflows/ios-build.yml   iOS IPA derleme (CI)
+.github/workflows/windows-build.yml Windows zip derleme (CI)
+
+android/
+  build.gradle.kts, settings.gradle.kts, gradle.properties, gradlew*
+  gradle/wrapper/            Gradle wrapper
+  local.properties           Yerel SDK yolu (repoya alınmaz)
+  app/build.gradle.kts       imza, ABI, sürüm, minSdk=24 (property'den)
+  app/src/main/AndroidManifest.xml  İzinler, supports-screens, servis/alıcı, intent-filter
+  app/src/debug|profile/AndroidManifest.xml  Debug/profile izinleri
+  app/src/main/kotlin/.../MainActivity.kt   Android giriş aktivitesi
+  app/src/main/res/          launcher ikonları, splash, tema stilleri, keep.xml,
+                             network_security_config.xml, favori ikonları
+ios/    Runner, AppDelegate, Info.plist, xcassets, xcodeproj/xcworkspace, Flutter config
+linux/  CMakeLists, runner/, flutter/  GTK uygulama ve Flutter embedder
+windows/ CMakeLists, runner/, flutter/  Win32 uygulama ve Flutter embedder
+web/    index.html, manifest.json, favicon.png, icons/, splash/  PWA runner
 ```
+
+## Dosya haritası (dağıtım deposu — `cloudtune-dist`)
+
+```
+README.md       Kullanıcıya yönelik indirme/kurulum/Gizlilik sayfası (GitHub ana sayfası)
+index.html      GitHub Pages indirme portalı (QR kodlar, sürüm kartları, bağlantılar)
+update.json     OTA manifest: sürüm, versionCode, notlar, platform → asset URL
+apps.json       AltStore/SideStore kaynak dosyası (iOS IPA sürümü)
+icon.png        Uygulama ikonu (Pages + DEB masaüstü girişi)
+header.png      Pages başlık görseli
+apk-qr.png      Android indirme QR kodu
+ipa-qr.png      iOS kaynak QR kodu
+sidestore-qr.png SideStore QR kodu
+video-poster.png Pages video kapak görseli
+tunnel.txt      Altyapı notu (Cloudflare tüneli)
+```
+
+> Release asset'leri (`CloudTune-*.apk`, `.deb`, `.tar.gz`, `.zip`, `.ipa`) depo
+> içinde tutulmaz; GitHub release `cloudtune-latest` etiketinde yayınlanır.
+> `update.json` ve `index.html` bu asset'leri işaret eder.
+
+---
+
+## Kurulum sonrası doğrulama
+
+```bash
+flutter analyze                       # 0 hata
+flutter test                          # 11/11
+ADB_SERIAL=emulator-xxxx python3 ct_full_test.py   # 20/20 (debug APK)
+# Gerçek kullanıcı akışı:
+#   uninstall → release APK install → ilk açılış → izinler → tema → arama
+```
+
+Gerçek kullanıcı simülasyonunda kontrol edilenler: sürüm `3.0.35 / 236`,
+`minSdk=24`, uygulama foreground, mikrofon ilk dokunuşta açılıyor, açık temada
+zemin açık/metin koyu, arama sonuçlarında “Çalma Listeleri ve Şarkılar” ve
+“Arama Sonuçları” başlıkları, logcat'te crash yok.
 
 ---
 
 ## Derleme
 
-Gereksinimler: Flutter SDK, Android SDK (API 35+), Java 17.
+Gereksinimler: Flutter SDK, Android SDK (API 36 — compileSdk/targetSdk), Java 17.
 
 ```bash
 bash tool/bootstrap.sh          # Android platform dosyalarını üret/yamala
