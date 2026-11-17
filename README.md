@@ -195,7 +195,8 @@ ADB_SERIAL=emulator-xxxx python3 ct_full_test.py   # 20/20 (debug APK)
 Gerçek kullanıcı simülasyonunda kontrol edilenler: sürüm `3.0.37 / 238`,
 `minSdk=24`, uygulama foreground, mikrofon ilk dokunuşta açılıyor, açık temada
 zemin açık/metin koyu, arama sonuçlarında “Çalma Listeleri ve Şarkılar” ve
-“Arama Sonuçları” başlıkları, logcat'te crash yok.
+“Arama Sonuçları” başlıkları, logcat'te crash yok. Linux'ta oynat/duraklat
+ikonu `PlayerController.playing` üzerinden anında güncelleniyor.
 
 ---
 
