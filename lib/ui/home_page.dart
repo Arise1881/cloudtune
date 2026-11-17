@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import '../core/download_service.dart';
@@ -17,6 +18,8 @@ import '../core/theme_state.dart';
 import '../core/update_service.dart';
 import '../core/youtube_service.dart';
 import '../screens/artist_page.dart';
+import '../screens/downloads_page.dart';
+import '../screens/my_playlists_page.dart';
 import '../screens/playlist_page.dart';
 import '../screens/room_page.dart';
 import '../screens/settings_screen.dart';
@@ -54,6 +57,11 @@ class _HomePageState extends State<HomePage> {
   bool _listening = false;
   bool _showHistory = false;
   bool _prefetched = false;
+  bool _speechReady = false;
+  bool _voiceSubmitDone = false;
+  bool _voiceFallbackTried = false;
+  bool _pausedForVoice = false;
+  String _voiceLocale = 'tr-TR';
   Track? _lastTrack;
 
   @override
@@ -62,7 +70,6 @@ class _HomePageState extends State<HomePage> {
     Library.instance.addListener(_onLibraryChanged);
     PlayerController.instance.addListener(_onPlayerChanged);
     _prepareFeed();
-    RepairBot.start();
 
     _feedTimer = Timer.periodic(const Duration(seconds: 20), (_) {
       if (mounted && _results == null) setState(_reloadFeeds);
@@ -76,7 +83,8 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     Library.instance.removeListener(_onLibraryChanged);
     PlayerController.instance.removeListener(_onPlayerChanged);
-    RepairBot.stop();
+    unawaited(_restorePlaybackAfterVoice());
+    unawaited(_speech.cancel());
     _feedTimer?.cancel();
     _playlistTimer?.cancel();
     _input.dispose();
@@ -149,7 +157,7 @@ class _HomePageState extends State<HomePage> {
 
   void _onLibraryChanged() {
     if (!mounted) return;
-    setState(_buildFeed);
+    setState(_prepareFeed);
   }
 
   void _onPlayerChanged() {
@@ -250,37 +258,118 @@ class _HomePageState extends State<HomePage> {
     await _submit(text);
   }
 
-  Future<void> _toggleVoice() async {
-    if (_listening) {
+  /// Mikrofon açıldığında duraklatılan müziği geri verir. `play()` toggle
+  /// olduğu için PlayerController.resume() kullanılır.
+  Future<void> _restorePlaybackAfterVoice() async {
+    if (!_pausedForVoice) return;
+    _pausedForVoice = false;
+    try {
+      await PlayerController.instance.resume();
+    } catch (_) {}
+  }
+
+  Future<void> _stopVoice() async {
+    try {
       await _speech.stop();
-      if (mounted) setState(() => _listening = false);
+    } catch (_) {}
+    unawaited(_restorePlaybackAfterVoice());
+    if (mounted) setState(() => _listening = false);
+  }
+
+  void _onVoiceResult(SpeechRecognitionResult result) {
+    final text = result.recognizedWords.trim();
+    if (text.isEmpty || !mounted) return;
+    if (!result.finalResult) {
+      _input.text = text;
       return;
     }
+    if (_voiceSubmitDone) return;
+    _voiceSubmitDone = true;
+    _input.text = text;
+    unawaited(_stopVoice());
+    unawaited(_submit(text));
+  }
 
+  Future<void> _startListening(String localeId) async {
     try {
-      final available = await _speech.initialize();
-      if (!available) {
-        _toast('Sesli arama kullanılamıyor.');
-        return;
-      }
-      await _speech.listen(
-        onResult: (result) {
-          final text = result.recognizedWords.trim();
-          if (text.isEmpty || !mounted) return;
-          _submit(text);
+      final started = await _speech.listen(
+        onResult: _onVoiceResult,
+        onError: (error) {
+          // Bazı cihazlarda tr-TR ses verisi kurulu değildir. Bir kez cihazın
+          // varsayılan locale'ine düşerek aramayı yaşat.
+          if (!_voiceFallbackTried && localeId == 'tr-TR') {
+            _voiceFallbackTried = true;
+            unawaited(_startListening(''));
+            return;
+          }
+          _voiceError(error.errorMsg);
+          unawaited(_stopVoice());
         },
         listenOptions: SpeechListenOptions(
-          localeId: 'tr-TR',
+          localeId: localeId,
           partialResults: true,
-          cancelOnError: true,
-          pauseFor: const Duration(milliseconds: 400),
+          cancelOnError: false,
+          pauseFor: const Duration(milliseconds: 700),
           listenFor: const Duration(seconds: 30),
         ),
       );
+      if (!started) throw StateError('listen returned false');
       if (mounted) setState(() => _listening = true);
     } catch (_) {
-      if (mounted) setState(() => _listening = false);
+      if (!_voiceFallbackTried && localeId == 'tr-TR') {
+        _voiceFallbackTried = true;
+        await _startListening('');
+        return;
+      }
+      _voiceError('Sesli arama başlatılamadı.');
+      unawaited(_stopVoice());
     }
+  }
+
+  Future<void> _toggleVoice() async {
+    if (_listening) {
+      await _stopVoice();
+      return;
+    }
+
+    if (!_speechReady) {
+      // speech_to_text izni initialize() sırasında ister; hasPermission
+      // yalnızca mevcut durumu okur. Bu yüzden önce initialize çağrılır.
+      final available = await _speech.initialize(
+        onError: (e) => _voiceError(e.errorMsg),
+        onStatus: (s) {
+          if (s == 'done' || s == 'notListening' || s == 'aborted') {
+            if (mounted) setState(() => _listening = false);
+            unawaited(_restorePlaybackAfterVoice());
+          }
+        },
+      );
+      if (!available) {
+        final hasPermission = await _speech.hasPermission;
+        _toast(
+          hasPermission
+              ? 'Sesli arama kullanılamıyor.'
+              : 'Mikrofon izni gerekli.',
+        );
+        return;
+      }
+      _speechReady = true;
+    }
+
+    // Müzik çalarken mikrofon şarkıyı duyuyor, tanıma başarısız oluyordu.
+    if (PlayerController.instance.playing) {
+      await PlayerController.instance.pause();
+      _pausedForVoice = true;
+    }
+
+    _voiceSubmitDone = false;
+    _voiceFallbackTried = false;
+    await _startListening('tr-TR');
+  }
+
+  void _voiceError(String msg) {
+    _toast(msg);
+    if (mounted) setState(() => _listening = false);
   }
 
   void _openArtist(Track track) {
@@ -306,15 +395,88 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _createPlaylistFromQueue() {
-    final tracks = PlayerController.instance.tracks;
-    if (tracks.isEmpty) {
-      _toast('Kuyruk boş; önce bir müzik çalın.');
+  Future<void> _createPlaylist() async {
+    final controller = TextEditingController(
+      text: 'Çalma Listesi ${Library.instance.playlistNames.length + 1}',
+    );
+    final sources = <String, List<Track>>{
+      'Çalındı': PlayerController.instance.tracks,
+      'Beğenilenler': Library.instance.liked,
+      'İndirilenler': DownloadService.instance.savedTracks,
+    };
+    final labels = sources.keys.toList();
+    var selected = 0;
+
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Çalma listesi oluştur'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Liste adı'),
+            ),
+            const SizedBox(height: 12),
+            StatefulBuilder(
+              builder: (context, setDialogState) => RadioGroup<int>(
+                groupValue: selected,
+                onChanged: (value) {
+                  if (value != null) {
+                    setDialogState(() => selected = value);
+                  }
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var i = 0; i < labels.length; i++)
+                      ListTile(
+                        title: Text(labels[i]),
+                        leading: Radio<int>(value: i),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('İptal'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('Oluştur'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+
+    if (name == null || name.isEmpty) return;
+    final source = sources[labels[selected]]!;
+    if (source.isEmpty) {
+      _toast('Bu kaynakta şarkı yok.');
       return;
     }
-    final name = 'Çalma Listesi ${Library.instance.playlistNames.length + 1}';
-    Library.instance.createPlaylist(name, tracks);
+    await Library.instance.createPlaylist(name, source);
     _toast('Liste oluşturuldu: $name');
+  }
+
+  void _returnHome() {
+    setState(() {
+      _results = null;
+      _input.clear();
+      _prepareFeed();
+    });
+    _scroll.animateTo(
+      0,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
   }
 
   @override
@@ -337,9 +499,69 @@ class _HomePageState extends State<HomePage> {
                     ),
             ),
             const MiniPlayer(),
+            _navBar(),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _navBar() {
+    final accent = ThemeState.value;
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF181818),
+        border: Border(top: BorderSide(color: Colors.white10)),
+      ),
+      child: Row(
+        children: [
+          _navItem(Icons.home, 'Ana Sayfa', true, accent, _returnHome),
+          _navItem(Icons.groups, 'Odalar', false, accent, () => _openRooms()),
+          _navItem(Icons.favorite_border, 'Kitaplığım', false, accent,
+              () => _openRooms(tab: 1)),
+          _navItem(Icons.settings_outlined, 'Ayarlar', false, accent, () {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _navItem(
+    IconData icon,
+    String label,
+    bool active,
+    Color accent,
+    VoidCallback onTap,
+  ) {
+    final color = active ? accent : Colors.white60;
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 7),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 20, color: color),
+              const SizedBox(height: 2),
+              Text(label,
+                  style: TextStyle(
+                      color: color,
+                      fontSize: 10,
+                      fontWeight: active ? FontWeight.w800 : FontWeight.w500)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openRooms({int tab = 0}) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => RoomPage(initialTab: tab)),
     );
   }
 
@@ -359,25 +581,21 @@ class _HomePageState extends State<HomePage> {
           IconButton(
             tooltip: 'Çalma listesi oluştur',
             icon: const Icon(Icons.playlist_add),
-            onPressed: _createPlaylistFromQueue,
+            onPressed: _createPlaylist,
           ),
           IconButton(
-            tooltip: 'Oda',
-            icon: const Icon(Icons.person_outline),
+            tooltip: 'Oluşturulan çalma listeleri',
+            icon: const Icon(Icons.playlist_play),
             onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const RoomPage()),
+              MaterialPageRoute(builder: (_) => const MyPlaylistsPage()),
             ),
           ),
           IconButton(
-            tooltip: 'Ayarlar',
-            icon: const Icon(Icons.settings),
+            tooltip: 'İndirilenler',
+            icon: const Icon(Icons.download),
             onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              MaterialPageRoute(builder: (_) => const DownloadsPage()),
             ),
-          ),
-          ValueListenableBuilder<Color>(
-            valueListenable: ThemeState.accent,
-            builder: (context, color, _) => Icon(Icons.graphic_eq, color: color),
           ),
         ],
       ),
@@ -552,10 +770,7 @@ class _HomePageState extends State<HomePage> {
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
-            onPressed: () => setState(() {
-              _results = null;
-              _input.clear();
-            }),
+            onPressed: _returnHome,
             icon: const Icon(Icons.arrow_back),
             label: const Text('Ana sayfaya dön'),
           ),

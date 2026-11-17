@@ -5,6 +5,8 @@ import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.MediaStore
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -36,6 +38,17 @@ class MainActivity : AudioServiceActivity() {
             requestPermissions(
                 arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
                 storagePermissionCode
+            )
+        }
+
+        // Sesli arama icin mikrofon izni.
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(android.Manifest.permission.RECORD_AUDIO),
+                2002
             )
         }
 

@@ -1,5 +1,6 @@
-/// Resolves YouTube links. Only four hosts are accepted:
-/// youtu.be, m.youtube.com, youtube.com and www.youtube.com.
+/// Resolves YouTube links. Five hosts are accepted: youtu.be,
+/// m.youtube.com, youtube.com, www.youtube.com and music.youtube.com.
+/// Watch, shorts, embed, live and v URLs are handled the same way.
 class YoutubeLinkResolver {
   YoutubeLinkResolver._();
 
@@ -8,6 +9,7 @@ class YoutubeLinkResolver {
     'm.youtube.com',
     'youtube.com',
     'www.youtube.com',
+    'music.youtube.com',
   };
 
   static final RegExp _idPattern = RegExp(r'^[A-Za-z0-9_-]{11}$');
@@ -27,7 +29,7 @@ class YoutubeLinkResolver {
     }
   }
 
-  /// True when the text is a link on one of the four allowed hosts.
+  /// True when the text is a link on one of the allowed hosts.
   static bool isYoutubeLink(String input) {
     final uri = _parse(input);
     return uri != null && allowedHosts.contains(uri.host.toLowerCase());

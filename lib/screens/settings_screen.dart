@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/library.dart';
@@ -6,11 +8,9 @@ import '../core/repair_bot.dart';
 import '../core/settings_service.dart';
 import '../core/theme_state.dart';
 import '../core/update_service.dart';
-import 'local_sync_page.dart';
-import 'other_settings_page.dart';
-import 'proxy_settings_page.dart';
 
-/// Application preferences: appearance, playback, language and system tools.
+/// Uygulama tercihleri: görünüm, çalma, dil ve sistem.
+/// Proxy, SponsorBlock, yerel eşitleme ve "diğerleri" araçları yoktur.
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
@@ -44,13 +44,23 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final library = Library.instance;
+    final accent = ThemeState.accent.value;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Ayarlar')),
+      appBar: AppBar(
+        title: const Text('Ayarlar'),
+        actions: [
+          IconButton(
+            tooltip: 'Ana sayfa',
+            icon: const Icon(Icons.home_outlined),
+            onPressed: () =>
+                Navigator.of(context).popUntil((route) => route.isFirst),
+          ),
+        ],
+      ),
       body: ListenableBuilder(
         listenable: Listenable.merge([
-          library,
+          Library.instance,
           ThemeState.accent,
           SettingsService.instance,
           RepairBot.instance,
@@ -60,103 +70,89 @@ class SettingsScreen extends StatelessWidget {
           final settings = SettingsService.instance;
 
           return ListView(
-            padding: const EdgeInsets.only(bottom: 32),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
             children: [
-              ListTile(
-                leading: const Icon(Icons.home_outlined),
-                title: const Text('Ana Sayfaya Dön'),
-                onTap: () =>
-                    Navigator.of(context).popUntil((route) => route.isFirst),
-              ),
-              const Divider(),
-
-              const _SectionTitle('Görünüm'),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: Text(
-                  'Vurgu rengi uygulamanın tamamına uygulanır.',
-                  style: TextStyle(color: Colors.white54, fontSize: 12),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    for (final color in accentOptions)
-                      _ColorDot(
-                        color: color,
-                        selected: ThemeState.value == color,
-                        onTap: () => ThemeState.set(color),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<ThemeMode>(
+              _ProfileCard(accent: accent),
+              const SizedBox(height: 20),
+              _SectionCard(
+                icon: Icons.palette_outlined,
+                title: 'Görünüm',
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 4, 16, 10),
+                    child: Text(
+                      'Vurgu rengi uygulamanın tamamına uygulanır.',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        for (final color in accentOptions)
+                          _ColorDot(
+                            color: color,
+                            selected: ThemeState.value == color,
+                            onTap: () => ThemeState.set(color),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _DropdownRow<ThemeMode>(
+                    icon: Icons.brightness_6_outlined,
+                    title: 'Tema',
                     value: settings.themeMode,
-                    isExpanded: true,
                     items: const [
                       DropdownMenuItem(
-                        value: ThemeMode.dark,
-                        child: Text('Koyu'),
-                      ),
+                          value: ThemeMode.dark, child: Text('Koyu')),
                       DropdownMenuItem(
-                        value: ThemeMode.light,
-                        child: Text('Açık'),
-                      ),
+                          value: ThemeMode.light, child: Text('Açık')),
                       DropdownMenuItem(
-                        value: ThemeMode.system,
-                        child: Text('Sistem'),
-                      ),
+                          value: ThemeMode.system, child: Text('Sistem')),
                     ],
                     onChanged: (value) =>
                         settings.setThemeMode(value ?? ThemeMode.dark),
                   ),
-                ),
+                  SwitchListTile(
+                    secondary: const Icon(Icons.nightlight),
+                    title: const Text('OLED siyah arka plan'),
+                    subtitle: const Text('Koyu temada saf siyah zemin.'),
+                    value: settings.oledBlack,
+                    onChanged: settings.setOledBlack,
+                  ),
+                ],
               ),
-              SwitchListTile(
-                secondary: const Icon(Icons.nightlight),
-                title: const Text('OLED siyah arka plan'),
-                subtitle: const Text(
-                  'Koyu tema + saf siyah zemin (OLED tasarrufu).',
-                ),
-                value: settings.oledBlack,
-                onChanged: (value) => settings.setOledBlack(value),
-              ),
-              const Divider(),
-
-              const _SectionTitle('Çalma'),
-              SwitchListTile(
-                secondary: const Icon(Icons.radio),
-                title: const Text('Sonsuz radyo'),
-                subtitle:
-                    const Text('Şarkı bitince benzer parçalarla devam eder.'),
-                value: library.radioEnabled,
-                onChanged: (value) {
-                  library.setRadioEnabled(value);
-                  PlayerController.instance.setRadioMode(value);
-                },
-              ),
-              SwitchListTile(
-                secondary: const Icon(Icons.download_outlined),
-                title: const Text('Cihaza doğrudan indir'),
-                subtitle: const Text(
-                  'İndirilenler Download/CloudTune klasörüne kaydedilir.',
-                ),
-                value: library.downloadToDevice,
-                onChanged: (value) => library.setDownloadToDevice(value),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
+              const SizedBox(height: 16),
+              _SectionCard(
+                icon: Icons.audiotrack,
+                title: 'Çalma',
+                children: [
+                  SwitchListTile(
+                    secondary: const Icon(Icons.radio),
+                    title: const Text('Sonsuz radyo'),
+                    subtitle:
+                        const Text('Şarkı bitince benzer parçalarla devam eder.'),
+                    value: Library.instance.radioEnabled,
+                    onChanged: (value) {
+                      Library.instance.setRadioEnabled(value);
+                      PlayerController.instance.setRadioMode(value);
+                    },
+                  ),
+                  SwitchListTile(
+                    secondary: const Icon(Icons.download_outlined),
+                    title: const Text('Cihaza doğrudan indir'),
+                    subtitle: const Text(
+                        'İndirilenler Download/CloudTune klasörüne kaydedilir.'),
+                    value: Library.instance.downloadToDevice,
+                    onChanged: Library.instance.setDownloadToDevice,
+                  ),
+                  _DropdownRow<String>(
+                    icon: Icons.high_quality_outlined,
+                    title: 'Ses kalitesi',
                     value: settings.audioQuality,
-                    isExpanded: true,
                     items: [
                       for (final quality in SettingsService.audioQualities)
                         DropdownMenuItem(
@@ -167,113 +163,51 @@ class SettingsScreen extends StatelessWidget {
                     onChanged: (value) =>
                         settings.setAudioQuality(value ?? 'high'),
                   ),
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: Text(
-                  'Ses kalitesi akış indirme/oyunculuk boyunca kullanılır.',
-                  style: TextStyle(color: Colors.white54, fontSize: 12),
-                ),
-              ),
-              SwitchListTile(
-                secondary: const Icon(Icons.graphic_eq),
-                title: const Text('Ekolayzer'),
-                subtitle: const Text('Sesi artır / azalt (uygulama içi).'),
-                value: settings.equalizerEnabled,
-                onChanged: (value) => settings.setEqualizerEnabled(value),
-              ),
-              if (settings.equalizerEnabled)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final preset in SettingsService.equalizerPresets)
-                        ChoiceChip(
-                          label: Text(_eqLabel(preset)),
-                          selected: settings.equalizerPreset == preset,
-                          onSelected: (selected) =>
-                              settings.setEqualizerPreset(
-                            selected ? preset : 'normal',
-                          ),
-                        ),
-                    ],
+                  SwitchListTile(
+                    secondary: const Icon(Icons.graphic_eq),
+                    title: const Text('Ekolayzer'),
+                    subtitle: const Text('Sesi artır / azalt.'),
+                    value: settings.equalizerEnabled,
+                    onChanged: (value) async {
+                      await settings.setEqualizerEnabled(value);
+                      unawaited(
+                        PlayerController.instance.refreshEqualizer(),
+                      );
+                    },
                   ),
-                ),
-              const Divider(),
-
-              const _SectionTitle('SponsorBlock'),
-              SwitchListTile(
-                secondary: const Icon(Icons.skip_next),
-                title: const Text('Sponsor bölümlerini atla'),
-                subtitle: const Text(
-                  'Topluluk verisiyle işaretlenen bölümler otomatik geçilir.',
-                ),
-                value: settings.sponsorBlockEnabled,
-                onChanged: (value) => settings.setSponsorBlockEnabled(value),
+                  if (settings.equalizerEnabled)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                      child: Wrap(
+                        spacing: 8,
+                        children: [
+                          for (final preset in SettingsService.equalizerPresets)
+                            ChoiceChip(
+                              label: Text(_eqLabel(preset)),
+                              selected: settings.equalizerPreset == preset,
+                              onSelected: (selected) async {
+                                await settings.setEqualizerPreset(
+                                  selected ? preset : 'normal',
+                                );
+                                unawaited(
+                                  PlayerController.instance.refreshEqualizer(),
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
               ),
-              if (settings.sponsorBlockEnabled)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final entry
-                          in SettingsService.sponsorCategoryLabels.entries)
-                        ChoiceChip(
-                          label: Text(entry.value),
-                          selected:
-                              settings.sponsorCategories.contains(entry.key),
-                          onSelected: (selected) => settings.setSponsorCategory(
-                            entry.key,
-                            selected,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              const Divider(),
-
-              const _SectionTitle('Bağlantı ve araçlar'),
-              ListTile(
-                leading: const Icon(Icons.public),
-                title: const Text('Proxy ayarları'),
-                subtitle: const Text(
-                  'Ses akışı için proxy sunucuları, sıralı kullanım, test.',
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _open(context, const ProxySettingsPage()),
-              ),
-              ListTile(
-                leading: const Icon(Icons.devices_other),
-                title: const Text('Yerel eşitleme'),
-                subtitle: const Text(
-                  'Aynı ağdaki CloudTune cihazlarını bul, eşleştir, veri aktar.',
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _open(context, const LocalSyncPage()),
-              ),
-              ListTile(
-                leading: const Icon(Icons.tune),
-                title: const Text('Diğer ayarlar'),
-                subtitle: const Text(
-                  'Sözler, uyku zamanlayıcı, yedekleme, önbellek, kayıtlar.',
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _open(context, const OtherSettingsPage()),
-              ),
-              const Divider(),
-
-              const _SectionTitle('Dil Desteği'),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
+              const SizedBox(height: 16),
+              _SectionCard(
+                icon: Icons.language,
+                title: 'Dil',
+                children: [
+                  _DropdownRow<String>(
+                    icon: Icons.translate,
+                    title: 'Uygulama dili',
                     value: settings.languageCode,
-                    isExpanded: true,
                     items: [
                       for (final entry
                           in SettingsService.supportedLanguages.entries)
@@ -284,53 +218,68 @@ class SettingsScreen extends StatelessWidget {
                     ],
                     onChanged: (value) => settings.setLanguage(value ?? 'tr'),
                   ),
-                ),
+                ],
               ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: Text(
-                  'Varsayılan dil: Türkçe. Uygulama yeniden başlatılmadan uygulanır.',
-                  style: TextStyle(color: Colors.white54, fontSize: 12),
-                ),
-              ),
-              const Divider(),
-
-              const _SectionTitle('Sistem'),
-              ListTile(
-                leading: _RepairDot(active: RepairBot.instance.active),
-                title: const Text('Onarım botu'),
-                subtitle: Text(_repairStatus()),
-              ),
-              ListTile(
-                leading: const Icon(Icons.system_update_alt),
-                title: const Text('Güncellemeler'),
-                subtitle: Text(_updateStatus()),
-                trailing: UpdateService.instance.checking
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.chevron_right),
-                onTap: () => _checkUpdates(context),
-              ),
-              if (UpdateService.instance.updateAvailable)
-                ListTile(
-                  leading: Icon(Icons.download_for_offline_outlined,
-                      color: ThemeState.value),
-                  title: const Text('Güncellemeyi indir ve kur'),
-                  subtitle: UpdateService.instance.downloading
-                      ? LinearProgressIndicator(
-                          value: UpdateService.instance.downloadProgress,
-                        )
-                      : const Text('Yeni sürümü şimdi yükle'),
-                  onTap: () => _installUpdate(context),
-                ),
-              const Divider(),
-              const ListTile(
-                leading: Icon(Icons.music_note),
-                title: Text('CloudTune'),
-                subtitle: Text('YouTube akışlı müzik çalar · reklamsız'),
+              const SizedBox(height: 16),
+              _SectionCard(
+                icon: Icons.build_outlined,
+                title: 'Sistem',
+                children: [
+                  ListTile(
+                    leading: _RepairDot(active: RepairBot.instance.active),
+                    title: const Text('Onarım botu'),
+                    subtitle: Text(_repairStatus()),
+                    trailing: TextButton(
+                      onPressed: () async {
+                        await RepairBot.instance.forceScan();
+                        if (context.mounted) {
+                          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                            const SnackBar(
+                                content: Text('Onarım taraması tamamlandı.')),
+                          );
+                        }
+                      },
+                      child: const Text('Şimdi tara'),
+                    ),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.description_outlined),
+                    title: const Text('Onarım kayıtları'),
+                    subtitle: const Text('Son onarım olaylarını görüntüle.'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _showRepairLogs(context),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.system_update_alt),
+                    title: const Text('Güncellemeler'),
+                    subtitle: Text(_updateStatus()),
+                    trailing: UpdateService.instance.checking
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.chevron_right),
+                    onTap: () => _checkUpdates(context),
+                  ),
+                  if (UpdateService.instance.updateAvailable)
+                    ListTile(
+                      leading: Icon(Icons.download_for_offline_outlined,
+                          color: accent),
+                      title: const Text('Güncellemeyi indir ve kur'),
+                      subtitle: UpdateService.instance.downloading
+                          ? LinearProgressIndicator(
+                              value: UpdateService.instance.downloadProgress,
+                            )
+                          : const Text('Yeni sürümü şimdi yükle'),
+                      onTap: () => _installUpdate(context),
+                    ),
+                  const ListTile(
+                    leading: Icon(Icons.music_note),
+                    title: Text('CloudTune'),
+                    subtitle: Text('YouTube akışlı müzik çalar · reklamsız'),
+                  ),
+                ],
               ),
             ],
           );
@@ -339,22 +288,55 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  void _open(BuildContext context, Widget page) {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
-  }
-
   String _repairStatus() {
     final bot = RepairBot.instance;
     if (!bot.active) return 'Beklemede';
     if (bot.scanning) return 'Denetleniyor…';
-    return 'Arka planda etkin · ${bot.fixCount} onarım';
+    final status = 'Arka planda etkin · ${bot.fixCount} onarım';
+    return bot.pendingCount > 0 ? '$status · ${bot.pendingCount} bekliyor' : status;
+  }
+
+  Future<void> _showRepairLogs(BuildContext context) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Onarım kayıtları'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: FutureBuilder<String>(
+              future: RepairBot.readLogText(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final text = snapshot.data ?? '';
+                if (text.isEmpty) return const Text('Kayıt yok.');
+                return SingleChildScrollView(child: Text(text));
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await RepairBot.clearLogs();
+                if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Temizle'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Kapat'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   String _updateStatus() {
     final update = UpdateService.instance;
-    if (update.updateAvailable) {
-      return 'Yeni sürüm: ${update.latestVersion}';
-    }
+    if (update.updateAvailable) return 'Yeni sürüm: ${update.latestVersion}';
     if (update.error != null) return 'Kontrol edilemedi';
     return 'Kurulu sürüm: ${update.installedVersion}';
   }
@@ -362,7 +344,6 @@ class SettingsScreen extends StatelessWidget {
   Future<void> _checkUpdates(BuildContext context) async {
     await UpdateService.instance.checkForUpdate(force: true);
     if (!context.mounted) return;
-
     final update = UpdateService.instance;
     final message = update.updateAvailable
         ? 'Yeni sürüm hazır: ${update.latestVersion}'
@@ -386,35 +367,124 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
-String _eqLabel(String preset) {
-  switch (preset) {
-    case 'bass':
-      return 'Bas';
-    case 'treble':
-      return 'Tiz';
-    case 'vocal':
-      return 'Vokal';
-    default:
-      return 'Düz';
-  }
-}
+String _eqLabel(String preset) => switch (preset) {
+      'bass' => 'Bas',
+      'treble' => 'Tiz',
+      'vocal' => 'Vokal',
+      'flat' => 'Düz',
+      _ => 'Normal',
+    };
 
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text);
+class _ProfileCard extends StatelessWidget {
+  const _ProfileCard({required this.accent});
 
-  final String text;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: ThemeState.value,
-          fontSize: 12,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 1.1,
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [accent.withValues(alpha: 0.32), const Color(0xFF242424)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 28,
+            backgroundColor: accent.withValues(alpha: 0.25),
+            child: Icon(Icons.settings, color: accent),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('CloudTune',
+                    style:
+                        TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                SizedBox(height: 4),
+                Text('Müziğini sen yönet · reklamsız, odaklı, hızlı',
+                    style: TextStyle(color: Colors.white70, fontSize: 12)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    required this.icon,
+    required this.title,
+    required this.children,
+  });
+
+  final IconData icon;
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = ThemeState.value;
+    return Card(
+      color: const Color(0xFF1E1E1E),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+            child: Row(
+              children: [
+                Icon(icon, size: 18, color: accent),
+                const SizedBox(width: 8),
+                Text(title,
+                    style: TextStyle(
+                        color: accent,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8)),
+              ],
+            ),
+          ),
+          ...children,
+        ],
+      ),
+    );
+  }
+}
+
+class _DropdownRow<T> extends StatelessWidget {
+  const _DropdownRow({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.items,
+    required this.onChanged,
+  });
+
+  final IconData icon;
+  final String title;
+  final T value;
+  final List<DropdownMenuItem<T>> items;
+  final ValueChanged<T?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(title),
+      trailing: DropdownButtonHideUnderline(
+        child: DropdownButton<T>(
+          value: value,
+          items: items,
+          onChanged: onChanged,
         ),
       ),
     );
@@ -471,9 +541,7 @@ class _RepairDot extends StatelessWidget {
       decoration: BoxDecoration(
         color: color,
         shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 8),
-        ],
+        boxShadow: [BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 8)],
       ),
     );
   }

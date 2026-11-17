@@ -2,21 +2,21 @@ import 'dart:async';
 
 import 'package:app_links/app_links.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 
 import 'core/download_service.dart';
 import 'core/library.dart';
 import 'core/link_handler.dart';
 import 'core/link_resolver.dart';
-import 'core/local_sync_service.dart'
-    if (dart.library.html) 'core/local_sync_web.dart';
 import 'core/player_controller.dart';
-import 'core/proxy_service.dart';
 import 'core/repair_bot.dart';
 import 'core/room_service.dart';
 import 'core/settings_service.dart';
+import 'core/test_tracks.dart';
 import 'core/theme_state.dart';
 import 'core/update_service.dart';
+import 'screens/room_page.dart';
 import 'ui/home_page.dart';
 
 Future<void> main() async {
@@ -24,11 +24,6 @@ Future<void> main() async {
 
   await Library.instance.init();
   await SettingsService.instance.init();
-  await ProxyService.instance.init();
-  await LocalSyncService.instance.init();
-  if (LocalSyncService.instance.enabled) {
-    unawaited(LocalSyncService.instance.start());
-  }
   await DownloadService.instance.init();
   await RoomService.init();
 
@@ -42,6 +37,10 @@ Future<void> main() async {
       androidNotificationIcon: 'mipmap/ic_launcher',
     ),
   );
+
+  // Ekolayzer efektini bir kez, açılışta uygula. Parça başına uygulanırsa
+  // ExoPlayer'da kısa ses kesintileri/çizirti oluşuyordu.
+  unawaited(PlayerController.instance.refreshEqualizer());
 
   unawaited(UpdateService.instance.init());
   unawaited(RepairBot.start());
@@ -59,6 +58,8 @@ class CloudTuneApp extends StatefulWidget {
 class _CloudTuneAppState extends State<CloudTuneApp> {
   final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSub;
+  String? _lastLink;
+  DateTime _lastLinkAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
@@ -80,6 +81,50 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
   }
 
   Future<void> _openLink(String link) async {
+    // app_links ilk bağlantıyı hem getInitialLink hem uriLinkStream üzerinden
+    // verebilir. İkinci çağrı aynı kuyruğu yeniden yükleyip ilk akışı keser.
+    final now = DateTime.now();
+    if (link == _lastLink &&
+        now.difference(_lastLinkAt) < const Duration(seconds: 2)) {
+      return;
+    }
+    _lastLink = link;
+    _lastLinkAt = now;
+
+    final uri = Uri.tryParse(link);
+    // Yalnizca emulator dogrulamasi icin; ana sayfada hicbir yerde sunulmaz.
+    if (kDebugMode &&
+        uri != null &&
+        uri.scheme == 'cloudtune' &&
+        uri.host == 'test' &&
+        uri.pathSegments.contains('play')) {
+      unawaited(PlayerController.instance.playQueue(
+        TestTracks.shuffled(),
+        0,
+        radio: false,
+      ));
+      return;
+    }
+    final isRoom = uri != null &&
+        ((uri.scheme == 'cloudtune' && uri.host == 'room') ||
+            (uri.scheme == 'https' &&
+                uri.host == 'cloudtune.app' &&
+                uri.pathSegments.isNotEmpty &&
+                uri.pathSegments.first == 'room'));
+    if (isRoom) {
+      final segments = uri.pathSegments;
+      final code = uri.scheme == 'cloudtune'
+          ? (segments.isNotEmpty ? segments.first : '')
+          : (segments.length > 1 ? segments[1] : '');
+      if (code.isNotEmpty && context.mounted) {
+        unawaited(Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => RoomPage(initialCode: code.toUpperCase()),
+          ),
+        ));
+      }
+      return;
+    }
     if (!YoutubeLinkResolver.isYoutubeLink(link)) return;
     await LinkHandler.open(link);
   }

@@ -1,7 +1,7 @@
 name: cloudtune
 description: CloudTune - açık kaynak, YouTube destekli müzik çalar.
 publish_to: "none"
-version: 3.0.31+232
+version: 3.0.32+233
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -22,6 +22,7 @@ dependencies:
   image_picker: ^1.2.4
   speech_to_text: 7.6.0-beta.4
   connectivity_plus: ^6.0.5
+  mqtt_client: ^10.14.0
 
 dev_dependencies:
   flutter_test:

@@ -4,8 +4,6 @@ import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import 'models.dart';
-import 'proxy_client_io.dart' if (dart.library.html) 'proxy_client_web.dart';
-import 'proxy_service.dart';
 import 'settings_service.dart';
 
 /// YouTube oturumu/robot doğrulaması istediğinde atılır.
@@ -20,7 +18,8 @@ class AudioBlocked implements Exception {
 }
 
 /// Arama, liste, sanatçı ve ses akışı çözümlemesi.
-/// Tüm istekler cihazdan doğrudan YouTube'a gider; aracı sunucu yoktur.
+/// Önce doğrudan YouTube'a bakılır; robot doğrulaması/engel durumunda
+/// herkese açık bir Invidious API'sine yedeklenir. Arayüzde aracı ayarı yoktur.
 class YoutubeService {
   YoutubeService._();
 
@@ -29,11 +28,77 @@ class YoutubeService {
   final YoutubeExplode _yt = YoutubeExplode();
 
   static const Duration _requestTimeout = Duration(seconds: 5);
+  static const Duration _invTimeout = Duration(seconds: 8);
   static const Duration _cacheTtl = Duration(minutes: 60);
+  static const String _invBase = 'https://yt.chocolatemoo53.com';
 
   final Map<String, Uri> _cache = {};
   final Map<String, DateTime> _cachedAt = {};
   final Map<String, String> _playability = {};
+
+  /// Herkese açık Invidious örneğine JSON isteği. Hata durumunda null döner.
+  Future<dynamic> _invGet(String path) async {
+    try {
+      final response = await http
+          .get(Uri.parse('$_invBase$path'))
+          .timeout(_invTimeout);
+      if (response.statusCode != 200) return null;
+      return jsonDecode(response.body);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Invidious video/search kaydını [Track]'a çevirir. Geçersizse null.
+  Track? _trackFromInv(Map m) {
+    final id = (m['videoId'] ?? m['id'])?.toString() ?? '';
+    final title = m['title']?.toString().trim() ?? '';
+    if (id.isEmpty || title.isEmpty) return null;
+
+    final author = m['author']?.toString().trim() ?? '';
+    final rawAuthorId = m['authorId'];
+    final artistId = (rawAuthorId is String && rawAuthorId.isNotEmpty)
+        ? rawAuthorId
+        : null;
+
+    Duration? duration;
+    final rawLength = m['lengthSeconds'];
+    final seconds = rawLength is num
+        ? rawLength.toInt()
+        : int.tryParse(rawLength?.toString() ?? '');
+    if (seconds != null && seconds > 0) duration = Duration(seconds: seconds);
+
+    String? coverUrl;
+    final thumbs = m['videoThumbnails'] ?? m['thumbnails'];
+    if (thumbs is List) {
+      String urlOf(dynamic t) => t is Map ? (t['url']?.toString() ?? '') : '';
+      for (final quality in const ['medium', 'high', 'standard', 'default']) {
+        for (final t in thumbs) {
+          if (t is! Map || t['quality']?.toString() != quality) continue;
+          final url = urlOf(t);
+          if (url.isNotEmpty) {
+            coverUrl = url;
+            break;
+          }
+        }
+        if (coverUrl != null) break;
+      }
+      coverUrl ??= thumbs.map(urlOf).firstWhere(
+            (u) => u.isNotEmpty,
+            orElse: () => '',
+          );
+      if (coverUrl.isEmpty) coverUrl = null;
+    }
+
+    return Track(
+      id: id,
+      title: title,
+      artist: author.isEmpty ? 'Bilinmeyen' : author,
+      duration: duration,
+      artistId: artistId,
+      coverUrl: coverUrl,
+    );
+  }
 
   Track _fromVideo(Video video) => Track(
         id: video.id.value,
@@ -49,19 +114,75 @@ class YoutubeService {
     if (q.isEmpty) return const <Track>[];
     try {
       final videos = await _yt.search.search(q);
-      return videos
+      final found = videos
           .map(_fromVideo)
           .where((track) => track.id.isNotEmpty && track.title.isNotEmpty)
           .take(limit)
           .toList();
+      if (found.isNotEmpty) return found;
     } catch (_) {
-      return const <Track>[];
+      // Robot doğrulaması: Invidious aramasına geç.
     }
+
+    final data = await _invGet(
+      '/api/v1/search?q=${Uri.encodeQueryComponent(q)}&type=video',
+    );
+    if (data is List) {
+      return data
+          .whereType<Map>()
+          .map(_trackFromInv)
+          .whereType<Track>()
+          .where((track) => track.id.isNotEmpty && track.title.isNotEmpty)
+          .take(limit)
+          .toList();
+    }
+    return const <Track>[];
   }
 
   Future<Track> trackById(String id) async {
-    final video = await _yt.videos.get(id);
-    return _fromVideo(video);
+    try {
+      final video = await _yt.videos.get(id);
+      return _fromVideo(video);
+    } catch (_) {
+      // Invidious video detayını dene.
+    }
+
+    final data = await _invGet('/api/v1/videos/${Uri.encodeComponent(id)}');
+    if (data is Map) {
+      final track = _trackFromInv(data);
+      if (track != null) return track;
+    }
+
+    // Son çare: oEmbed yalnızca başlık/sanatçı/kapak verir.
+    try {
+      final watch = 'https://www.youtube.com/watch?v=$id';
+      final response = await http
+          .get(
+            Uri.parse(
+              'https://www.youtube.com/oembed'
+              '?url=${Uri.encodeQueryComponent(watch)}&format=json',
+            ),
+          )
+          .timeout(_requestTimeout);
+      if (response.statusCode == 200) {
+        final oembed = jsonDecode(response.body);
+        if (oembed is Map) {
+          final title = oembed['title']?.toString().trim() ?? '';
+          if (title.isNotEmpty) {
+            final author = oembed['author_name']?.toString().trim() ?? '';
+            final thumb = oembed['thumbnail_url']?.toString() ?? '';
+            return Track(
+              id: id,
+              title: title,
+              artist: author.isEmpty ? 'Bilinmeyen' : author,
+              coverUrl: thumb.isEmpty ? null : thumb,
+            );
+          }
+        }
+      }
+    } catch (_) {}
+
+    throw StateError('track-unavailable: $id');
   }
 
   Future<List<Track>> playlist(
@@ -80,6 +201,26 @@ class YoutubeService {
     } catch (_) {
       // Mix/Radyo listelerinde video kimliği yedek kaynak olur.
     }
+
+    if (tracks.isEmpty) {
+      final data = await _invGet(
+        '/api/v1/playlists/${Uri.encodeComponent(id)}',
+      );
+      if (data is Map && data['videos'] is List) {
+        for (final item in data['videos'] as List) {
+          if (item is! Map) continue;
+          final track = _trackFromInv(item);
+          if (track == null ||
+              track.id.isEmpty ||
+              track.title.trim().isEmpty) {
+            continue;
+          }
+          tracks.add(track);
+          if (tracks.length >= limit) break;
+        }
+      }
+    }
+
     if (tracks.isEmpty && seed != null) {
       return related(seed, limit: limit);
     }
@@ -95,19 +236,50 @@ class YoutubeService {
         author: info.author,
       );
     } catch (_) {
-      return null;
+      // Invidious liste detayına geç.
     }
+
+    final data = await _invGet(
+      '/api/v1/playlists/${Uri.encodeComponent(id)}',
+    );
+    if (data is Map) {
+      final title = data['title']?.toString().trim() ?? '';
+      if (title.isNotEmpty) {
+        final author = data['author']?.toString().trim() ?? '';
+        return PlaylistInfo(
+          id: data['playlistId']?.toString() ?? id,
+          title: title,
+          author: author.isEmpty ? 'Bilinmeyen' : author,
+        );
+      }
+    }
+    return null;
   }
 
   Future<List<Track>> related(String videoId, {int limit = 30}) async {
     try {
       final video = await _yt.videos.get(videoId);
       final related = await _yt.videos.getRelatedVideos(video);
-      if (related == null) return const <Track>[];
-      return related.take(limit).map(_fromVideo).toList();
+      if (related != null && related.isNotEmpty) {
+        return related.take(limit).map(_fromVideo).toList();
+      }
     } catch (_) {
-      return const <Track>[];
+      // Invidious önerilerine geç.
     }
+
+    final data = await _invGet(
+      '/api/v1/videos/${Uri.encodeComponent(videoId)}',
+    );
+    if (data is Map && data['recommendedVideos'] is List) {
+      return (data['recommendedVideos'] as List)
+          .whereType<Map>()
+          .map(_trackFromInv)
+          .whereType<Track>()
+          .where((track) => track.id.isNotEmpty && track.title.isNotEmpty)
+          .take(limit)
+          .toList();
+    }
+    return const <Track>[];
   }
 
   Future<List<Track>> artistTracks(
@@ -198,28 +370,12 @@ class YoutubeService {
     throw StateError('audio-unavailable: $id');
   }
 
-  /// Proxy etkinse isteği seçili sunucu üzerinden gönderir.
-  /// İstemci her istekten sonra kapatılır; soket sızıntısı olmaz.
   Future<http.Response> _innerTubePost(
     Uri url, {
     required Map<String, String> headers,
     required String body,
-  }) async {
-    final proxy = ProxyService.instance;
-    if (!proxy.enabled) {
-      return http.post(url, headers: headers, body: body).timeout(
-            _requestTimeout,
-          );
-    }
-    final client = ctProxiedClient(proxy.currentUri());
-    try {
-      return await client.post(url, headers: headers, body: body).timeout(
-            _requestTimeout,
-          );
-    } finally {
-      client.close();
-    }
-  }
+  }) =>
+      http.post(url, headers: headers, body: body).timeout(_requestTimeout);
 
   /// Doğrudan InnerTube isteğiyle oynatılabilir ses adresini bulur.
   /// İstemci sırası, cihazda doğrulanmış olanlardan başlar.
@@ -272,7 +428,8 @@ class YoutubeService {
         if (streaming is! Map) continue;
 
         final formats = <Map>[
-          ...(streaming['adaptiveFormats'] as List? ?? const []).whereType<Map>(),
+          ...(streaming['adaptiveFormats'] as List? ?? const [])
+              .whereType<Map>(),
           ...(streaming['formats'] as List? ?? const []).whereType<Map>(),
         ];
 
@@ -301,6 +458,36 @@ class YoutubeService {
         // Bir istemci başarısızsa sıradakine geç.
       }
     }
+
+    // Son çare: Invidious local=true akış adresleri.
+    final inv = await _invGet(
+      '/api/v1/videos/${Uri.encodeComponent(id)}?local=true',
+    );
+    if (inv is Map) {
+      final formats = <Map>[
+        ...(inv['formatStreams'] as List? ?? const []).whereType<Map>(),
+        ...(inv['adaptiveFormats'] as List? ?? const []).whereType<Map>(),
+      ];
+      final audio = formats.where((format) {
+        final type = format['type']?.toString() ?? '';
+        final url = format['url']?.toString() ?? '';
+        return type.startsWith('audio/') && url.isNotEmpty;
+      }).toList();
+
+      for (final itag in itags) {
+        for (final format in audio) {
+          if (format['itag']?.toString() != itag.toString()) continue;
+          final uri = Uri.tryParse(format['url'] as String);
+          if (uri != null) return uri;
+        }
+      }
+      for (final format in audio) {
+        final uri = Uri.tryParse(format['url'] as String);
+        if (uri != null) return uri;
+      }
+    }
+
+    // Çözülemezse null: oynatıcı aynı parçada hata gösterir, atlama yapmaz.
     return null;
   }
 

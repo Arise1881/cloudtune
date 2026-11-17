@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 
 import 'download_service.dart';
@@ -15,18 +13,6 @@ import 'repair_bot.dart';
 import 'settings_service.dart';
 import 'youtube_service.dart';
 
-class _SkipSegment {
-  const _SkipSegment(this.start, this.end);
-
-  final double start;
-  final double end;
-
-  bool contains(Duration position) {
-    final seconds = position.inMilliseconds / 1000;
-    return seconds >= start && seconds < end;
-  }
-}
-
 /// Merkezi çalar. Bildirim, kilit ekranı, Bluetooth ve Android Auto
 /// `audio_service` üzerinden bu sınıfa bağlanır.
 ///
@@ -35,21 +21,24 @@ class _SkipSegment {
 class PlayerController extends BaseAudioHandler with ChangeNotifier {
   PlayerController._() {
     _equalizer = AndroidEqualizer();
-    // ExoPlayer varsayılan olarak 2,5 sn tampon bekler. İlk ses ve parça
-    // geçişi için bu değer ~0,6 sn'ye indirilir; ileri tampon korunur.
+    // Çizirti/kırılma önlemi: düşük bufferForPlayback değeri ağ titremesinde
+    // ExoPlayer'ı sık sık yeniden tamponlamaya zorluyor. Başlangıç gecikmesi
+    // biraz artsa da 1,5 sn / 2,5 sn eşikleri akıcı ses sağlıyor. Lazy
+    // preparation kapalı: kaynak tam hazır olmadan play() çağrısı ilk
+    // milisaniyelerde klik/kırılma üretiyordu.
     _player = AudioPlayer(
       audioPipeline: AudioPipeline(androidAudioEffects: [_equalizer]),
       audioLoadConfiguration: AudioLoadConfiguration(
         androidLoadControl: AndroidLoadControl(
           minBufferDuration: const Duration(seconds: 12),
           maxBufferDuration: const Duration(seconds: 30),
-          bufferForPlaybackDuration: const Duration(milliseconds: 600),
+          bufferForPlaybackDuration: const Duration(milliseconds: 1500),
           bufferForPlaybackAfterRebufferDuration:
-              const Duration(milliseconds: 900),
+              const Duration(milliseconds: 2500),
           prioritizeTimeOverSizeThresholds: true,
         ),
       ),
-      useLazyPreparation: true,
+      useLazyPreparation: false,
     );
 
     _player.playerStateStream.listen(_onPlayerState);
@@ -90,7 +79,6 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   bool _shuffleBusy = false;
   String? _error;
   int _lastBroadcastSecond = -1;
-  int _failureStreak = 0;
   DateTime _lastRecovery = DateTime.fromMillisecondsSinceEpoch(0);
 
   Timer? _sleepTimer;
@@ -111,8 +99,9 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   final Set<String> _preloaded = <String>{};
   int _activePreloads = 0;
 
-  List<_SkipSegment> _skipSegments = const <_SkipSegment>[];
-  _SkipSegment? _lastSkipped;
+  /// Otomatik parça geçişinde beklenen süre. Önbellek ve ısıtma sayesinde
+  /// toplam geçiş yaklaşık 1 saniyede tamamlanır.
+  static const Duration transitionDelay = Duration(milliseconds: 1000);
 
   List<Track> get tracks => _queue;
   int get index => _index;
@@ -149,7 +138,6 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     _originalQueue = _queue;
     _shuffleMode = false;
     _radioMode = radio && Library.instance.radioEnabled;
-    _failureStreak = 0;
     _publishQueue();
     await _playAt(startIndex.clamp(0, tracks.length - 1));
   }
@@ -175,8 +163,6 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     _index = index;
     _loading = true;
     _error = null;
-    _skipSegments = const <_SkipSegment>[];
-    _lastSkipped = null;
     _publishMediaItem(_queue[index]);
     _broadcast();
     notifyListeners();
@@ -190,7 +176,6 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       if (_isStale(transition, generation)) return;
 
       _loading = false;
-      _failureStreak = 0;
       _error = null;
       _broadcast();
       notifyListeners();
@@ -198,22 +183,16 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       await _player.play();
       unawaited(Library.instance.remember(track));
       unawaited(_preloadUpcoming());
-      unawaited(_applyEqualizer());
-      if (SettingsService.instance.sponsorBlockEnabled) {
-        unawaited(_loadSponsorSegments(track.id));
-      }
+      // Ekolayzer efekti her parçada yeniden yapılandırılırsa ExoPlayer
+      // kısa bir ses kesintisi/çizirti üretiyor. Yalnızca ayar değişiminde
+      // uygulanır (bkz. refreshEqualizer).
     } on AudioBlocked catch (error) {
       if (_isStale(transition, generation)) return;
-      _loading = false;
-      _error = 'stream';
-      notifyListeners();
+      if (kDebugMode) debugPrint('CT AudioBlocked ${track.id}: ${error.reason}');
       unawaited(RepairBot.instance.reportEvent('audio_blocked', {
         'video_id': track.id,
         'reason': error.reason,
       }));
-      await _skipAfterFailure(transition, generation, const Duration(milliseconds: 400));
-    } catch (_) {
-      if (_isStale(transition, generation)) return;
       if (retry) {
         final direct = await YoutubeService.instance.forceDirect(track.id);
         if (_isStale(transition, generation)) return;
@@ -223,7 +202,6 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
             if (_isStale(transition, generation)) return;
             _loading = false;
             _error = null;
-            _failureStreak = 0;
             _broadcast();
             notifyListeners();
             await _player.play();
@@ -236,44 +214,67 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       if (_isStale(transition, generation)) return;
       _loading = false;
       _error = 'stream';
+      _broadcast();
       notifyListeners();
-      await _skipAfterFailure(transition, generation, const Duration(seconds: 2));
+      return;
+    } catch (error) {
+      if (_isStale(transition, generation)) return;
+      if (kDebugMode) debugPrint('CT _playAt ${track.id}: $error');
+      if (retry) {
+        final direct = await YoutubeService.instance.forceDirect(track.id);
+        if (_isStale(transition, generation)) return;
+        if (direct != null) {
+          try {
+            await _setSource(direct, resumeAt);
+            if (_isStale(transition, generation)) return;
+            _loading = false;
+            _error = null;
+            _broadcast();
+            notifyListeners();
+            await _player.play();
+            unawaited(Library.instance.remember(track));
+            unawaited(_preloadUpcoming());
+            return;
+          } catch (_) {}
+        }
+      }
+      if (_isStale(transition, generation)) return;
+      _loading = false;
+      _error = 'stream';
+      _broadcast();
+      notifyListeners();
+      return;
     }
   }
 
   Future<Uri> _resolveTrack(Track track) async {
     final saved = DownloadService.instance.savedPathOf(track.id);
-    if (saved != null) return Uri.file(saved);
+    if (saved != null && File(saved).existsSync()) return Uri.file(saved);
+    final direct = track.sourceUrl;
+    if (direct != null && direct.isNotEmpty) return Uri.parse(direct);
     return YoutubeService.instance.audioUri(track.id);
   }
 
-  Future<void> _skipAfterFailure(
-    int transition,
-    int generation,
-    Duration delay,
-  ) async {
-    _failureStreak++;
-    if (!hasNext || _failureStreak > 3) return;
-    await Future<void>.delayed(delay);
-    if (_isStale(transition, generation)) return;
-    await _advance();
-  }
-
   Future<void> _setSource(Uri uri, Duration? resumeAt) async {
+    final isYoutube = uri.host.endsWith('googlevideo.com') ||
+        uri.host.endsWith('youtube.com');
+    final headers = <String, String>{
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 14) '
+          'AppleWebKit/537.36 (KHTML, like Gecko) '
+          'Chrome/126.0 Mobile Safari/537.36',
+      'Accept': '*/*',
+      'Accept-Encoding': 'identity;q=1, *;q=0',
+    };
+    if (isYoutube) {
+      headers['Referer'] = 'https://www.youtube.com/';
+      headers['Origin'] = 'https://www.youtube.com/';
+    }
     await _player
         .setAudioSource(
           AudioSource.uri(
             uri,
             tag: mediaItem.value,
-            headers: const {
-              'User-Agent': 'Mozilla/5.0 (Linux; Android 14) '
-                  'AppleWebKit/537.36 (KHTML, like Gecko) '
-                  'Chrome/126.0 Mobile Safari/537.36',
-              'Referer': 'https://www.youtube.com/',
-              'Origin': 'https://www.youtube.com/',
-              'Accept': '*/*',
-              'Accept-Encoding': 'identity;q=1, *;q=0',
-            },
+            headers: headers,
           ),
           initialPosition: resumeAt,
         )
@@ -281,66 +282,22 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   }
 
   void _onPosition(Duration position) {
-    final skipped = _lastSkipped;
-    if (skipped != null) {
-      if (skipped.contains(position)) {
-        unawaited(_player.seek(_secs(skipped.end)));
-        return;
-      }
-      _lastSkipped = null;
-    }
-
-    final segment = _findSegment(position);
-    if (segment != null) {
-      _lastSkipped = segment;
-      unawaited(_player.seek(_secs(segment.end)));
-      return;
-    }
-
     final second = position.inSeconds;
     if (second == _lastBroadcastSecond) return;
     _lastBroadcastSecond = second;
     _broadcast();
   }
 
-  _SkipSegment? _findSegment(Duration position) {
-    for (final segment in _skipSegments) {
-      if (segment.contains(position)) return segment;
-    }
-    return null;
-  }
+  /// Ayarlar ekranından ekolayzer açılıp/kapatıldığında veya başlangıçta
+  /// bir kez çağrılır. Parça başına çağrılmaz; aksi halde ses kırılır.
+  Future<void> refreshEqualizer() => _applyEqualizer();
 
-  static Duration _secs(double seconds) =>
-      Duration(milliseconds: (seconds * 1000).round() + 100);
-
-  Future<void> _loadSponsorSegments(String videoId) async {
-    try {
-      final response = await http
-          .get(
-            Uri.https('sponsor.ajay.app', '/api/skipSegments', {
-              'videoID': videoId,
-            }),
-          )
-          .timeout(const Duration(seconds: 3));
-      if (response.statusCode != 200) return;
-      final data = jsonDecode(response.body);
-      if (data is! List || current?.id != videoId) return;
-      final enabled = SettingsService.instance.sponsorCategories.toSet();
-      _skipSegments = data.whereType<Map>().map((item) {
-        final category = item['category']?.toString();
-        if (category != null && category.isNotEmpty && !enabled.contains(category)) {
-          return null;
-        }
-        final segment = item['segment'];
-        if (segment is! List || segment.length < 2) return null;
-        final start = (segment[0] as num?)?.toDouble();
-        final end = (segment[1] as num?)?.toDouble();
-        if (start == null || end == null || end <= start) return null;
-        return _SkipSegment(start, end);
-      }).whereType<_SkipSegment>().toList();
-    } catch (_) {
-      // SponsorBlock verisi yoksa çalma etkilenmez.
-    }
+  /// Sesli arama mikrofona basıldığında müziği duraklatıp geri vermek için
+  /// kullanılır. `play()` bir toggle olduğu için onun yerine bunu kullan.
+  Future<void> resume() async {
+    if (_player.playing) return;
+    await _player.play();
+    _broadcast();
   }
 
   Future<void> _applyEqualizer() async {
@@ -370,14 +327,24 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   void _onPlayerState(PlayerState state) {
     _broadcast();
     if (state.processingState == ProcessingState.completed) {
-      unawaited(_advance());
+      unawaited(_advance(auto: true));
     }
   }
 
-  Future<void> _advance() async {
+  Future<void> _advance({bool auto = false}) async {
     if (_advancing || _shuffleBusy) return;
     _advancing = true;
     try {
+      if (auto) {
+        final nextIndex = _index + 1;
+        if (nextIndex < _queue.length &&
+            (_queue[nextIndex].sourceUrl ?? '').isEmpty) {
+          unawaited(YoutubeService.instance.prefetch(_queue[nextIndex].id));
+        }
+        final generation = _generation;
+        await Future<void>.delayed(transitionDelay);
+        if (_generation != generation) return;
+      }
       if (hasNext) {
         await _playAt(_index + 1);
         return;
@@ -412,7 +379,8 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   Future<void> extendRadio() => _extendRadio();
 
   Future<void> _onPlaybackError(Object error) async {
-    if (_recovering || _loading || current == null) return;
+    if (kDebugMode) debugPrint('CT playback error: $error');
+    if (_recovering || _loading || _error != null || current == null) return;
     final now = DateTime.now();
     if (now.difference(_lastRecovery) < const Duration(seconds: 4)) return;
     _lastRecovery = now;
@@ -443,7 +411,6 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         if (_player.playing) unawaited(_player.pause());
       });
     }
-    await SettingsService.instance.setSleepTimerMinutes(minutes);
     notifyListeners();
   }
 
@@ -513,8 +480,10 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         offset <= _lookahead && _index + offset < _queue.length;
         offset++) {
       if (_activePreloads >= _maxPreloads) break;
-      final id = _queue[_index + offset].id;
+      final upcoming = _queue[_index + offset];
+      final id = upcoming.id;
       if (_preloaded.contains(id)) continue;
+      if ((upcoming.sourceUrl ?? '').isNotEmpty) continue;
       if (DownloadService.instance.savedPathOf(id) != null) continue;
       _activePreloads++;
       try {

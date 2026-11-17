@@ -7,6 +7,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'download_service.dart';
+import 'link_handler.dart';
 import 'models.dart';
 import 'player_controller.dart';
 import 'youtube_service.dart';
@@ -26,132 +27,295 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
   static const String _logFileName = 'repair_bot_logs.json';
   static const int _maxLogEntries = 500;
 
+  static const int _maxDownloadAttempts = 3;
+  static const Duration _downloadCooldown = Duration(seconds: 60);
+  static const int _maxPendingAttempts = 4;
+  static const Duration _playbackUnrecoverableCooldown = Duration(minutes: 5);
+
   Timer? _timer;
+  bool _started = false;
   bool _scanning = false;
+  Future<void>? _scanFuture;
   bool _foreground = true;
   int _consecutiveFailures = 0;
   int _fixCount = 0;
   DateTime? _lastFixAt;
   String? _lastIssue;
+  DateTime? _lastPlaybackUnrecoverableAt;
+
+  final List<_PendingRepair> _pending = <_PendingRepair>[];
+  final Map<String, int> _downloadAttempts = <String, int>{};
+  final Map<String, DateTime> _nextDownloadAt = <String, DateTime>{};
 
   bool get active => _timer?.isActive ?? false;
   bool get scanning => _scanning;
   int get fixCount => _fixCount;
   DateTime? get lastFixAt => _lastFixAt;
   String? get lastIssue => _lastIssue;
+  int get pendingCount => _pending.length;
 
   static Future<void> start() async {
     final bot = instance;
-    if (bot.active) return;
+    if (bot._started) return;
+    bot._started = true;
 
     WidgetsBinding.instance.addObserver(bot);
     try {
       final info = await PackageInfo.fromPlatform();
       PlatformInfo.appVersion = '${info.version}+${info.buildNumber}';
     } catch (_) {}
+    // stop() may have been called while PackageInfo was resolving.
+    if (!bot._started) return;
     bot._schedule(bot._foreground ? _idleInterval : _backgroundInterval);
     bot.notifyListeners();
-    unawaited(RepairBot._ensureLogFile());
+    unawaited(_ensureLogFile());
   }
 
   static void stop() {
     final bot = instance;
     bot._timer?.cancel();
     bot._timer = null;
+    bot._started = false;
     WidgetsBinding.instance.removeObserver(bot);
     bot.notifyListeners();
+  }
+
+  /// Run a scan now. Concurrent callers share the in-flight scan future.
+  Future<void> forceScan() async {
+    final existing = _scanFuture;
+    if (existing != null) {
+      await existing;
+      return;
+    }
+    await _runScan();
   }
 
   void _schedule(Duration interval) {
     _timer?.cancel();
     _timer = Timer.periodic(interval, (_) {
-      if (_scanning) return;
-      _scanning = true;
-      unawaited(_scan());
+      unawaited(_runScan());
     });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_started) return;
     _foreground = state == AppLifecycleState.resumed;
     _schedule(
       _foreground
           ? (_consecutiveFailures > 0 ? _busyInterval : _idleInterval)
           : _backgroundInterval,
     );
-    if (_foreground && !_scanning) {
-      _scanning = true;
-      unawaited(_scan());
-    }
+    if (_foreground) unawaited(_runScan());
   }
 
-  Future<void> _scan() async {
+  /// Single entry point for every scan trigger. Deduplicates overlapping runs.
+  Future<void> _runScan() {
+    final existing = _scanFuture;
+    if (existing != null) return existing;
+
+    _scanning = true;
+    final future = _performScan();
+    _scanFuture = future;
+    return future;
+  }
+
+  Future<void> _performScan() async {
     try {
-      final player = PlayerController.instance;
-
-      // Playback failures: retry the current track once per scan.
-      if (player.error != null && player.current != null) {
-        _consecutiveFailures++;
-        _lastIssue = player.error;
-        await player.retry();
-        _fixCount++;
-        _lastFixAt = DateTime.now();
-        if (_consecutiveFailures >= 3) {
-          await _log('playback_unrecoverable', {
-            'video_id': player.current!.id,
-            'issue': player.error,
-            'fix_attempts': _consecutiveFailures,
-          });
-        }
-      } else if (player.current != null && _consecutiveFailures > 0) {
-        _consecutiveFailures = 0;
-        _schedule(_foreground ? _idleInterval : _backgroundInterval);
-      }
-
-      // Failed downloads are marked with a negative progress value.
-      final progress = DownloadService.instance.downloadProgress;
-      for (final entry in progress.entries) {
-        if (entry.value >= 0) continue;
-        _lastIssue = 'download_failed:${entry.key}';
-        await _log('download_failed', {'video_id': entry.key, 'retry': true});
-        unawaited(_retryDownload(entry.key));
-      }
-
-      // Report a link/search failure at most once every five minutes.
-      final issue = _lastIssue;
-      if (issue != null &&
-          (issue.startsWith('link_') || issue.startsWith('search_'))) {
-        final now = DateTime.now();
-        if (_lastFixAt == null || now.difference(_lastFixAt!) > const Duration(minutes: 5)) {
-          await _log(issue, {'auto_retry': true});
-          _lastFixAt = now;
-        }
-      }
-
-      if (_consecutiveFailures == 0 && _lastIssue != null) {
-        _lastIssue = null;
-      }
+      await _scan();
     } catch (_) {
       // The worker must never throw.
     } finally {
+      _scanFuture = null;
       _scanning = false;
       notifyListeners();
     }
   }
 
-  Future<void> _retryDownload(String videoId) async {
+  Future<void> _scan() async {
+    final now = DateTime.now();
+    // Keep stages independent: one broken service must not starve the rest.
     try {
-      Track? track;
-      for (final candidate in PlayerController.instance.tracks) {
-        if (candidate.id == videoId) {
-          track = candidate;
-          break;
+      await _repairPlayback(now);
+    } catch (_) {}
+    try {
+      await _repairDownloads(now);
+    } catch (_) {}
+    try {
+      await _repairPending(now);
+    } catch (_) {}
+
+    if (_consecutiveFailures == 0 && _pending.isEmpty) {
+      _lastIssue = null;
+    }
+  }
+
+  Future<void> _repairPlayback(DateTime now) async {
+    final player = PlayerController.instance;
+    final error = player.error;
+
+    if (error == null) {
+      // Reset only once the error is actually gone.
+      if (_consecutiveFailures > 0 || _lastPlaybackUnrecoverableAt != null) {
+        _consecutiveFailures = 0;
+        _lastPlaybackUnrecoverableAt = null;
+        _schedule(_foreground ? _idleInterval : _backgroundInterval);
+      }
+      return;
+    }
+
+    final track = player.current;
+    if (track == null) return;
+
+    _lastIssue = error;
+    await player.retry();
+
+    if (player.error == null) {
+      _consecutiveFailures = 0;
+      _lastPlaybackUnrecoverableAt = null;
+      _fixCount++;
+      _lastFixAt = DateTime.now();
+      _schedule(_foreground ? _idleInterval : _backgroundInterval);
+      await _log('playback_repaired', {'video_id': track.id});
+      return;
+    }
+
+    _consecutiveFailures++;
+    _schedule(_foreground ? _busyInterval : _backgroundInterval);
+
+    if (_consecutiveFailures >= 3) {
+      final loggedAt = _lastPlaybackUnrecoverableAt;
+      if (loggedAt == null ||
+          now.difference(loggedAt) >= _playbackUnrecoverableCooldown) {
+        _lastPlaybackUnrecoverableAt = now;
+        await _log('playback_unrecoverable', {
+          'video_id': track.id,
+          'issue': player.error,
+          'fix_attempts': _consecutiveFailures,
+        });
+      }
+    }
+  }
+
+  Future<void> _repairDownloads(DateTime now) async {
+    final service = DownloadService.instance;
+    final failureIds = service.failureIds;
+
+    // A failure forgotten elsewhere must also clear our local backoff state.
+    _downloadAttempts.removeWhere((id, _) => !failureIds.contains(id));
+    _nextDownloadAt.removeWhere((id, _) => !failureIds.contains(id));
+
+    for (final id in failureIds) {
+      final next = _nextDownloadAt[id];
+      if (next != null && now.isBefore(next)) continue;
+      // Exhausted IDs stay dormant until the failure is forgotten.
+      if ((_downloadAttempts[id] ?? 0) >= _maxDownloadAttempts) continue;
+
+      final Track? t = service.failedTrack(id);
+      final attempt = (_downloadAttempts[id] ?? 0) + 1;
+      _lastIssue = 'download_failed:$id';
+      await _log('download_failed', {
+        'video_id': id,
+        'title': t?.title,
+        'attempt': attempt,
+        'max_attempts': _maxDownloadAttempts,
+        'retry': true,
+      });
+
+      var succeeded = false;
+      try {
+        await service.retryDownload(id);
+        succeeded = service.savedPathOf(id) != null;
+      } catch (_) {
+        succeeded = false;
+      }
+      if (succeeded) {
+        service.forgetFailure(id);
+        _downloadAttempts.remove(id);
+        _nextDownloadAt.remove(id);
+        _fixCount++;
+        _lastFixAt = DateTime.now();
+        await _log('download_repaired', {
+          'video_id': id,
+          'title': t?.title,
+        });
+      } else {
+        _downloadAttempts[id] = attempt;
+        if (attempt >= _maxDownloadAttempts) {
+          await _log('download_unrecoverable', {
+            'video_id': id,
+            'attempts': attempt,
+          });
+        } else {
+          _nextDownloadAt[id] =
+              DateTime.now().add(_downloadCooldown);
         }
       }
-      track ??= await YoutubeService.instance.trackById(videoId);
-      await DownloadService.instance.download(track);
-    } catch (_) {}
+    }
   }
+
+  Future<void> _repairPending(DateTime now) async {
+    if (_pending.isEmpty) return;
+
+    final due = _pending
+        .where((item) => !now.isBefore(item.nextAt))
+        .toList(growable: false);
+
+    for (final item in due) {
+      late final bool success;
+      if (item.type.startsWith('link_')) {
+        success = await LinkHandler.open(item.payload);
+      } else if (item.type.startsWith('search_')) {
+        try {
+          final results = await YoutubeService.instance.search(
+            item.payload,
+            limit: 5,
+          );
+          success = results.isNotEmpty;
+        } catch (_) {
+          success = false;
+        }
+      } else {
+        _pending.remove(item);
+        continue;
+      }
+
+      if (success) {
+        _pending.remove(item);
+        _fixCount++;
+        _lastFixAt = DateTime.now();
+        await _log('repair_success', {
+          'type': item.type,
+          'payload': item.payload,
+        });
+        continue;
+      }
+
+      item.attempts++;
+      if (item.attempts >= _maxPendingAttempts) {
+        _pending.remove(item);
+        await _log('repair_gave_up', {
+          'type': item.type,
+          'payload': item.payload,
+          'attempts': item.attempts,
+        });
+      } else {
+        item.nextAt = DateTime.now().add(_pendingBackoff(item.attempts));
+        await _log('repair_retry', {
+          'type': item.type,
+          'payload': item.payload,
+          'attempts': item.attempts,
+        });
+      }
+    }
+  }
+
+  static Duration _pendingBackoff(int attempts) => switch (attempts) {
+        1 => const Duration(minutes: 1),
+        2 => const Duration(minutes: 5),
+        3 => const Duration(minutes: 15),
+        _ => const Duration(minutes: 15),
+      };
 
   Future<void> _log(String type, Map<String, dynamic> extra) async {
     await _appendLog({
@@ -167,6 +331,20 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
   /// Silent notification from another service (for example a failed link).
   Future<void> reportEvent(String type, Map<String, dynamic> extra) async {
     _lastIssue = type;
+
+    if (type.startsWith('link_') || type.startsWith('search_')) {
+      final raw = type.startsWith('link_') ? extra['link'] : extra['query'];
+      final payload = raw?.toString();
+      if (payload != null && payload.isNotEmpty) {
+        _pending.add(_PendingRepair(
+          type: type,
+          payload: payload,
+          attempts: 0,
+          nextAt: DateTime.now(),
+        ));
+      }
+    }
+
     notifyListeners();
     await _log(type, extra);
   }
@@ -236,6 +414,20 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
       if (await file.exists()) await file.delete();
     } catch (_) {}
   }
+}
+
+class _PendingRepair {
+  _PendingRepair({
+    required this.type,
+    required this.payload,
+    required this.attempts,
+    required this.nextAt,
+  });
+
+  final String type;
+  final String payload;
+  int attempts;
+  DateTime nextAt;
 }
 
 /// Basic platform information without extra dependencies.

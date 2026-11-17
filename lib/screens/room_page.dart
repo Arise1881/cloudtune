@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,12 +14,12 @@ import '../core/player_controller.dart';
 import '../core/room_service.dart';
 import '../core/theme_state.dart';
 
-/// Yerel oda yönetimi ve kişisel kitaplık.
-///
-/// Senkronizasyon için harici sunucu gerekir; bu sayfa yalnızca cihaz
-/// üzerindeki oda, avatar, beğeni ve geçmiş verilerini gösterir.
+/// Odalar: internet üzerinden oda kurma/koda katılma ve kişisel kitaplık.
 class RoomPage extends StatefulWidget {
-  const RoomPage({super.key});
+  const RoomPage({super.key, this.initialCode, this.initialTab = 0});
+
+  final String? initialCode;
+  final int initialTab;
 
   @override
   State<RoomPage> createState() => _RoomPageState();
@@ -30,11 +30,19 @@ class _RoomPageState extends State<RoomPage>
   static const _displayNameKey = 'room_display_name';
 
   final ImagePicker _picker = ImagePicker();
-  late final TabController _tabs = TabController(length: 2, vsync: this);
-
   final TextEditingController _displayName = TextEditingController();
   final TextEditingController _roomName = TextEditingController();
   final TextEditingController _password = TextEditingController();
+  final TextEditingController _joinCode = TextEditingController();
+  final TextEditingController _joinPassword = TextEditingController();
+  final TextEditingController _chatInput = TextEditingController();
+
+  late final TabController _tabs = TabController(
+    length: 2,
+    vsync: this,
+    initialIndex: widget.initialTab.clamp(0, 1),
+  );
+  bool _joinedInitial = false;
 
   @override
   void initState() {
@@ -44,6 +52,12 @@ class _RoomPageState extends State<RoomPage>
       final saved = prefs.getString(_displayNameKey) ?? '';
       if (mounted && saved.isNotEmpty) _displayName.text = saved;
     });
+    final code = widget.initialCode;
+    if (code != null && code.isNotEmpty && !_joinedInitial) {
+      _joinedInitial = true;
+      _joinCode.text = code;
+      unawaited(_openJoinDialog());
+    }
   }
 
   @override
@@ -52,6 +66,9 @@ class _RoomPageState extends State<RoomPage>
     _displayName.dispose();
     _roomName.dispose();
     _password.dispose();
+    _joinCode.dispose();
+    _joinPassword.dispose();
+    _chatInput.dispose();
     super.dispose();
   }
 
@@ -80,32 +97,92 @@ class _RoomPageState extends State<RoomPage>
         imageQuality: 85,
       );
       if (picked == null) return;
-
       final dir = await getApplicationDocumentsDirectory();
       final target = File('${dir.path}/room_avatar.jpg');
       await File(picked.path).copy(target.path);
       await Library.instance.setAvatar(target.path);
-
       if (RoomService.instance.inRoom) {
-        final bytes = await target.readAsBytes();
-        final dataUrl = 'data:image/jpeg;base64,${base64Encode(bytes)}';
-        await RoomService.instance.uploadAvatar(dataUrl);
+        await RoomService.instance.uploadAvatar('local');
       }
-    } catch (_) {
-      // Seçim iptal edildi ya da galeri izni verilmedi.
-    }
+      if (mounted) setState(() {});
+    } catch (_) {}
   }
 
   Future<void> _createRoom() async {
     final name = _displayName.text.trim();
     if (name.isNotEmpty) await _saveDisplayName(name);
+    _toast('Odaya bağlanılıyor…');
     final created = await RoomService.instance.create(
       name: _roomName.text.trim(),
       password: _password.text,
       displayName: name,
     );
     if (!mounted) return;
-    _toast(created ? 'Yerel oda kuruldu' : 'Oda kurulamadı, tekrar deneyin');
+    _toast(created ? 'Oda kuruldu · kodu paylaş' : 'Oda kurulamadı');
+  }
+
+  Future<void> _openJoinDialog() async {
+    final name = _displayName.text.trim();
+    if (name.isNotEmpty) await _saveDisplayName(name);
+    if (!mounted) return;
+    final codeController = TextEditingController(text: _joinCode.text.trim());
+    final passController = TextEditingController(text: _joinPassword.text);
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Odaya katıl'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: codeController,
+              autofocus: true,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(
+                labelText: 'Oda kodu',
+                prefixIcon: Icon(Icons.meeting_room_outlined),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: passController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Şifre (varsa)',
+                prefixIcon: Icon(Icons.lock_outline),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('İptal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: ThemeState.accent.value,
+            ),
+            child: const Text('Katıl'),
+          ),
+        ],
+      ),
+    );
+    if (result != true || !mounted) return;
+
+    _joinCode.text = codeController.text.trim();
+    _joinPassword.text = passController.text;
+    _toast('Odaya bağlanılıyor…');
+    final joined = await RoomService.instance.join(
+      code: _joinCode.text,
+      password: _joinPassword.text,
+      displayName: name,
+    );
+    if (!mounted) return;
+    _toast(joined ? 'Odaya katıldın' : (RoomService.instance.error.isEmpty
+        ? 'Katılım başarısız'
+        : RoomService.instance.error));
   }
 
   void _toast(String message) {
@@ -115,19 +192,28 @@ class _RoomPageState extends State<RoomPage>
     );
   }
 
+  Future<void> _copyInvite() async {
+    final room = RoomService.instance;
+    if (!room.inRoom) return;
+    final text = room.inviteLink +
+        (room.hasPassword ? '\nŞifre: ${room.roomPassword}' : '');
+    await Clipboard.setData(ClipboardData(text: text));
+    _toast('Davet bağlantısı kopyalandı');
+  }
+
   @override
   Widget build(BuildContext context) {
     final accent = ThemeState.accent.value;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Oda'),
+        title: const Text('Odalar'),
         bottom: TabBar(
           controller: _tabs,
           indicatorColor: accent,
           labelColor: accent,
           unselectedLabelColor: Colors.white70,
           tabs: const [
-            Tab(icon: Icon(Icons.graphic_eq), text: 'Yerel Oda'),
+            Tab(icon: Icon(Icons.graphic_eq), text: 'Odalar'),
             Tab(icon: Icon(Icons.favorite), text: 'Kitaplığım'),
           ],
         ),
@@ -140,19 +226,17 @@ class _RoomPageState extends State<RoomPage>
         ]),
         builder: (context, _) => TabBarView(
           controller: _tabs,
-          children: [
-            _roomTab(accent),
-            _libraryTab(accent),
-          ],
+          children: [_roomTab(accent), _libraryTab(accent)],
         ),
       ),
     );
   }
 
-  // ── Yerel Oda ──
-
   Widget _roomTab(Color accent) {
     final room = RoomService.instance;
+    if (room.busy) {
+      return const Center(child: CircularProgressIndicator());
+    }
     if (!room.inRoom) return _entry(accent);
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -161,11 +245,11 @@ class _RoomPageState extends State<RoomPage>
         const SizedBox(height: 12),
         _members(accent),
         const SizedBox(height: 12),
-        _nowPlaying(accent),
+        _nowPlaying(room, accent),
         const SizedBox(height: 12),
         _queue(room),
         const SizedBox(height: 12),
-        _chatCard(accent),
+        _chatCard(room, accent),
       ],
     );
   }
@@ -178,10 +262,7 @@ class _RoomPageState extends State<RoomPage>
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [
-                accent.withValues(alpha: 0.32),
-                const Color(0xFF242424),
-              ],
+              colors: [accent.withValues(alpha: 0.32), const Color(0xFF242424)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -190,13 +271,13 @@ class _RoomPageState extends State<RoomPage>
           child: const Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Yerel Oda',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-              ),
+              Text('Odalar',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
               SizedBox(height: 8),
               Text(
-                'Oda kur, çalma listeni yönet. Senkronizasyon için harici sunucu gerekir; bu oda yalnızca bu cihazda çalışır.',
+                'Oda kur, kodu paylaş ya da başka bir odanın koduyla '
+                'internet üzerinden katıl. Şarkılar her cihazda kendi '
+                'bağlantısıyla çalınır; oda durumu eşzamanlı tutulur.',
                 style: TextStyle(color: Colors.white70, fontSize: 13),
               ),
             ],
@@ -211,33 +292,45 @@ class _RoomPageState extends State<RoomPage>
             prefixIcon: Icon(Icons.person_outline),
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 20),
+        Text('Yeni oda kur', style: _sectionTitle),
+        const SizedBox(height: 8),
         TextField(
           controller: _roomName,
           maxLength: 40,
-          textInputAction: TextInputAction.next,
           decoration: const InputDecoration(
             labelText: 'Oda adı',
             prefixIcon: Icon(Icons.meeting_room_outlined),
           ),
         ),
-        const SizedBox(height: 4),
         TextField(
           controller: _password,
           obscureText: true,
-          textInputAction: TextInputAction.done,
           decoration: const InputDecoration(
             labelText: 'Şifre (isteğe bağlı)',
             prefixIcon: Icon(Icons.lock_outline),
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 12),
         FilledButton.icon(
           onPressed: _createRoom,
           icon: const Icon(Icons.add),
-          label: const Text('Yerel odayı kur'),
+          label: const Text('Odayı kur'),
           style: FilledButton.styleFrom(
             backgroundColor: accent,
+            minimumSize: const Size.fromHeight(48),
+          ),
+        ),
+        const SizedBox(height: 24),
+        Text('Kodla katıl', style: _sectionTitle),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _openJoinDialog,
+          icon: const Icon(Icons.login),
+          label: const Text('Oda kodunu gir'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: accent,
+            side: BorderSide(color: accent.withValues(alpha: 0.6)),
             minimumSize: const Size.fromHeight(48),
           ),
         ),
@@ -261,16 +354,13 @@ class _RoomPageState extends State<RoomPage>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    room.roomName,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+                  Text(room.roomName,
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 2),
                   Text(
-                    '${room.roomId} · ${room.members.length} cihaz · Yerel mod',
+                    '${room.roomId} · ${room.members.length} dinleyici · '
+                    '${room.isHost ? 'Ev sahibi' : 'Katılımcı'}',
                     style: const TextStyle(color: Colors.white54, fontSize: 12),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -293,7 +383,7 @@ class _RoomPageState extends State<RoomPage>
               child: OutlinedButton.icon(
                 onPressed: room.leave,
                 icon: const Icon(Icons.logout),
-                label: const Text('Odadan çık'),
+                label: const Text('Çık'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.white70,
                   side: const BorderSide(color: Colors.white24),
@@ -303,13 +393,21 @@ class _RoomPageState extends State<RoomPage>
             const SizedBox(width: 8),
             Expanded(
               child: FilledButton.icon(
-                onPressed: _pickAvatar,
-                icon: const Icon(Icons.image_outlined),
-                label: const Text('Avatar'),
+                onPressed: _copyInvite,
+                icon: const Icon(Icons.share),
+                label: const Text('Kodu paylaş'),
                 style: FilledButton.styleFrom(backgroundColor: accent),
               ),
             ),
           ],
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          secondary: const Icon(Icons.sync),
+          title: const Text('Oda ile eşzamanlı çal'),
+          subtitle: const Text('Ev sahibinin parçasını otomatik oynat.'),
+          value: room.autoSync,
+          onChanged: room.setAutoSync,
         ),
       ],
     );
@@ -353,7 +451,7 @@ class _RoomPageState extends State<RoomPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Üyeler (${members.length})', style: _sectionTitle),
+        Text('Dinleyiciler (${members.length})', style: _sectionTitle),
         const SizedBox(height: 8),
         SizedBox(
           height: 76,
@@ -371,18 +469,19 @@ class _RoomPageState extends State<RoomPage>
                     CircleAvatar(
                       radius: 24,
                       backgroundColor: accent.withValues(alpha: 0.2),
-                      backgroundImage: image,
-                      child: image == null
-                          ? Icon(Icons.person, color: accent, size: 24)
+                      backgroundImage: member.clientId == RoomService.clientId
+                          ? image
                           : null,
+                      child: member.clientId == RoomService.clientId &&
+                              image != null
+                          ? null
+                          : Icon(Icons.person, color: accent, size: 24),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       member.isHost ? '${member.name} (Ev sahibi)' : member.name,
                       style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
+                          fontSize: 10, fontWeight: FontWeight.w600),
                       maxLines: 2,
                       textAlign: TextAlign.center,
                       overflow: TextOverflow.ellipsis,
@@ -397,57 +496,72 @@ class _RoomPageState extends State<RoomPage>
     );
   }
 
-  Widget _nowPlaying(Color accent) {
+  Widget _nowPlaying(RoomService room, Color accent) {
     final player = PlayerController.instance;
     final track = player.current;
-    if (track == null) return const SizedBox.shrink();
+    final remote = room.playback;
+    final title = track?.title ?? remote?['title']?.toString() ?? 'Parça yok';
+    final artist = track?.artist ?? remote?['artist']?.toString() ?? '';
+    final id = track?.id ?? remote?['id']?.toString() ?? '';
+
     return Card(
       color: accent.withValues(alpha: 0.12),
-      child: ListTile(
-        leading: _thumbnail(track),
-        title: Text(
-          track.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Text(
-          track.artist,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
           children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: id.isEmpty
+                  ? Container(
+                      width: 48,
+                      height: 48,
+                      color: const Color(0xFF242424),
+                      child: const Icon(Icons.music_note, size: 26),
+                    )
+                  : CachedNetworkImage(
+                      imageUrl: 'https://i.ytimg.com/vi/$id/hqdefault.jpg',
+                      width: 48,
+                      height: 48,
+                      fit: BoxFit.cover,
+                      errorWidget: (_, __, ___) => Container(
+                        width: 48,
+                        height: 48,
+                        color: const Color(0xFF242424),
+                        child: const Icon(Icons.music_note, size: 26),
+                      ),
+                    ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700)),
+                  Text(artist,
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white54, fontSize: 12)),
+                ],
+              ),
+            ),
+            if (track != null)
+              IconButton(
+                tooltip: player.playing ? 'Duraklat' : 'Oynat',
+                icon: Icon(player.playing ? Icons.pause : Icons.play_arrow,
+                    color: accent),
+                onPressed: player.toggle,
+              ),
             IconButton(
               tooltip: 'Sıraya ekle',
               icon: const Icon(Icons.add, size: 20),
-              onPressed: () => RoomService.instance.addToQueue(track),
-            ),
-            IconButton(
-              tooltip: player.playing ? 'Duraklat' : 'Oynat',
-              icon: Icon(
-                player.playing ? Icons.pause : Icons.play_arrow,
-                color: accent,
-              ),
-              onPressed: player.toggle,
+              onPressed: track == null
+                  ? null
+                  : () => room.addToQueue(track),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _thumbnail(Track track, {double size = 48}) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: CachedNetworkImage(
-        imageUrl: track.thumb,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
-        errorWidget: (_, __, ___) => Container(
-          color: const Color(0xFF242424),
-          child: Icon(Icons.music_note, size: size * 0.6),
         ),
       ),
     );
@@ -472,21 +586,17 @@ class _RoomPageState extends State<RoomPage>
                 color: const Color(0xFF1E1E1E),
                 child: ListTile(
                   leading: _thumbnail(track),
-                  title: Text(
-                    track.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text(
-                    track.artist,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  trailing: IconButton(
-                    tooltip: 'Sıradan çıkar',
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: () => room.removeFromQueue(i),
-                  ),
+                  title: Text(track.title,
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(track.artist,
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  trailing: room.isHost
+                      ? IconButton(
+                          tooltip: 'Sıradan çıkar',
+                          icon: const Icon(Icons.close, size: 18),
+                          onPressed: () => room.removeFromQueue(i),
+                        )
+                      : null,
                   onTap: () => room.playFromQueue(i),
                 ),
               );
@@ -497,7 +607,24 @@ class _RoomPageState extends State<RoomPage>
     );
   }
 
-  Widget _chatCard(Color accent) {
+  Widget _thumbnail(Track track, {double size = 48}) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: CachedNetworkImage(
+        imageUrl: track.thumb,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorWidget: (_, __, ___) => Container(
+          color: const Color(0xFF242424),
+          child: Icon(Icons.music_note, size: size * 0.6),
+        ),
+      ),
+    );
+  }
+
+  Widget _chatCard(RoomService room, Color accent) {
+    final reactions = room.reactions.entries.toList();
     return Card(
       color: const Color(0xFF1E1E1E),
       child: Padding(
@@ -507,16 +634,89 @@ class _RoomPageState extends State<RoomPage>
           children: [
             Text('Sohbet', style: _sectionTitle),
             const SizedBox(height: 8),
-            const Text(
-              'Sohbet için harici sunucu gerekir. Bu yerel oda yalnızca bu cihazda çalışır.',
-              style: TextStyle(color: Colors.white54, fontSize: 13),
+            SizedBox(
+              height: 160,
+              child: room.chat.isEmpty
+                  ? const Center(
+                      child: Text('Henüz mesaj yok.',
+                          style: TextStyle(color: Colors.white38)))
+                  : ListView.builder(
+                      itemCount: room.chat.length,
+                      itemBuilder: (context, i) {
+                        final message = room.chat[i];
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Text.rich(
+                            TextSpan(
+                              text: '${message.name}: ',
+                              style: TextStyle(
+                                  color: accent, fontWeight: FontWeight.w700),
+                              children: [
+                                TextSpan(
+                                  text: message.text,
+                                  style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontWeight: FontWeight.normal),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              enabled: false,
-              decoration: InputDecoration(
-                hintText: 'Sunucu bağlanmadan mesaj gönderilemez',
-                prefixIcon: Icon(Icons.chat_bubble_outline, color: accent),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _chatInput,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (value) {
+                      room.sendChat(value);
+                      _chatInput.clear();
+                    },
+                    decoration: const InputDecoration(
+                      hintText: 'Mesaj yaz…',
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Gönder',
+                  icon: Icon(Icons.send, color: accent),
+                  onPressed: () {
+                    room.sendChat(_chatInput.text);
+                    _chatInput.clear();
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 36,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  for (final emoji in ['❤️', '🔥', '👏', '😂'])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ActionChip(
+                        label: Text(
+                          reactions
+                                  .firstWhere(
+                                    (entry) => entry.key == emoji,
+                                    orElse: () => MapEntry(emoji, 0),
+                                  )
+                                  .value ==
+                              0
+                              ? emoji
+                              : '$emoji ${reactions.firstWhere((entry) => entry.key == emoji).value}',
+                        ),
+                        onPressed: () => room.react(emoji),
+                      ),
+                    ),
+                ],
               ),
             ),
           ],
@@ -525,8 +725,6 @@ class _RoomPageState extends State<RoomPage>
     );
   }
 
-  // ── Kitaplığım ──
-
   Widget _libraryTab(Color accent) {
     final library = Library.instance;
     return ListView(
@@ -534,19 +732,11 @@ class _RoomPageState extends State<RoomPage>
       children: [
         _profile(accent),
         const SizedBox(height: 24),
-        _strip(
-          'Beğenilenler',
-          library.liked,
-          accent,
-          empty: 'Henüz beğenilen şarkı yok.',
-        ),
+        _strip('Beğenilenler', library.liked, accent,
+            empty: 'Henüz beğenilen şarkı yok.'),
         const SizedBox(height: 24),
-        _strip(
-          'Dinleme Geçmişi',
-          library.history,
-          accent,
-          empty: 'Henüz dinleme geçmişi yok.',
-        ),
+        _strip('Dinleme Geçmişi', library.history, accent,
+            empty: 'Henüz dinleme geçmişi yok.'),
       ],
     );
   }
@@ -579,15 +769,11 @@ class _RoomPageState extends State<RoomPage>
                   Text(
                     image == null ? 'Avatar yok' : 'Avatar ayarlandı',
                     style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+                        fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
-                    'Avatara dokunarak değiştir',
-                    style: TextStyle(color: Colors.white54, fontSize: 12),
-                  ),
+                  const Text('Avatara dokunarak değiştir',
+                      style: TextStyle(color: Colors.white54, fontSize: 12)),
                 ],
               ),
             ),
@@ -602,12 +788,8 @@ class _RoomPageState extends State<RoomPage>
     );
   }
 
-  Widget _strip(
-    String title,
-    List<Track> tracks,
-    Color accent, {
-    required String empty,
-  }) {
+  Widget _strip(String title, List<Track> tracks, Color accent,
+      {required String empty}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -663,27 +845,20 @@ class _RoomPageState extends State<RoomPage>
                 fit: BoxFit.cover,
                 errorWidget: (_, __, ___) => Container(
                   color: const Color(0xFF242424),
-                  child: Icon(
-                    Icons.music_note,
-                    size: 48,
-                    color: accent.withValues(alpha: 0.7),
-                  ),
+                  child: Icon(Icons.music_note,
+                      size: 48, color: accent.withValues(alpha: 0.7)),
                 ),
               ),
             ),
             const SizedBox(height: 6),
-            Text(
-              track.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            Text(
-              track.artist,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white54, fontSize: 12),
-            ),
+            Text(track.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            Text(track.artist,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white54, fontSize: 12)),
           ],
         ),
       ),
