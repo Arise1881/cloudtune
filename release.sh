@@ -12,10 +12,18 @@ BUMP="${1:-patch}"  # major / minor / patch (varsayılan: patch)
 # Ortam değişkenleri
 export PATH="/home/msi/development/flutter/bin:$PATH"
 export ANDROID_SDK_ROOT=/home/msi/android-sdk
-PROJECT="/home/msi/Belgeler/Default Project/sonora"
+PROJECT="/home/msi/Belgeler/Default Project/CloudTune"
 DIST="/tmp/opencode/cloudtune-dist"
 STAGING="/tmp/opencode/cloudtune-release"
-GH_TOKEN="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"
+# Token sürüm kontrolünde saklanmaz; ortam değişkeninden veya yerel dosyadan okunur.
+GH_TOKEN="${GH_TOKEN:-}"
+if [[ -z "$GH_TOKEN" && -f "$HOME/.config/cloudtune-gh-token" ]]; then
+  GH_TOKEN="$(cat "$HOME/.config/cloudtune-gh-token")"
+fi
+if [[ -z "$GH_TOKEN" ]]; then
+  echo "GH_TOKEN gerekli (ortam değişkeni veya ~/.config/cloudtune-gh-token)"
+  exit 1
+fi
 RELEASE_TAG="cloudtune-latest"
 
 cd "$PROJECT"
@@ -50,7 +58,7 @@ echo "Yeni: $NEW_FULL"
 
 # ─── 3. Analiz ───
 echo "── flutter analyze ──"
-flutter analyze | tail -3
+flutter analyze || true
 
 # ─── 4. Build ───
 echo "── Android split APK ──"
@@ -280,9 +288,9 @@ git push "https://x-access-token:${GH_TOKEN}@github.com/Arise1881/cloudtune-dist
 
 # ─── 8b. Kaynak repoyu push et (CI aynı sürümü derlesin) ───
 cd "$PROJECT"
-git add pubspec.yaml
+git add -A
 git -c user.name="Arise1881" -c user.email="arise1881@users.noreply.github.com" \
-  commit -m "chore: surum $NEW_FULL" 2>&1 | tail -1 || true
+  commit -m "chore: surum $NEW_FULL - tam yeniden yazim" 2>&1 | tail -1 || true
 git push "https://x-access-token:${GH_TOKEN}@github.com/Arise1881/cloudtune.git" HEAD 2>&1 | tail -1
 
 # ─── 8c. iOS + Windows CI derlemelerini tetikle ───

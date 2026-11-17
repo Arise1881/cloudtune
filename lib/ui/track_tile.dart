@@ -6,9 +6,8 @@ import '../core/models.dart';
 import '../core/player_controller.dart';
 import '../core/theme_state.dart';
 
-/// Tek satirlik sarki ogesi. Tum listeler (calma listesi, sanatci,
-/// arama, oda) bu bileseni kullanir; boylece sayfa tek akis halinde
-/// kaydirilir.
+/// Single row used by every track list. Tapping plays the given queue at
+/// [index]; the current track is highlighted with the active accent color.
 class TrackTile extends StatelessWidget {
   const TrackTile({
     super.key,
@@ -28,10 +27,23 @@ class TrackTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final player = PlayerController.instance;
+
     return ListenableBuilder(
       listenable: player,
       builder: (context, _) {
         final isCurrent = player.current?.id == track.id;
+        final titleStyle = TextStyle(
+          color: isCurrent ? ThemeState.value : null,
+          fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
+        );
+
+        final artist = Text(
+          track.artist,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12),
+        );
+
         return ListTile(
           onTap: () => player.playQueue(queue, index),
           leading: ClipRRect(
@@ -50,33 +62,36 @@ class TrackTile extends StatelessWidget {
             track.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: isCurrent ? ThemeState.accent.value : null,
-              fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
-            ),
+            style: titleStyle,
           ),
-          subtitle: Text(
-            track.artist,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12),
+          subtitle: onArtistTap == null
+              ? artist
+              : GestureDetector(onTap: onArtistTap, child: artist),
+          trailing: trailing ?? _LikeButton(track: track),
+        );
+      },
+    );
+  }
+}
+
+class _LikeButton extends StatelessWidget {
+  const _LikeButton({required this.track});
+
+  final Track track;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Library.instance,
+      builder: (context, _) {
+        final liked = Library.instance.isLiked(track.id);
+        return IconButton(
+          tooltip: 'Beğen',
+          icon: Icon(
+            liked ? Icons.favorite : Icons.favorite_border,
+            color: liked ? ThemeState.value : Colors.white54,
           ),
-          trailing: trailing ??
-              ListenableBuilder(
-                listenable: Library.instance,
-                builder: (context, _) => IconButton(
-                  tooltip: 'Begen',
-                  icon: Icon(
-                    Library.instance.isLiked(track.id)
-                        ? Icons.favorite
-                        : Icons.favorite_border,
-                    color: Library.instance.isLiked(track.id)
-                        ? ThemeState.accent.value
-                        : Colors.white54,
-                  ),
-                  onPressed: () => Library.instance.toggleLike(track),
-                ),
-              ),
+          onPressed: () => Library.instance.toggleLike(track),
         );
       },
     );

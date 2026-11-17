@@ -1,5 +1,5 @@
-/// YouTube bağlantılarını çözer. Yalnızca şu dört adres kabul edilir:
-/// youtu.be, m.youtube.com, youtube.com, www.youtube.com
+/// Resolves YouTube links. Only four hosts are accepted:
+/// youtu.be, m.youtube.com, youtube.com and www.youtube.com.
 class YoutubeLinkResolver {
   YoutubeLinkResolver._();
 
@@ -27,13 +27,13 @@ class YoutubeLinkResolver {
     }
   }
 
-  /// Metin, izin verilen dört adresten birine ait bir bağlantı mı?
+  /// True when the text is a link on one of the four allowed hosts.
   static bool isYoutubeLink(String input) {
     final uri = _parse(input);
     return uri != null && allowedHosts.contains(uri.host.toLowerCase());
   }
 
-  /// Bağlantıdan 11 karakterlik video kimliğini çıkarır, yoksa null.
+  /// Extracts the 11-character video id, or null when absent/invalid.
   static String? videoId(String input) {
     final uri = _parse(input);
     if (uri == null) return null;
@@ -54,7 +54,7 @@ class YoutubeLinkResolver {
     return null;
   }
 
-  /// Bağlantıdan çalma listesi kimliğini (list=...) çıkarır, yoksa null.
+  /// Extracts the playlist id from `list=...`, or null when absent/invalid.
   static String? playlistId(String input) {
     final uri = _parse(input);
     if (uri == null) return null;

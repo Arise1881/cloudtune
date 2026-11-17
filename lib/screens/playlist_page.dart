@@ -8,7 +8,7 @@ import '../core/youtube_service.dart';
 import '../ui/track_tile.dart';
 import 'artist_page.dart';
 
-/// Calma listesi sayfasi: tum sarkilar tek kaydirilabilir listede.
+/// Playlist detail: a header followed by one continuous, scrollable list.
 class PlaylistPage extends StatefulWidget {
   const PlaylistPage({super.key, required this.id, this.initialTitle});
 
@@ -21,6 +21,7 @@ class PlaylistPage extends StatefulWidget {
 
 class _PlaylistResults {
   const _PlaylistResults(this.info, this.tracks);
+
   final PlaylistInfo? info;
   final List<Track> tracks;
 }
@@ -45,13 +46,13 @@ class _PlaylistPageState extends State<PlaylistPage> {
     );
   }
 
-  void _openArtist(Track t) {
+  void _openArtist(Track track) {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ArtistPage(
-          name: t.artist,
-          channelId: t.artistId,
-          seedTrack: t,
+          name: track.artist,
+          channelId: track.artistId,
+          seedTrack: track,
         ),
       ),
     );
@@ -59,22 +60,21 @@ class _PlaylistPageState extends State<PlaylistPage> {
 
   @override
   Widget build(BuildContext context) {
-    final accent = ThemeState.accent.value;
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.initialTitle ?? 'Çalma listesi'),
-      ),
+      appBar: AppBar(title: Text(widget.initialTitle ?? 'Çalma listesi')),
       body: FutureBuilder<_PlaylistResults>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
           }
+
           final data = snap.data;
           final tracks = data?.tracks ?? const <Track>[];
           final title = data?.info?.title.isNotEmpty == true
               ? data!.info!.title
               : (widget.initialTitle ?? 'Çalma listesi');
+
           return ListView.builder(
             padding: const EdgeInsets.only(bottom: 24),
             itemCount: tracks.isEmpty ? 2 : tracks.length + 1,
@@ -85,26 +85,27 @@ class _PlaylistPageState extends State<PlaylistPage> {
                   author: data?.info?.author ?? '',
                   cover: tracks.isNotEmpty
                       ? tracks.first.thumb
-                      : (data?.info?.thumb),
-                  accent: accent,
+                      : data?.info?.thumb,
                   count: tracks.length,
                   onPlay: tracks.isEmpty
                       ? null
-                      : () => PlayerController.instance.playQueue(tracks, 0),
+                      : () =>
+                          PlayerController.instance.playQueue(tracks, 0),
                 );
               }
               if (tracks.isEmpty) {
                 return const Padding(
                   padding: EdgeInsets.all(24),
-                  child: Text('Liste bos veya erisilemiyor.'),
+                  child: Text('Liste boş veya erişilemiyor.'),
                 );
               }
-              final t = tracks[i - 1];
+
+              final track = tracks[i - 1];
               return TrackTile(
-                track: t,
+                track: track,
                 queue: tracks,
                 index: i - 1,
-                onArtistTap: () => _openArtist(t),
+                onArtistTap: () => _openArtist(track),
               );
             },
           );
@@ -119,7 +120,6 @@ class _Header extends StatelessWidget {
     required this.title,
     required this.author,
     required this.cover,
-    required this.accent,
     required this.count,
     required this.onPlay,
   });
@@ -127,12 +127,13 @@ class _Header extends StatelessWidget {
   final String title;
   final String author;
   final String? cover;
-  final Color accent;
   final int count;
   final VoidCallback? onPlay;
 
   @override
   Widget build(BuildContext context) {
+    final accent = ThemeState.value;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       child: Column(
@@ -147,7 +148,9 @@ class _Header extends StatelessWidget {
                 color: const Color(0xFF242424),
                 boxShadow: [
                   BoxShadow(
-                      color: accent.withValues(alpha: 0.25), blurRadius: 24),
+                    color: accent.withValues(alpha: 0.25),
+                    blurRadius: 24,
+                  ),
                 ],
               ),
               clipBehavior: Clip.antiAlias,
@@ -174,7 +177,7 @@ class _Header extends StatelessWidget {
           if (author.isNotEmpty)
             Text(author,
                 style: const TextStyle(color: Colors.white54, fontSize: 12)),
-          Text('$count parca',
+          Text('$count parça',
               style: const TextStyle(color: Colors.white54, fontSize: 12)),
           const SizedBox(height: 12),
           FilledButton.icon(

@@ -7,7 +7,7 @@ import '../core/theme_state.dart';
 import '../core/youtube_service.dart';
 import '../ui/track_tile.dart';
 
-/// Sanatci profili: tum sarkilar tek, kesintisiz kaydirilabilir listede.
+/// Artist profile: a header followed by one continuous, scrollable list.
 class ArtistPage extends StatefulWidget {
   const ArtistPage({
     super.key,
@@ -38,7 +38,6 @@ class _ArtistPageState extends State<ArtistPage> {
 
   @override
   Widget build(BuildContext context) {
-    final accent = ThemeState.accent.value;
     return Scaffold(
       appBar: AppBar(title: Text(widget.name)),
       body: FutureBuilder<List<Track>>(
@@ -47,9 +46,11 @@ class _ArtistPageState extends State<ArtistPage> {
           if (snap.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
           }
+
           final tracks = snap.data ?? const <Track>[];
           final cover = widget.seedTrack?.thumb ??
               (tracks.isNotEmpty ? tracks.first.thumb : null);
+
           return ListView.builder(
             padding: const EdgeInsets.only(bottom: 24),
             itemCount: tracks.isEmpty ? 2 : tracks.length + 1,
@@ -58,22 +59,23 @@ class _ArtistPageState extends State<ArtistPage> {
                 return _Header(
                   name: widget.name,
                   cover: cover,
-                  accent: accent,
                   trackCount: tracks.length,
                   onPlay: tracks.isEmpty
                       ? null
-                      : () => PlayerController.instance.playQueue(tracks, 0),
+                      : () =>
+                          PlayerController.instance.playQueue(tracks, 0),
                 );
               }
               if (tracks.isEmpty) {
                 return const Padding(
                   padding: EdgeInsets.all(24),
-                  child: Text('Bu sanatci icin parca bulunamadi.'),
+                  child: Text('Bu sanatçı için parça bulunamadı.'),
                 );
               }
-              final t = tracks[i - 1];
+
+              final track = tracks[i - 1];
               return TrackTile(
-                track: t,
+                track: track,
                 queue: tracks,
                 index: i - 1,
               );
@@ -89,19 +91,19 @@ class _Header extends StatelessWidget {
   const _Header({
     required this.name,
     required this.cover,
-    required this.accent,
     required this.trackCount,
     required this.onPlay,
   });
 
   final String name;
   final String? cover;
-  final Color accent;
   final int trackCount;
   final VoidCallback? onPlay;
 
   @override
   Widget build(BuildContext context) {
+    final accent = ThemeState.value;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       child: Column(
@@ -113,7 +115,10 @@ class _Header extends StatelessWidget {
               shape: BoxShape.circle,
               color: const Color(0xFF242424),
               boxShadow: [
-                BoxShadow(color: accent.withValues(alpha: 0.25), blurRadius: 24),
+                BoxShadow(
+                  color: accent.withValues(alpha: 0.25),
+                  blurRadius: 24,
+                ),
               ],
             ),
             clipBehavior: Clip.antiAlias,
@@ -138,7 +143,7 @@ class _Header extends StatelessWidget {
                 ?.copyWith(fontWeight: FontWeight.w800),
           ),
           Text(
-            '$trackCount parca',
+            '$trackCount parça',
             style: const TextStyle(color: Colors.white54, fontSize: 12),
           ),
           const SizedBox(height: 12),

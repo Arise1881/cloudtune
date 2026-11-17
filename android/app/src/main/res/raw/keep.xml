@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- audio_service bildirim aksiyon ikonlarini calisma aninda ADA gore
+     cozer; bu yuzden kaynak kücültme (shrinkResources) bunlari silmemeli. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_favorite,@drawable/ic_favorite_border,@mipmap/ic_launcher,@mipmap/ic_launcher_round" />

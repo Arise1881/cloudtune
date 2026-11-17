@@ -1,50 +1,61 @@
 import 'package:flutter/material.dart';
 
 import '../core/library.dart';
-import '../core/link_resolver.dart';
 import '../core/player_controller.dart';
 import '../core/repair_bot.dart';
+import '../core/settings_service.dart';
 import '../core/theme_state.dart';
 import '../core/update_service.dart';
 
-/// CloudTune ayarlari.
+/// Application preferences: appearance, playback, language and system tools.
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
   static const List<Color> accentOptions = [
-    Color(0xFF1DB954), // Spotify yesili
-    Color(0xFF1ED760), // Acik yesil
-    Color(0xFF00C853), // Zumrut
-    Color(0xFF16A085), // Deniz yesili
-    Color(0xFF00BCD4), // Turkuaz
-    Color(0xFF2196F3), // Mavi
-    Color(0xFF3F51B5), // Indigo
-    Color(0xFF7C4DFF), // Mor
-    Color(0xFF9C27B0), // Fuşya
-    Color(0xFFE91E63), // Pembe
-    Color(0xFFF44336), // Kirmizi
-    Color(0xFFFF5722), // Kiremit
-    Color(0xFFFF9800), // Turuncu
-    Color(0xFFFFC107), // Amber
-    Color(0xFFCDDC39), // Lime
-    Color(0xFF795548), // Kahve
-    Color(0xFF607D8B), // Gri mavi
-    Color(0xFFE0E0E0), // Beyaz
+    Color(0xFF1DB954),
+    Color(0xFF1ED760),
+    Color(0xFF00C853),
+    Color(0xFF16A085),
+    Color(0xFF00BCD4),
+    Color(0xFF2196F3),
+    Color(0xFF3F51B5),
+    Color(0xFF7C4DFF),
+    Color(0xFF9C27B0),
+    Color(0xFFE91E63),
+    Color(0xFFF44336),
+    Color(0xFFFF5722),
+    Color(0xFFFF9800),
+    Color(0xFFFFC107),
+    Color(0xFFCDDC39),
+    Color(0xFF795548),
+    Color(0xFF607D8B),
+    Color(0xFFE0E0E0),
   ];
+
+  static const Map<String, String> _qualityLabels = {
+    'low': 'Düşük',
+    'medium': 'Orta',
+    'high': 'Yüksek',
+    'veryhigh': 'Çok yüksek',
+  };
 
   @override
   Widget build(BuildContext context) {
     final library = Library.instance;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Ayarlar')),
       body: ListenableBuilder(
         listenable: Listenable.merge([
           library,
           ThemeState.accent,
+          SettingsService.instance,
           RepairBot.instance,
           UpdateService.instance,
         ]),
         builder: (context, _) {
+          final settings = SettingsService.instance;
+
           return ListView(
             padding: const EdgeInsets.only(bottom: 32),
             children: [
@@ -56,12 +67,11 @@ class SettingsScreen extends StatelessWidget {
               ),
               const Divider(),
 
-              // ── Gorunum ──
               const _SectionTitle('Görünüm'),
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
                 child: Text(
-                  'Vurgu rengi uygulamanin tamamina uygulanir.',
+                  'Vurgu rengi uygulamanın tamamına uygulanır.',
                   style: TextStyle(color: Colors.white54, fontSize: 12),
                 ),
               ),
@@ -71,96 +81,176 @@ class SettingsScreen extends StatelessWidget {
                   spacing: 12,
                   runSpacing: 12,
                   children: [
-                    for (final c in accentOptions)
+                    for (final color in accentOptions)
                       _ColorDot(
-                        color: c,
-                        selected: ThemeState.accent.value == c,
-                        onTap: () => ThemeState.set(c),
+                        color: color,
+                        selected: ThemeState.value == color,
+                        onTap: () => ThemeState.set(color),
                       ),
                   ],
                 ),
               ),
               const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<ThemeMode>(
+                    value: settings.themeMode,
+                    isExpanded: true,
+                    items: const [
+                      DropdownMenuItem(
+                        value: ThemeMode.dark,
+                        child: Text('Koyu'),
+                      ),
+                      DropdownMenuItem(
+                        value: ThemeMode.light,
+                        child: Text('Açık'),
+                      ),
+                      DropdownMenuItem(
+                        value: ThemeMode.system,
+                        child: Text('Sistem'),
+                      ),
+                    ],
+                    onChanged: (value) =>
+                        settings.setThemeMode(value ?? ThemeMode.dark),
+                  ),
+                ),
+              ),
+              SwitchListTile(
+                secondary: const Icon(Icons.nightlight),
+                title: const Text('OLED siyah arka plan'),
+                subtitle: const Text(
+                  'Koyu tema + saf siyah zemin (OLED tasarrufu).',
+                ),
+                value: settings.oledBlack,
+                onChanged: (value) => settings.setOledBlack(value),
+              ),
               const Divider(),
 
-              // ── Calma ──
               const _SectionTitle('Çalma'),
               SwitchListTile(
                 secondary: const Icon(Icons.radio),
                 title: const Text('Sonsuz radyo'),
-                subtitle: const Text(
-                    'Sarki bitince benzer parcalarla devam eder.'),
+                subtitle:
+                    const Text('Şarkı bitince benzer parçalarla devam eder.'),
                 value: library.radioEnabled,
-                onChanged: (v) {
-                  library.setRadioEnabled(v);
-                  PlayerController.instance.setRadioMode(v);
+                onChanged: (value) {
+                  library.setRadioEnabled(value);
+                  PlayerController.instance.setRadioMode(value);
                 },
               ),
               SwitchListTile(
                 secondary: const Icon(Icons.download_outlined),
                 title: const Text('Cihaza doğrudan indir'),
                 subtitle: const Text(
-                    'Indirilenler Download/CloudTune klasorune kaydedilir.'),
-                value: library.downloadToDevice,
-                onChanged: library.setDownloadToDevice,
-              ),
-              const Divider(),
-
-              // ── Baglantilar ──
-              const _SectionTitle('Bağlantılar'),
-              SwitchListTile(
-                secondary: const Icon(Icons.link),
-                title: const Text('Desteklenen bağlantılar'),
-                subtitle: Text(
-                  library.linkHandlerEnabled
-                      ? 'YouTube baglantilari uygulama icinde acilir.'
-                      : 'Kapali: baglantilar uygulama icinde acilmaz.',
+                  'İndirilenler Download/CloudTune klasörüne kaydedilir.',
                 ),
-                value: library.linkHandlerEnabled,
-                onChanged: library.setLinkHandlerEnabled,
+                value: library.downloadToDevice,
+                onChanged: (value) => library.setDownloadToDevice(value),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final host in YoutubeLinkResolver.allowedHosts)
-                      Chip(
-                        label: Text(host),
-                        visualDensity: VisualDensity.compact,
-                        side: BorderSide(
-                          color: library.linkHandlerEnabled
-                              ? ThemeState.accent.value.withValues(alpha: 0.6)
-                              : Colors.white24,
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: settings.audioQuality,
+                    isExpanded: true,
+                    items: [
+                      for (final quality in SettingsService.audioQualities)
+                        DropdownMenuItem(
+                          value: quality,
+                          child: Text(_qualityLabels[quality] ?? quality),
                         ),
-                      ),
-                  ],
+                    ],
+                    onChanged: (value) =>
+                        settings.setAudioQuality(value ?? 'high'),
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Text(
+                  'Ses kalitesi akış indirme/oyunculuk boyunca kullanılır.',
+                  style: TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              ),
+              SwitchListTile(
+                secondary: const Icon(Icons.graphic_eq),
+                title: const Text('Ekolayzer'),
+                subtitle: const Text('Sesi artır / azalt (uygulama içi).'),
+                value: settings.equalizerEnabled,
+                onChanged: (value) => settings.setEqualizerEnabled(value),
+              ),
+              if (settings.equalizerEnabled)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final preset in SettingsService.equalizerPresets)
+                        ChoiceChip(
+                          label: Text(_eqLabel(preset)),
+                          selected: settings.equalizerPreset == preset,
+                          onSelected: (selected) =>
+                              settings.setEqualizerPreset(
+                            selected ? preset : 'normal',
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              const Divider(),
+
+              const _SectionTitle('SponsorBlock (Rehber Atla)'),
+              SwitchListTile(
+                secondary: const Icon(Icons.skip_next),
+                title: const Text('Sponsor segmentlerini atla'),
+                subtitle: const Text(
+                  'SponsorBlock topluluk verisi ile reklam/sponsor bölümlerini otomatik atlar.',
+                ),
+                value: settings.sponsorBlockEnabled,
+                onChanged: (value) => settings.setSponsorBlockEnabled(value),
+              ),
+              const Divider(),
+
+              const _SectionTitle('Dil Desteği'),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: settings.languageCode,
+                    isExpanded: true,
+                    items: [
+                      for (final entry
+                          in SettingsService.supportedLanguages.entries)
+                        DropdownMenuItem(
+                          value: entry.key,
+                          child: Text(entry.value),
+                        ),
+                    ],
+                    onChanged: (value) => settings.setLanguage(value ?? 'tr'),
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Text(
+                  'Varsayılan dil: Türkçe. Uygulama yeniden başlatılmadan uygulanır.',
+                  style: TextStyle(color: Colors.white54, fontSize: 12),
                 ),
               ),
               const Divider(),
 
-              // ── Sistem ──
               const _SectionTitle('Sistem'),
               ListTile(
                 leading: _RepairDot(active: RepairBot.instance.active),
                 title: const Text('Onarım botu'),
-                subtitle: Text(
-                  !RepairBot.instance.active
-                      ? 'Beklemede'
-                      : RepairBot.instance.scanning
-                          ? 'Denetleniyor…'
-                          : 'Arka planda etkin · ${RepairBot.instance.fixCount} onarim',
-                ),
+                subtitle: Text(_repairStatus()),
               ),
               ListTile(
                 leading: const Icon(Icons.system_update_alt),
                 title: const Text('Güncellemeler'),
-                subtitle: Text(
-                  UpdateService.instance.updateAvailable
-                      ? 'Yeni surum: ${UpdateService.instance.latestVersion}'
-                      : 'Kurulu surum: ${UpdateService.instance.installedVersion}',
-                ),
+                subtitle: Text(_updateStatus()),
                 trailing: UpdateService.instance.checking
                     ? const SizedBox(
                         width: 18,
@@ -173,27 +263,20 @@ class SettingsScreen extends StatelessWidget {
               if (UpdateService.instance.updateAvailable)
                 ListTile(
                   leading: Icon(Icons.download_for_offline_outlined,
-                      color: ThemeState.accent.value),
+                      color: ThemeState.value),
                   title: const Text('Güncellemeyi indir ve kur'),
                   subtitle: UpdateService.instance.downloading
                       ? LinearProgressIndicator(
                           value: UpdateService.instance.downloadProgress,
                         )
-                      : const Text('Yeni surumu simdi yukle'),
-                  onTap: () async {
-                    final messenger = ScaffoldMessenger.maybeOf(context);
-                    final path =
-                        await UpdateService.instance.prepareDownload();
-                    if (path == null) return;
-                    final msg = await UpdateService.instance.applyUpdate();
-                    messenger?.showSnackBar(SnackBar(content: Text(msg)));
-                  },
+                      : const Text('Yeni sürümü şimdi yükle'),
+                  onTap: () => _installUpdate(context),
                 ),
               const Divider(),
               const ListTile(
                 leading: Icon(Icons.music_note),
                 title: Text('CloudTune'),
-                subtitle: Text('YouTube akisli muzik calar · reklamsiz'),
+                subtitle: Text('YouTube akışlı müzik çalar · reklamsız'),
               ),
             ],
           );
@@ -202,26 +285,65 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _checkUpdates(BuildContext context) async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    await UpdateService.instance.checkForUpdate(force: true);
-    if (UpdateService.instance.updateAvailable) {
-      messenger?.showSnackBar(
-        SnackBar(
-          content: Text(
-              'Yeni surum hazir: ${UpdateService.instance.latestVersion}'),
-        ),
-      );
-    } else {
-      messenger?.showSnackBar(
-        const SnackBar(content: Text('Uygulama güncel.')),
-      );
+  String _repairStatus() {
+    final bot = RepairBot.instance;
+    if (!bot.active) return 'Beklemede';
+    if (bot.scanning) return 'Denetleniyor…';
+    return 'Arka planda etkin · ${bot.fixCount} onarım';
+  }
+
+  String _updateStatus() {
+    final update = UpdateService.instance;
+    if (update.updateAvailable) {
+      return 'Yeni sürüm: ${update.latestVersion}';
     }
+    if (update.error != null) return 'Kontrol edilemedi';
+    return 'Kurulu sürüm: ${update.installedVersion}';
+  }
+
+  Future<void> _checkUpdates(BuildContext context) async {
+    await UpdateService.instance.checkForUpdate(force: true);
+    if (!context.mounted) return;
+
+    final update = UpdateService.instance;
+    final message = update.updateAvailable
+        ? 'Yeni sürüm hazır: ${update.latestVersion}'
+        : update.error != null
+            ? 'Güncelleme kontrolü başarısız.'
+            : 'Uygulama güncel.';
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _installUpdate(BuildContext context) async {
+    final update = UpdateService.instance;
+    final path = await update.prepareDownload();
+    if (path == null || !context.mounted) return;
+    final message = await update.applyUpdate();
+    if (!context.mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+}
+
+String _eqLabel(String preset) {
+  switch (preset) {
+    case 'bass':
+      return 'Bas';
+    case 'treble':
+      return 'Tiz';
+    case 'vocal':
+      return 'Vokal';
+    default:
+      return 'Düz';
   }
 }
 
 class _SectionTitle extends StatelessWidget {
   const _SectionTitle(this.text);
+
   final String text;
 
   @override
@@ -231,7 +353,7 @@ class _SectionTitle extends StatelessWidget {
       child: Text(
         text,
         style: TextStyle(
-          color: ThemeState.accent.value,
+          color: ThemeState.value,
           fontSize: 12,
           fontWeight: FontWeight.w800,
           letterSpacing: 1.1,
@@ -247,6 +369,7 @@ class _ColorDot extends StatelessWidget {
     required this.selected,
     required this.onTap,
   });
+
   final Color color;
   final bool selected;
   final VoidCallback onTap;
@@ -277,6 +400,7 @@ class _ColorDot extends StatelessWidget {
 
 class _RepairDot extends StatelessWidget {
   const _RepairDot({required this.active});
+
   final bool active;
 
   @override
