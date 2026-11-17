@@ -41,6 +41,10 @@ Future<void> main() async {
     ),
   );
 
+  // Ekolayzer efektini bir kez, açılışta uygula. Parça başına uygulanırsa
+  // ExoPlayer'da kısa ses kesintileri/çizirti oluşuyordu.
+  unawaited(PlayerController.instance.refreshEqualizer());
+
   unawaited(UpdateService.instance.init());
   unawaited(RepairBot.start());
 

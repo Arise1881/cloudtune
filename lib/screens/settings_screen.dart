@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/library.dart';
@@ -161,6 +163,38 @@ class SettingsScreen extends StatelessWidget {
                     onChanged: (value) =>
                         settings.setAudioQuality(value ?? 'high'),
                   ),
+                  SwitchListTile(
+                    secondary: const Icon(Icons.graphic_eq),
+                    title: const Text('Ekolayzer'),
+                    subtitle: const Text('Sesi artır / azalt.'),
+                    value: settings.equalizerEnabled,
+                    onChanged: (value) async {
+                      await settings.setEqualizerEnabled(value);
+                      unawaited(PlayerController.instance.refreshEqualizer());
+                    },
+                  ),
+                  if (settings.equalizerEnabled)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                      child: Wrap(
+                        spacing: 8,
+                        children: [
+                          for (final preset in SettingsService.equalizerPresets)
+                            ChoiceChip(
+                              label: Text(_eqLabel(preset)),
+                              selected: settings.equalizerPreset == preset,
+                              onSelected: (selected) async {
+                                await settings.setEqualizerPreset(
+                                  selected ? preset : 'normal',
+                                );
+                                unawaited(
+                                  PlayerController.instance.refreshEqualizer(),
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
               const SizedBox(height: 16),
@@ -330,6 +364,14 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 }
+
+String _eqLabel(String preset) => switch (preset) {
+      'bass' => 'Bas',
+      'treble' => 'Tiz',
+      'vocal' => 'Vokal',
+      'flat' => 'Düz',
+      _ => 'Normal',
+    };
 
 class _ProfileCard extends StatelessWidget {
   const _ProfileCard({required this.accent});

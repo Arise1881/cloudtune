@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:speech_to_text/speech_recognition_error.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
@@ -53,6 +54,10 @@ class _HomePageState extends State<HomePage> {
   Timer? _playlistTimer;
 
   List<Track>? _results;
+  List<Track> _artistTracks = const <Track>[];
+  String? _artistName;
+  bool _artistTracksLoading = false;
+  int _searchGeneration = 0;
   bool _busy = false;
   bool _listening = false;
   bool _showHistory = false;
@@ -62,6 +67,7 @@ class _HomePageState extends State<HomePage> {
   bool _voiceFallbackTried = false;
   bool _pausedForVoice = false;
   String _voiceLocale = 'tr-TR';
+  String _lastQuery = '';
   Track? _lastTrack;
 
   @override
@@ -211,7 +217,14 @@ class _HomePageState extends State<HomePage> {
     }
 
     FocusScope.of(context).unfocus();
-    setState(() => _showHistory = false);
+    _lastQuery = value;
+    final generation = ++_searchGeneration;
+    setState(() {
+      _showHistory = false;
+      _artistTracks = const <Track>[];
+      _artistName = null;
+      _artistTracksLoading = false;
+    });
 
     if (YoutubeLinkResolver.isYoutubeLink(value)) {
       final playlistId = YoutubeLinkResolver.playlistId(value);
@@ -237,13 +250,55 @@ class _HomePageState extends State<HomePage> {
     setState(() => _busy = true);
     try {
       final found = await YoutubeService.instance.search(value);
-      if (mounted) setState(() => _results = found);
+      if (!mounted || generation != _searchGeneration) return;
+      setState(() => _results = found);
       if (found.isEmpty) _toast('Sonuç bulunamadı.');
       await Library.instance.addSearchHistory(value);
+
+      // "Çalma Listeleri ve Şarkılar" başlığı altında sanatçının tüm
+      // parçaları gösterilir. Kanal ID varsa yüklemeler, yoksa sanatçı
+      // araması kullanılır; arama sonuçları ayrıca korunur.
+      if (found.isNotEmpty) {
+        final seed = found.firstWhere(
+          (t) => t.artistId != null && t.artistId!.isNotEmpty,
+          orElse: () => found.first,
+        );
+        setState(() {
+          _artistName = seed.artist;
+          _artistTracksLoading = true;
+        });
+        unawaited(_loadArtistTracks(seed, generation));
+      }
     } catch (_) {
       RepairBot.instance.reportEvent('search_failed', {'query': value});
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted && generation == _searchGeneration) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _loadArtistTracks(Track seed, int generation) async {
+    try {
+      final tracks = await YoutubeService.instance.artistTracks(
+        seed.artist,
+        channelId: seed.artistId,
+        limit: 60,
+      );
+      if (!mounted || generation != _searchGeneration) return;
+      final seen = <String>{
+        for (final track in _results ?? const <Track>[]) track.id,
+      };
+      final extra = tracks
+          .where((track) => track.id.isNotEmpty && seen.add(track.id))
+          .toList();
+      setState(() {
+        _artistTracks = extra;
+        _artistTracksLoading = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _searchGeneration) return;
+      setState(() => _artistTracksLoading = false);
     }
   }
 
@@ -290,18 +345,42 @@ class _HomePageState extends State<HomePage> {
     unawaited(_submit(text));
   }
 
+  void _onVoiceError(SpeechRecognitionError error) {
+    final msg = error.errorMsg;
+    // "no_match" / "speech_timeout" kullanıcı konuşmadığında gelir; hata
+    // göstermeden dinlemeyi kapatıp müziği geri ver.
+    if (msg == 'error_no_match' || msg == 'error_speech_timeout') {
+      unawaited(_stopVoice());
+      return;
+    }
+    // Bazı cihazlarda tr-TR ses verisi/user locale uyumsuz. Bir kez cihazın
+    // varsayılan locale'ine düşerek aramayı yaşat.
+    if (!_voiceFallbackTried && _voiceLocale == 'tr-TR') {
+      _voiceFallbackTried = true;
+      unawaited(_startListening(''));
+      return;
+    }
+    _voiceError(msg);
+    unawaited(_stopVoice());
+  }
+
   Future<void> _startListening(String localeId) async {
     _voiceLocale = localeId;
     try {
       // 7.x API'sinde listen() hata callback'i almaz; hata initialize()
       // sırasında verilen errorListener üzerinden gelir (bkz. _toggleVoice).
+      // listenMode.search, tanıyıcıyı şarkı/sanatçı adlarını yazma moduna
+      // geçirir; confirmation modunda kısa cevap beklediği için kelimeler
+      // yarım kesiliyordu.
       await _speech.listen(
         onResult: _onVoiceResult,
         listenOptions: SpeechListenOptions(
-          localeId: localeId,
+          localeId: localeId.isEmpty ? null : localeId,
           partialResults: true,
           cancelOnError: false,
-          pauseFor: const Duration(milliseconds: 700),
+          listenMode: ListenMode.search,
+          autoPunctuation: false,
+          pauseFor: const Duration(milliseconds: 900),
           listenFor: const Duration(seconds: 30),
         ),
       );
@@ -317,6 +396,20 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Cihazda tr-TR tanıma dilinin kurulu olup olmadığını kontrol et. Kurulu
+  /// değilse sistemin varsayılan dilini kullan; aksi halde sessiz timeout
+  /// oluşuyor ve kullanıcı "çalışmıyor" sanıyor.
+  Future<String> _pickVoiceLocale() async {
+    try {
+      final locales = await _speech.locales();
+      if (locales.any((l) => l.localeId == 'tr-TR')) return 'tr-TR';
+      final system = await _speech.systemLocale();
+      return system?.localeId ?? '';
+    } catch (_) {
+      return 'tr-TR';
+    }
+  }
+
   Future<void> _toggleVoice() async {
     if (_listening) {
       await _stopVoice();
@@ -327,17 +420,7 @@ class _HomePageState extends State<HomePage> {
       // speech_to_text izni initialize() sırasında ister; hasPermission
       // yalnızca mevcut durumu okur. Bu yüzden önce initialize çağrılır.
       final available = await _speech.initialize(
-        onError: (e) {
-          // Bazı cihazlarda tr-TR ses verisi yoktur. Bir kez cihazın varsayılan
-          // locale'ine düşerek sesli aramayı çalışır tut.
-          if (!_voiceFallbackTried && _voiceLocale == 'tr-TR') {
-            _voiceFallbackTried = true;
-            unawaited(_startListening(''));
-            return;
-          }
-          _voiceError(e.errorMsg);
-          unawaited(_stopVoice());
-        },
+        onError: _onVoiceError,
         onStatus: (s) {
           if (s == 'done' || s == 'notListening' || s == 'aborted') {
             if (mounted) setState(() => _listening = false);
@@ -365,7 +448,8 @@ class _HomePageState extends State<HomePage> {
 
     _voiceSubmitDone = false;
     _voiceFallbackTried = false;
-    await _startListening('tr-TR');
+    final locale = await _pickVoiceLocale();
+    await _startListening(locale);
   }
 
   void _voiceError(String msg) {
@@ -468,8 +552,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _returnHome() {
+    _searchGeneration++;
     setState(() {
       _results = null;
+      _artistTracks = const <Track>[];
+      _artistName = null;
+      _artistTracksLoading = false;
       _input.clear();
       _prepareFeed();
     });
@@ -766,6 +854,18 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildResults() {
     final results = _results!;
+    final hasArtistTracks = _artistTracks.isNotEmpty;
+    final primary = hasArtistTracks ? _artistTracks : results;
+    final showSearchSection = hasArtistTracks && results.isNotEmpty;
+    final artist = _artistName ?? 'Sanatçı';
+    final subtitle = _artistTracksLoading
+        ? '$artist parçaları yükleniyor…'
+        : hasArtistTracks
+            ? '$artist · ${_artistTracks.length} parça'
+            : _artistName != null
+                ? '$artist · ek parça bulunamadı'
+                : null;
+
     return Column(
       children: [
         Align(
@@ -777,49 +877,133 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
         Expanded(
-          child: results.isEmpty
-              ? const Center(child: Text('Sonuç yok.'))
-              : ListView.builder(
-                  itemCount: results.length,
-                  itemBuilder: (context, i) {
-                    final track = results[i];
-                    return ListTile(
-                      leading: ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: CachedNetworkImage(
-                          imageUrl: track.thumb,
-                          width: 56,
-                          height: 56,
-                          fit: BoxFit.cover,
-                          errorWidget: (_, __, ___) =>
-                              const Icon(Icons.music_note, size: 40),
-                        ),
-                      ),
-                      title: Text(
-                        track.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: GestureDetector(
-                        onTap: () => _openArtist(track),
-                        child: Text(track.artist, maxLines: 1),
-                      ),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.radio),
-                        tooltip: 'Radyo olarak çal',
-                        onPressed: () => PlayerController.instance.playQueue(
-                          results,
-                          i,
-                          radio: true,
-                        ),
-                      ),
-                      onTap: () =>
-                          PlayerController.instance.playQueue(results, i),
-                    );
-                  },
-                ),
+          child: ListView.builder(
+            itemCount:
+                1 +
+                (primary.isEmpty ? 1 : primary.length) +
+                (showSearchSection ? 1 + results.length : 0),
+            itemBuilder: (context, index) {
+              if (index == 0) {
+                return _resultSectionHeader(
+                  title: 'Çalma Listeleri ve Şarkılar',
+                  subtitle: subtitle,
+                  queue: primary,
+                );
+              }
+
+              var i = index - 1;
+              if (primary.isEmpty) {
+                if (i == 0) {
+                  return _artistTracksLoading
+                      ? const Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      : const Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Text('Sonuç yok.'),
+                        );
+                }
+                i--;
+              }
+              if (i < primary.length) {
+                return _resultTile(primary[i], primary, i);
+              }
+              i -= primary.length;
+              if (showSearchSection) {
+                if (i == 0) {
+                  return _resultSectionHeader(
+                    title: 'Arama Sonuçları',
+                    subtitle: '“$_lastQuery” için ${results.length} sonuç',
+                    queue: results,
+                  );
+                }
+                return _resultTile(results[i - 1], results, i - 1);
+              }
+              return const SizedBox.shrink();
+            },
+          ),
         ),
       ],
+    );
+  }
+
+  Widget _resultSectionHeader({
+    required String title,
+    String? subtitle,
+    required List<Track> queue,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (subtitle != null && subtitle.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (queue.isNotEmpty)
+            IconButton(
+              icon: Icon(Icons.play_circle_fill, color: ThemeState.value),
+              tooltip: 'Tümünü çal',
+              onPressed: () =>
+                  PlayerController.instance.playQueue(queue, 0, radio: false),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _resultTile(Track track, List<Track> queue, int index) {
+    return ListTile(
+      leading: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: CachedNetworkImage(
+          imageUrl: track.thumb,
+          width: 56,
+          height: 56,
+          fit: BoxFit.cover,
+          errorWidget: (_, __, ___) => const Icon(Icons.music_note, size: 40),
+        ),
+      ),
+      title: Text(
+        track.title,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: GestureDetector(
+        onTap: () => _openArtist(track),
+        child: Text(track.artist, maxLines: 1),
+      ),
+      trailing: IconButton(
+        icon: const Icon(Icons.radio),
+        tooltip: 'Radyo olarak çal',
+        onPressed: () => PlayerController.instance.playQueue(
+          queue,
+          index,
+          radio: true,
+        ),
+      ),
+      onTap: () => PlayerController.instance.playQueue(queue, index),
     );
   }
 

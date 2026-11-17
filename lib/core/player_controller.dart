@@ -10,6 +10,7 @@ import 'download_service.dart';
 import 'library.dart';
 import 'models.dart';
 import 'repair_bot.dart';
+import 'settings_service.dart';
 import 'youtube_service.dart';
 
 /// Merkezi çalar. Bildirim, kilit ekranı, Bluetooth ve Android Auto
@@ -23,9 +24,14 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     // ExoPlayer'ı yeniden tamponlama döngüsüne sokuyordu. Varsayılan
     // yapılandırmaya (2,5/5 sn eşik) dönüldü. Lazy preparation kapalı: kaynak
     // tam hazır olmadan play() ilk milisaniyelerde klik üretiyordu.
-    // AndroidEqualizer ses zincirine takıldığında kapalı olsa bile tüm
-    // parçalarda çizirti/underrun ürettiği için efekti tamamen kaldırdık.
-    _player = AudioPlayer(useLazyPreparation: false);
+    // Ekolayzer yalnızca AÇIKKEN zincire eklenir; kapalıyken efekt takılırsa
+    // bazı cihazlarda çizirti/underrun oluşuyordu. Ayar açılınca uygulama
+    // yeniden başlatılmadan refreshEqualizer() ile zincire alınır.
+    _equalizer = AndroidEqualizer();
+    _player = AudioPlayer(
+      audioPipeline: AudioPipeline(androidAudioEffects: [_equalizer]),
+      useLazyPreparation: false,
+    );
 
     _player.playerStateStream.listen(_onPlayerState);
     // playbackEventStream pozisyon her tick'inde (~4 Hz) akıyor. Her olayda
@@ -51,6 +57,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   static final PlayerController instance = PlayerController._();
 
+  late final AndroidEqualizer _equalizer;
   late final AudioPlayer _player;
 
   List<Track> _queue = const <Track>[];
@@ -174,6 +181,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       notifyListeners();
 
       await _player.play();
+      unawaited(_fadeInVolume(transition, generation));
       unawaited(Library.instance.remember(track));
       // İlk tampon tamamlanmadan prefetch başlarsa aktif akışa rakip oluyor.
       Timer(const Duration(seconds: 4), () {
@@ -198,6 +206,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
             _broadcast();
             notifyListeners();
             await _player.play();
+            unawaited(_fadeInVolume(transition, generation));
             unawaited(Library.instance.remember(track));
             unawaited(_preloadUpcoming());
             return;
@@ -225,6 +234,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
             _broadcast();
             notifyListeners();
             await _player.play();
+            unawaited(_fadeInVolume(transition, generation));
             unawaited(Library.instance.remember(track));
             unawaited(_preloadUpcoming());
             return;
@@ -240,6 +250,18 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     }
   }
 
+  /// Parça ilk açıldığında Android AudioTrack oluşturulurken çıkan kısa
+  /// klik/çizirtiyi maskeler. Ses 0'dan kademeli olarak 1.0'a çıkar.
+  Future<void> _fadeInVolume(int transition, int generation) async {
+    const steps = 8;
+    for (var i = 1; i <= steps; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      if (_isStale(transition, generation)) return;
+      await _player.setVolume(i / steps);
+      if (_isStale(transition, generation)) return;
+    }
+  }
+
   Future<Uri> _resolveTrack(Track track) async {
     final saved = DownloadService.instance.savedPathOf(track.id);
     if (saved != null && File(saved).existsSync()) return Uri.file(saved);
@@ -249,6 +271,9 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   }
 
   Future<void> _setSource(Uri uri, Duration? resumeAt) async {
+    // Fade-in öncesi sesi sıfırla: yeni kaynak açılırken eski gain kalırsa
+    // ilk frame'de klik duyuluyor.
+    await _player.setVolume(0);
     final isYoutube = uri.host.endsWith('googlevideo.com') ||
         uri.host.endsWith('youtube.com');
     final headers = <String, String>{
@@ -288,9 +313,39 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   /// kullanılır. `play()` bir toggle olduğu için onun yerine bunu kullan.
   Future<void> resume() async {
     if (_player.playing) return;
+    if (_player.volume == 0) await _player.setVolume(1);
     await _player.play();
     _broadcast();
   }
+
+  /// Ayarlar ekranından ekolayzer açılıp/kapatıldığında veya başlangıçta bir
+  /// kez çağrılır. Parça başına çağrılmaz; aksi halde ses kırılır.
+  Future<void> refreshEqualizer() => _applyEqualizer();
+
+  Future<void> _applyEqualizer() async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    final settings = SettingsService.instance;
+    if (!settings.ready) return;
+    try {
+      await _equalizer.setEnabled(settings.equalizerEnabled);
+      if (!settings.equalizerEnabled) return;
+      final params = await _equalizer.parameters;
+      final bands = params.bands;
+      if (bands.isEmpty) return;
+      final gains = _eqGains(settings.equalizerPreset);
+      for (var i = 0; i < bands.length; i++) {
+        await bands[i].setGain(gains[i % gains.length]);
+      }
+    } catch (_) {}
+  }
+
+  static List<double> _eqGains(String preset) => switch (preset) {
+        'flat' => [0, 0, 0, 0, 0],
+        'bass' => [8, 5, 0, -1, 1],
+        'treble' => [-1, 0, 2, 6, 8],
+        'vocal' => [-2, 1, 5, 3, 0],
+        _ => [0, 0, 0, 0, 0],
+      };
 
   void _onPlayerState(PlayerState state) {
     _broadcast();
@@ -393,6 +448,8 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     if (_player.playing) {
       await _player.pause();
     } else {
+      // Bir önceki fade-in yarıda kesilmişse ses 0'da kalmış olabilir.
+      if (_player.volume == 0) await _player.setVolume(1);
       await _player.play();
     }
     _broadcast();
