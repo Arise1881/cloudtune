@@ -26,7 +26,10 @@ android {
     defaultConfig {
         applicationId = "com.cloudtune.app"
         // Android 5.0+ (API 21): eski cihazlar da uygulamayı kurabilsin.
-        minSdk = flutter.minSdkVersion
+        // Android 5.0+ (API 21): eski cihazlar da uygulamayı kurabilsin.
+        // Flutter minSdk migrasyonu degisikligi geri yazdigi icin deger
+        // gradle.properties'ten okunur (API 24, Android 7.0).
+        minSdk = (project.property("cloudtune.minSdk") as String).toInt()
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

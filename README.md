@@ -4,7 +4,7 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 | Platform | Durum | Paket |
 |---|---|---|
-| Android 5.0+ (telefon / tablet / katlanabilir) | ✅ | `CloudTune-universal.apk` (tüm ABI'ler) |
+| Android 7.0+ (telefon / tablet / katlanabilir) | ✅ | `CloudTune-universal.apk` (tüm ABI'ler) |
 | Android arm64 | ✅ | `CloudTune-arm64.apk` |
 | Android armv7 | ✅ | `CloudTune-armv7.apk` |
 | Android x86_64 | ✅ | `CloudTune-x86_64.apk` |
@@ -19,7 +19,7 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 ## İlk kurulum (yeni kullanıcı)
 
 1. [Son sürüm](https://github.com/Arise1881/cloudtune-dist/releases/tag/cloudtune-latest) sayfasından platformunuza uygun dosyayı indirin.
-2. Android'de **Bilinmeyen kaynaklardan yükleme** iznini verin (Ayarlar → Güvenlik). Paket imzalı olduğu için Google Play koruması uyarı verebilir; devam edin.
+2. Android 7.0+ gerekir. **Bilinmeyen kaynaklardan yükleme** iznini verin (Ayarlar → Güvenlik). Paket imzalı olduğu için Google Play koruması uyarı verebilir; devam edin.
 3. APK'yı kurun ve uygulamayı açın.
 4. İlk açılışta izinler:
    - **Bildirimler** — arka plan çalma ve kilit ekranı kontrolleri için,
@@ -101,7 +101,7 @@ lib/
     my_playlists_page.dart   Çalma listelerim
     downloads_page.dart      İndirilenler
     room_page.dart           Oda ekranı
-android/                     Android Gradle + manifest (minSdk 21, tüm ABI'ler)
+android/                     Android Gradle + manifest (minSdk 24, tüm ABI'ler)
 linux/ windows/ ios/ web/    Masaüstü ve web runner'ları
 tool/bootstrap.sh            Android platform dosyalarını üret/yamala
 tool/patch_android.py        Android yapılandırma yamaları

@@ -11,8 +11,37 @@ from pathlib import Path
 
 MANIFEST = Path(sys.argv[1] if len(sys.argv) > 1 else
                 "android/app/src/main/AndroidManifest.xml")
+GRADLE = Path("android/app/build.gradle.kts")
+PROPS = Path("android/gradle.properties")
 
 HOSTS = ["youtu.be", "m.youtube.com", "youtube.com", "www.youtube.com"]
+
+
+def patch_min_sdk() -> None:
+    """Android 7.0+ destegi: minSdk'i acikca 24 olarak sabitle.
+
+    Literal `minSdk = 24` satiri Flutter migrasyonunda `flutter.minSdkVersion`
+    olarak geri yazilir; property tabanli satir migrasyona takilmaz. Flutter
+    3.x ve app_links bagimliligi API 24'ten dusuk degeri desteklemez.
+    """
+    if PROPS.exists():
+        text = PROPS.read_text(encoding="utf-8")
+        if "cloudtune.minSdk" not in text:
+            text += "\n# Flutter 3.x + app_links icin minimum SDK=24 (Android 7.0).\ncloudtune.minSdk=24\n"
+            PROPS.write_text(text, encoding="utf-8")
+    if GRADLE.exists():
+        text = GRADLE.read_text(encoding="utf-8")
+        if "cloudtune.minSdk" not in text:
+            text = re.sub(
+                r"minSdk\s*=\s*flutter\.minSdkVersion",
+                'minSdk = (project.property("cloudtune.minSdk") as String).toInt()',
+                text,
+                count=1,
+            )
+            GRADLE.write_text(text, encoding="utf-8")
+
+
+patch_min_sdk()
 
 PERMISSIONS = [
     "android.permission.INTERNET",
