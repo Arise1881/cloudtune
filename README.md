@@ -99,7 +99,7 @@ Kullanıcıya bağlantı bilgisi veya ham hata mesajı gösterilmez; hatalar Tü
 ```
 README.md                  Bu dosya: özellikler, kurulum, uyum, güncelleme, gizlilik
 LICENSE                    MIT lisans
-pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.35+236)
+pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.36+237)
 analysis_options.yaml      Dart/Flutter linter kuralları
 .metadata                  Flutter proje metadata
 release.sh                 Build → analyze/test → artifact → GitHub release → push
@@ -112,7 +112,8 @@ lib/
     app_palette.dart       Tema duyarlı renk paleti (yüzey, metin, ayırıcı, ikon)
     theme_state.dart       Vurgu rengi + çözümlenmiş Brightness (system dahil)
     settings_service.dart  Cihaz içi tercihler (tema, ekolayzer, dil, radyo, indirme)
-    player_controller.dart ExoPlayer kuyruğu, geçiş koruması, ses, ekolayzer, prefetch
+    audio_backend.dart     Platform ses motoru: just_audio (Android/iOS), media_kit+libmpv (Linux)
+    player_controller.dart Kuyruk, geçiş koruması, ses, ekolayzer, prefetch
     youtube_service.dart   InnerTube arama, sanatçı parçaları, akış çözümleme
     library.dart           Geçmiş, beğeniler, çalma listeleri
     models.dart            Track ve veri modelleri
