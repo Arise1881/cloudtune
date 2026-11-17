@@ -90,6 +90,17 @@ cp -f build/app/outputs/flutter-apk/app-release.apk "$STAGING/CloudTune-universa
 cp -f build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk "$STAGING/CloudTune-armv7.apk"
 cp -f build/app/outputs/flutter-apk/app-x86_64-release.apk "$STAGING/CloudTune-x86_64.apk"
 
+# media_kit Linux motoru libmpv kullanır. Flutter RUNPATH $ORIGIN/lib olduğu
+# için kütüphaneyi bundle/lib içine koyuyoruz; deb ayrıca libmpv2'ye bağlı.
+LIBMPV=$(ldconfig -p 2>/dev/null | awk '/libmpv\.so\.2 .* => \// {print $NF; exit}')
+if [[ -n "$LIBMPV" ]]; then
+  cp -L "$LIBMPV" build/linux/x64/release/bundle/lib/libmpv.so.2
+  ln -sfn libmpv.so.2 build/linux/x64/release/bundle/lib/libmpv.so
+  echo "libmpv bundle'a eklendi: $LIBMPV"
+else
+  echo "UYARI: libmpv.so.2 bulunamadı; deb Depends ile kurulacak."
+fi
+
 # Linux tar.gz
 cd build/linux/x64/release
 tar -czf "$STAGING/CloudTune-linux.tar.gz" bundle
@@ -124,6 +135,7 @@ Version: $NEW_VER
 Section: sound
 Priority: optional
 Architecture: amd64
+Depends: libmpv2
 Maintainer: Arise1881 <arise1881@users.noreply.github.com>
 Description: CloudTune — YouTube müzik çalar (reklamsız)
  Installed-Size: $(du -sk "$DEB_DIR/usr/share/cloudtune" | cut -f1)

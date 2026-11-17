@@ -4,8 +4,8 @@ import 'dart:io';
 import 'package:audio_service/audio_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
-import 'package:just_audio/just_audio.dart';
 
+import 'audio_backend.dart';
 import 'download_service.dart';
 import 'library.dart';
 import 'models.dart';
@@ -20,30 +20,11 @@ import 'youtube_service.dart';
 /// önbellek/ısıtma, hata kurtarma ve parça atlama mantığı.
 class PlayerController extends BaseAudioHandler with ChangeNotifier {
   PlayerController._() {
-    // Özel AndroidLoadControl (12/30 sn, prioritizeTime) ağ dalgalanmasında
-    // ExoPlayer'ı yeniden tamponlama döngüsüne sokuyordu. Varsayılan
-    // yapılandırmaya (2,5/5 sn eşik) dönüldü. Lazy preparation kapalı: kaynak
-    // tam hazır olmadan play() ilk milisaniyelerde klik üretiyordu.
-    // Ekolayzer yalnızca AÇIKKEN zincire eklenir; kapalıyken efekt takılırsa
-    // bazı cihazlarda çizirti/underrun oluşuyordu. Ayar açılınca uygulama
-    // yeniden başlatılmadan refreshEqualizer() ile zincire alınır.
-    _equalizer = AndroidEqualizer();
-    _player = AudioPlayer(
-      audioPipeline: AudioPipeline(androidAudioEffects: [_equalizer]),
-      useLazyPreparation: false,
-    );
-
-    _player.playerStateStream.listen(_onPlayerState);
-    // playbackEventStream pozisyon her tick'inde (~4 Hz) akıyor. Her olayda
-    // _broadcast() çağırmak media-session/notification'ı ve tüm UI dinleyicilerini
-    // saniyede 4 kez güncelliyordu; ana thread'deki bu yük ses yolunda
-    // mikro kesintilere (çizirti) yol açıyordu. Durum/pozisyon/süre zaten
-    // kendi kontrollü kanallarından broadcast ediliyor. Burada yalnızca hata
-    // yakalanır.
-    _player.playbackEventStream.listen(
-      (_) {},
-      onError: (Object error, StackTrace _) => _onPlaybackError(error),
-    );
+    // Linux'ta just_audio'nun native implementasyonu yok: MissingPluginException
+    // -> "parça oynatılamadı". Platforma göre doğru motor seçilir.
+    _player = createAudioBackend();
+    _player.statusStream.listen(_onPlayerState);
+    _player.errorStream.listen((error) => unawaited(_onPlaybackError(error)));
     _player.positionStream.listen(_onPosition);
     _player.durationStream.listen((_) => _broadcast());
 
@@ -57,8 +38,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   static final PlayerController instance = PlayerController._();
 
-  late final AndroidEqualizer _equalizer;
-  late final AudioPlayer _player;
+  late final AudioBackend _player;
 
   List<Track> _queue = const <Track>[];
   List<Track> _originalQueue = const <Track>[];
@@ -121,7 +101,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   bool get playing => _player.playing;
   Duration get position => _player.position;
-  Duration get buffered => _player.bufferedPosition;
+  Duration get buffered => _player.buffered;
 
   int _nextTransition() => ++_transitionId;
 
@@ -276,13 +256,11 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       headers['Origin'] = 'https://www.youtube.com/';
     }
     await _player
-        .setAudioSource(
-          AudioSource.uri(
-            uri,
-            tag: mediaItem.value,
-            headers: headers,
-          ),
+        .open(
+          uri,
+          headers: headers,
           initialPosition: resumeAt,
+          tag: mediaItem.value,
         )
         .timeout(const Duration(seconds: 9));
   }
@@ -314,30 +292,15 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     if (kIsWeb || !Platform.isAndroid) return;
     final settings = SettingsService.instance;
     if (!settings.ready) return;
-    try {
-      await _equalizer.setEnabled(settings.equalizerEnabled);
-      if (!settings.equalizerEnabled) return;
-      final params = await _equalizer.parameters;
-      final bands = params.bands;
-      if (bands.isEmpty) return;
-      final gains = _eqGains(settings.equalizerPreset);
-      for (var i = 0; i < bands.length; i++) {
-        await bands[i].setGain(gains[i % gains.length]);
-      }
-    } catch (_) {}
+    await _player.applyEqualizer(
+      settings.equalizerEnabled,
+      settings.equalizerPreset,
+    );
   }
 
-  static List<double> _eqGains(String preset) => switch (preset) {
-        'flat' => [0, 0, 0, 0, 0],
-        'bass' => [8, 5, 0, -1, 1],
-        'treble' => [-1, 0, 2, 6, 8],
-        'vocal' => [-2, 1, 5, 3, 0],
-        _ => [0, 0, 0, 0, 0],
-      };
-
-  void _onPlayerState(PlayerState state) {
+  void _onPlayerState(PlaybackStatus status) {
     _broadcast();
-    if (state.processingState == ProcessingState.completed) {
+    if (status == PlaybackStatus.completed) {
       unawaited(_advance(auto: true));
     }
   }
@@ -528,14 +491,14 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     _publishQueue();
   }
 
-  AudioProcessingState _mapState(PlayerState state) {
+  AudioProcessingState _mapState() {
     if (_error != null) return AudioProcessingState.error;
-    return switch (state.processingState) {
-      ProcessingState.idle => AudioProcessingState.idle,
-      ProcessingState.loading => AudioProcessingState.loading,
-      ProcessingState.buffering => AudioProcessingState.buffering,
-      ProcessingState.ready => AudioProcessingState.ready,
-      ProcessingState.completed => AudioProcessingState.completed,
+    return switch (_player.status) {
+      PlaybackStatus.idle => AudioProcessingState.idle,
+      PlaybackStatus.loading => AudioProcessingState.loading,
+      PlaybackStatus.buffering => AudioProcessingState.buffering,
+      PlaybackStatus.ready => AudioProcessingState.ready,
+      PlaybackStatus.completed => AudioProcessingState.completed,
     };
   }
 
@@ -557,12 +520,10 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     ].where((i) => i < controls.length).toList();
 
     playbackState.add(playbackState.value.copyWith(
-      processingState: _mapState(
-        PlayerState(_player.playing, _player.processingState),
-      ),
+      processingState: _mapState(),
       playing: _player.playing,
       updatePosition: _player.position,
-      bufferedPosition: _player.bufferedPosition,
+      bufferedPosition: _player.buffered,
       speed: _player.speed,
       controls: controls,
       androidCompactActionIndices: compact,

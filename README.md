@@ -8,11 +8,13 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 | Android arm64 | ✅ | `CloudTune-arm64.apk` |
 | Android armv7 | ✅ | `CloudTune-armv7.apk` |
 | Android x86_64 | ✅ | `CloudTune-x86_64.apk` |
-| Linux x86_64 | ✅ | `CloudTune-linux.deb`, `CloudTune-linux.tar.gz` |
+| Linux x86_64 | ✅ | `CloudTune-linux.deb` (libmpv2 bağımlı), `CloudTune-linux.tar.gz` |
 | Windows 11 | ⚠️ Eski paket | `CloudTune-windows.zip` (3.0.5+206); güncel CI ödeme limiti nedeniyle üretilemedi |
 | iOS (AltStore / SideStore) | ⚠️ Eski paket | `CloudTune.ipa`; güncel CI ödeme limiti nedeniyle üretilemedi |
 
-> **Windows/iOS:** GitHub Actions job'ları “recent account payments have failed or spending limit needs to be increased” nedeniyle hiç başlamıyor. Billing/spending limiti düzeltildikten sonra `gh workflow run windows-build.yml` ve `gh workflow run ios-build.yml` ile güncel `3.0.35+236` paketleri üretilebilir. Android ve Linux paketleri güncel ve doğrulandı.
+> **Windows/iOS:** GitHub Actions job'ları “recent account payments have failed or spending limit needs to be increased” nedeniyle hiç başlamıyor. Billing/spending limiti düzeltildikten sonra `gh workflow run windows-build.yml` ve `gh workflow run ios-build.yml` ile güncel paketler üretilebilir. Android ve Linux paketleri güncel ve doğrulandı.
+
+> **Linux ses:** Oynatma motoru `media_kit + libmpv`'dir. `deb` paketi `libmpv2`'ye bağlıdır; `apt` bağımlılığı otomatik kurar. `tar.gz` kullanacaksanız sistemde `libmpv2` bulunmalıdır (`sudo apt install libmpv2`). `just_audio` Linux'ta desteklenmediği için ses motoru platforma göre seçilir.
 
 > **Hangi APK?** Cihazınızın mimarisini bilmiyorsanız `CloudTune-universal.apk`'yı indirin. Uygulama içi güncelleyici cihazın ABI'sini algılar (`Abi.current`) ve doğru paketi seçer; uygun paket yoksa evrensel APK'ya düşer.
 
@@ -189,7 +191,7 @@ ADB_SERIAL=emulator-xxxx python3 ct_full_test.py   # 20/20 (debug APK)
 #   uninstall → release APK install → ilk açılış → izinler → tema → arama
 ```
 
-Gerçek kullanıcı simülasyonunda kontrol edilenler: sürüm `3.0.35 / 236`,
+Gerçek kullanıcı simülasyonunda kontrol edilenler: sürüm `3.0.36 / 237`,
 `minSdk=24`, uygulama foreground, mikrofon ilk dokunuşta açılıyor, açık temada
 zemin açık/metin koyu, arama sonuçlarında “Çalma Listeleri ve Şarkılar” ve
 “Arama Sonuçları” başlıkları, logcat'te crash yok.
