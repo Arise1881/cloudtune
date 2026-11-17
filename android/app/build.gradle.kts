@@ -25,6 +25,7 @@ android {
 
     defaultConfig {
         applicationId = "com.cloudtune.app"
+        // Android 5.0+ (API 21): eski cihazlar da uygulamayı kurabilsin.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

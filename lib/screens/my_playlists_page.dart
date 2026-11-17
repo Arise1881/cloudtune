@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cloudtune/core/app_palette.dart';
 
 import '../core/library.dart';
 import '../core/models.dart';
@@ -14,10 +15,10 @@ class MyPlaylistsPage extends StatelessWidget {
     final accent = ThemeState.value;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF181818),
+      backgroundColor: AppPalette.surface,
       appBar: AppBar(
         title: const Text('Çalma Listelerim'),
-        backgroundColor: const Color(0xFF181818),
+        backgroundColor: AppPalette.surface,
         actions: [
           IconButton(
             tooltip: 'Ana sayfa',
@@ -38,9 +39,9 @@ class MyPlaylistsPage extends StatelessWidget {
                 children: [
                   Icon(Icons.playlist_play, size: 72, color: accent),
                   const SizedBox(height: 16),
-                  const Text(
+                  Text(
                     'Henüz çalma listesi yok.',
-                    style: TextStyle(color: Colors.white70, fontSize: 16),
+                    style: TextStyle(color: AppPalette.textMuted, fontSize: 16),
                   ),
                 ],
               ),
@@ -109,7 +110,7 @@ class _PlaylistCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: const Color(0xFF181818),
+      color: AppPalette.surface,
       surfaceTintColor: Colors.transparent,
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -121,7 +122,7 @@ class _PlaylistCard extends StatelessWidget {
         ),
         subtitle: Text(
           '$trackCount parça',
-          style: const TextStyle(color: Colors.white70, fontSize: 12),
+          style: TextStyle(color: AppPalette.textMuted, fontSize: 12),
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -133,7 +134,7 @@ class _PlaylistCard extends StatelessWidget {
             ),
             IconButton(
               tooltip: 'Sil',
-              icon: const Icon(Icons.delete_outline, color: Colors.white70),
+              icon: Icon(Icons.delete_outline, color: AppPalette.textMuted),
               onPressed: onDelete,
             ),
           ],

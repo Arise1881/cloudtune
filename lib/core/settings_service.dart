@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'theme_state.dart';
+
 /// Device-only preferences. Nothing here is sent to a server.
 class SettingsService extends ChangeNotifier {
   SettingsService._();
@@ -86,6 +88,7 @@ class SettingsService extends ChangeNotifier {
       // Unreadable storage: keep defaults and continue normally.
     }
     _ready = true;
+    ThemeState.applyThemeMode(_themeMode);
     notifyListeners();
   }
 
@@ -133,6 +136,7 @@ class SettingsService extends ChangeNotifier {
 
   Future<void> setThemeMode(ThemeMode value) async {
     _themeMode = value;
+    ThemeState.applyThemeMode(value);
     notifyListeners();
     await _saveString('ct.themeMode', value.name);
   }

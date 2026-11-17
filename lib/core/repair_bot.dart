@@ -247,8 +247,7 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
             'attempts': attempt,
           });
         } else {
-          _nextDownloadAt[id] =
-              DateTime.now().add(_downloadCooldown);
+          _nextDownloadAt[id] = DateTime.now().add(_downloadCooldown);
         }
       }
     }

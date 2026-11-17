@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:cloudtune/core/app_palette.dart';
+
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -180,9 +182,11 @@ class _RoomPageState extends State<RoomPage>
       displayName: name,
     );
     if (!mounted) return;
-    _toast(joined ? 'Odaya katıldın' : (RoomService.instance.error.isEmpty
-        ? 'Katılım başarısız'
-        : RoomService.instance.error));
+    _toast(joined
+        ? 'Odaya katıldın'
+        : (RoomService.instance.error.isEmpty
+            ? 'Katılım başarısız'
+            : RoomService.instance.error));
   }
 
   void _toast(String message) {
@@ -211,7 +215,7 @@ class _RoomPageState extends State<RoomPage>
           controller: _tabs,
           indicatorColor: accent,
           labelColor: accent,
-          unselectedLabelColor: Colors.white70,
+          unselectedLabelColor: AppPalette.textMuted,
           tabs: const [
             Tab(icon: Icon(Icons.graphic_eq), text: 'Odalar'),
             Tab(icon: Icon(Icons.favorite), text: 'Kitaplığım'),
@@ -262,13 +266,13 @@ class _RoomPageState extends State<RoomPage>
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [accent.withValues(alpha: 0.32), const Color(0xFF242424)],
+              colors: [accent.withValues(alpha: 0.32), AppPalette.card],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
             borderRadius: BorderRadius.circular(20),
           ),
-          child: const Column(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Odalar',
@@ -278,7 +282,7 @@ class _RoomPageState extends State<RoomPage>
                 'Oda kur, kodu paylaş ya da başka bir odanın koduyla '
                 'internet üzerinden katıl. Şarkılar her cihazda kendi '
                 'bağlantısıyla çalınır; oda durumu eşzamanlı tutulur.',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
+                style: TextStyle(color: AppPalette.textMuted, fontSize: 13),
               ),
             ],
           ),
@@ -361,7 +365,8 @@ class _RoomPageState extends State<RoomPage>
                   Text(
                     '${room.roomId} · ${room.members.length} dinleyici · '
                     '${room.isHost ? 'Ev sahibi' : 'Katılımcı'}',
-                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                    style:
+                        TextStyle(color: AppPalette.textSubtle, fontSize: 12),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -385,8 +390,8 @@ class _RoomPageState extends State<RoomPage>
                 icon: const Icon(Icons.logout),
                 label: const Text('Çık'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white70,
-                  side: const BorderSide(color: Colors.white24),
+                  foregroundColor: AppPalette.textMuted,
+                  side: BorderSide(color: AppPalette.iconFaint),
                 ),
               ),
             ),
@@ -479,7 +484,9 @@ class _RoomPageState extends State<RoomPage>
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      member.isHost ? '${member.name} (Ev sahibi)' : member.name,
+                      member.isHost
+                          ? '${member.name} (Ev sahibi)'
+                          : member.name,
                       style: const TextStyle(
                           fontSize: 10, fontWeight: FontWeight.w600),
                       maxLines: 2,
@@ -516,7 +523,7 @@ class _RoomPageState extends State<RoomPage>
                   ? Container(
                       width: 48,
                       height: 48,
-                      color: const Color(0xFF242424),
+                      color: AppPalette.card,
                       child: const Icon(Icons.music_note, size: 26),
                     )
                   : CachedNetworkImage(
@@ -527,7 +534,7 @@ class _RoomPageState extends State<RoomPage>
                       errorWidget: (_, __, ___) => Container(
                         width: 48,
                         height: 48,
-                        color: const Color(0xFF242424),
+                        color: AppPalette.card,
                         child: const Icon(Icons.music_note, size: 26),
                       ),
                     ),
@@ -538,12 +545,14 @@ class _RoomPageState extends State<RoomPage>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w700)),
                   Text(artist,
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: Colors.white54, fontSize: 12)),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: AppPalette.textSubtle, fontSize: 12)),
                 ],
               ),
             ),
@@ -557,9 +566,7 @@ class _RoomPageState extends State<RoomPage>
             IconButton(
               tooltip: 'Sıraya ekle',
               icon: const Icon(Icons.add, size: 20),
-              onPressed: track == null
-                  ? null
-                  : () => room.addToQueue(track),
+              onPressed: track == null ? null : () => room.addToQueue(track),
             ),
           ],
         ),
@@ -583,7 +590,7 @@ class _RoomPageState extends State<RoomPage>
             itemBuilder: (context, i) {
               final track = room.queue[i];
               return Card(
-                color: const Color(0xFF1E1E1E),
+                color: AppPalette.cardAlt,
                 child: ListTile(
                   leading: _thumbnail(track),
                   title: Text(track.title,
@@ -616,7 +623,7 @@ class _RoomPageState extends State<RoomPage>
         height: size,
         fit: BoxFit.cover,
         errorWidget: (_, __, ___) => Container(
-          color: const Color(0xFF242424),
+          color: AppPalette.card,
           child: Icon(Icons.music_note, size: size * 0.6),
         ),
       ),
@@ -626,7 +633,7 @@ class _RoomPageState extends State<RoomPage>
   Widget _chatCard(RoomService room, Color accent) {
     final reactions = room.reactions.entries.toList();
     return Card(
-      color: const Color(0xFF1E1E1E),
+      color: AppPalette.cardAlt,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -637,9 +644,9 @@ class _RoomPageState extends State<RoomPage>
             SizedBox(
               height: 160,
               child: room.chat.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Text('Henüz mesaj yok.',
-                          style: TextStyle(color: Colors.white38)))
+                          style: TextStyle(color: AppPalette.textFaint)))
                   : ListView.builder(
                       itemCount: room.chat.length,
                       itemBuilder: (context, i) {
@@ -654,8 +661,8 @@ class _RoomPageState extends State<RoomPage>
                               children: [
                                 TextSpan(
                                   text: message.text,
-                                  style: const TextStyle(
-                                      color: Colors.white70,
+                                  style: TextStyle(
+                                      color: AppPalette.textMuted,
                                       fontWeight: FontWeight.normal),
                                 ),
                               ],
@@ -704,12 +711,12 @@ class _RoomPageState extends State<RoomPage>
                       child: ActionChip(
                         label: Text(
                           reactions
-                                  .firstWhere(
-                                    (entry) => entry.key == emoji,
-                                    orElse: () => MapEntry(emoji, 0),
-                                  )
-                                  .value ==
-                              0
+                                      .firstWhere(
+                                        (entry) => entry.key == emoji,
+                                        orElse: () => MapEntry(emoji, 0),
+                                      )
+                                      .value ==
+                                  0
                               ? emoji
                               : '$emoji ${reactions.firstWhere((entry) => entry.key == emoji).value}',
                         ),
@@ -772,8 +779,9 @@ class _RoomPageState extends State<RoomPage>
                         fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 4),
-                  const Text('Avatara dokunarak değiştir',
-                      style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  Text('Avatara dokunarak değiştir',
+                      style: TextStyle(
+                          color: AppPalette.textSubtle, fontSize: 12)),
                 ],
               ),
             ),
@@ -810,7 +818,7 @@ class _RoomPageState extends State<RoomPage>
         ),
         const SizedBox(height: 8),
         tracks.isEmpty
-            ? Text(empty, style: const TextStyle(color: Colors.white38))
+            ? Text(empty, style: TextStyle(color: AppPalette.textFaint))
             : SizedBox(
                 height: 180,
                 child: ListView.separated(
@@ -844,7 +852,7 @@ class _RoomPageState extends State<RoomPage>
                 height: 136,
                 fit: BoxFit.cover,
                 errorWidget: (_, __, ___) => Container(
-                  color: const Color(0xFF242424),
+                  color: AppPalette.card,
                   child: Icon(Icons.music_note,
                       size: 48, color: accent.withValues(alpha: 0.7)),
                 ),
@@ -858,7 +866,7 @@ class _RoomPageState extends State<RoomPage>
             Text(track.artist,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                style: TextStyle(color: AppPalette.textSubtle, fontSize: 12)),
           ],
         ),
       ),

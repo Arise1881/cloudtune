@@ -48,8 +48,7 @@ class DownloadService extends ChangeNotifier {
         for (final id in _failures) id: -1,
       };
 
-  List<Track> get savedTracks =>
-      List<Track>.unmodifiable(_savedTracks.values);
+  List<Track> get savedTracks => List<Track>.unmodifiable(_savedTracks.values);
 
   Set<String> get failureIds => Set.unmodifiable(_failures);
 
@@ -156,8 +155,7 @@ class DownloadService extends ChangeNotifier {
       }
 
       final host = uri.host;
-      final isGoogle =
-          host.contains('googlevideo') || host.contains('youtube');
+      final isGoogle = host.contains('googlevideo') || host.contains('youtube');
       final request = http.Request('GET', uri)
         ..headers['User-Agent'] =
             'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 '
@@ -223,8 +221,8 @@ class DownloadService extends ChangeNotifier {
 
   /// Başarısız bir indirmeyi, bilinen parça bilgisiyle yeniden dener.
   Future<void> retryDownload(String id) async {
-    final track = failedTrack(id) ??
-        Track(id: id, title: id, artist: 'Bilinmeyen');
+    final track =
+        failedTrack(id) ?? Track(id: id, title: id, artist: 'Bilinmeyen');
     await download(track);
   }
 

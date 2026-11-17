@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:cloudtune/core/app_palette.dart';
 
 import '../core/library.dart';
 import '../core/models.dart';
@@ -22,7 +23,7 @@ class MiniPlayer extends StatelessWidget {
         if (track == null) return const SizedBox.shrink();
 
         return Material(
-          color: const Color(0xFF242424),
+          color: AppPalette.card,
           child: SafeArea(
             top: false,
             child: Column(
@@ -89,9 +90,9 @@ class MiniPlayer extends StatelessWidget {
                                 track.artist,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 12,
-                                  color: Colors.white54,
+                                  color: AppPalette.textSubtle,
                                 ),
                               ),
                             ],
@@ -143,18 +144,16 @@ class _Progress extends StatelessWidget {
     return StreamBuilder<Duration?>(
       stream: player.durationStream,
       builder: (context, duration) {
-        final total =
-            (duration.data ?? track.duration)?.inMilliseconds ?? 0;
+        final total = (duration.data ?? track.duration)?.inMilliseconds ?? 0;
         return StreamBuilder<Duration>(
           stream: player.positionStream,
           builder: (context, position) {
             final pos = position.data?.inMilliseconds ?? 0;
-            final value =
-                total > 0 ? (pos / total).clamp(0.0, 1.0) : 0.0;
+            final value = total > 0 ? (pos / total).clamp(0.0, 1.0) : 0.0;
             return LinearProgressIndicator(
               value: value,
               minHeight: 2,
-              backgroundColor: Colors.white12,
+              backgroundColor: AppPalette.divider,
               color: ThemeState.value,
             );
           },
@@ -179,7 +178,7 @@ class _LikeButton extends StatelessWidget {
           tooltip: 'Beğen',
           icon: Icon(
             liked ? Icons.favorite : Icons.favorite_border,
-            color: liked ? ThemeState.value : Colors.white54,
+            color: liked ? ThemeState.value : AppPalette.textSubtle,
           ),
           onPressed: () {
             final track = PlayerController.instance.current;

@@ -4,6 +4,7 @@ import 'package:app_links/app_links.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:cloudtune/core/app_palette.dart';
 
 import 'core/download_service.dart';
 import 'core/library.dart';
@@ -24,6 +25,13 @@ Future<void> main() async {
 
   await Library.instance.init();
   await SettingsService.instance.init();
+  // "Sistem" seçiliyken cihaz teması değişirse palet ve ThemeData yenilenir.
+  WidgetsBinding.instance.platformDispatcher.onPlatformBrightnessChanged = () {
+    ThemeState.applyThemeMode(
+      SettingsService.instance.themeMode,
+      platform: WidgetsBinding.instance.platformDispatcher.platformBrightness,
+    );
+  };
   await DownloadService.instance.init();
   await RoomService.init();
 
@@ -144,15 +152,23 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
       listenable: ThemeState.accent,
       builder: (context, _) {
         return ListenableBuilder(
-          listenable: SettingsService.instance,
+          listenable: ThemeState.brightness,
           builder: (context, _) {
-            final accent = ThemeState.accent.value;
-            final themeMode = SettingsService.instance.themeMode;
-            return MaterialApp(
-              title: 'CloudTune',
-              debugShowCheckedModeBanner: false,
-              theme: _theme(accent, themeMode, SettingsService.instance.oledBlack),
-              home: const HomePage(),
+            return ListenableBuilder(
+              listenable: SettingsService.instance,
+              builder: (context, _) {
+                final accent = ThemeState.accent.value;
+                final themeMode = SettingsService.instance.themeMode;
+                return MaterialApp(
+                  title: 'CloudTune',
+                  debugShowCheckedModeBanner: false,
+                  theme: _theme(accent, Brightness.light, oled: false),
+                  darkTheme: _theme(accent, Brightness.dark,
+                      oled: SettingsService.instance.oledBlack),
+                  themeMode: themeMode,
+                  home: const HomePage(),
+                );
+              },
             );
           },
         );
@@ -160,33 +176,23 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
     );
   }
 
-  ThemeData _theme(Color accent, ThemeMode mode, bool oled) {
-    final dark = mode == ThemeMode.dark ||
-        (mode == ThemeMode.system &&
-            MediaQuery.of(context).platformBrightness == Brightness.dark);
-    if (!dark) {
-      return ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.light,
-        scaffoldBackgroundColor: Colors.white,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: accent,
-          brightness: Brightness.light,
-          primary: accent,
-          surface: Colors.white,
-        ),
-      );
-    }
+  ThemeData _theme(Color accent, Brightness brightness, {required bool oled}) {
+    final dark = brightness == Brightness.dark;
     return ThemeData(
       useMaterial3: true,
-      brightness: Brightness.dark,
-      scaffoldBackgroundColor: oled ? Colors.black : const Color(0xFF121212),
+      brightness: brightness,
+      scaffoldBackgroundColor:
+          dark ? (oled ? Colors.black : const Color(0xFF121212)) : Colors.white,
       colorScheme: ColorScheme.fromSeed(
         seedColor: accent,
-        brightness: Brightness.dark,
+        brightness: brightness,
         primary: accent,
-        surface: const Color(0xFF181818),
+        surface: dark ? AppPalette.surface : Colors.white,
       ),
+      cardColor: dark ? AppPalette.card : const Color(0xFFF1F1F1),
+      canvasColor: dark ? AppPalette.surface : Colors.white,
+      dividerColor: dark ? const Color(0x1FFFFFFF) : const Color(0x1A181818),
+      hintColor: dark ? const Color(0x8AFFFFFF) : const Color(0x8A181818),
     );
   }
 }

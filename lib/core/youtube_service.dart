@@ -39,9 +39,8 @@ class YoutubeService {
   /// Herkese açık Invidious örneğine JSON isteği. Hata durumunda null döner.
   Future<dynamic> _invGet(String path) async {
     try {
-      final response = await http
-          .get(Uri.parse('$_invBase$path'))
-          .timeout(_invTimeout);
+      final response =
+          await http.get(Uri.parse('$_invBase$path')).timeout(_invTimeout);
       if (response.statusCode != 200) return null;
       return jsonDecode(response.body);
     } catch (_) {
@@ -57,9 +56,8 @@ class YoutubeService {
 
     final author = m['author']?.toString().trim() ?? '';
     final rawAuthorId = m['authorId'];
-    final artistId = (rawAuthorId is String && rawAuthorId.isNotEmpty)
-        ? rawAuthorId
-        : null;
+    final artistId =
+        (rawAuthorId is String && rawAuthorId.isNotEmpty) ? rawAuthorId : null;
 
     Duration? duration;
     final rawLength = m['lengthSeconds'];
@@ -105,8 +103,7 @@ class YoutubeService {
         title: video.title,
         artist: video.author,
         duration: video.duration,
-        artistId:
-            video.channelId.value.isEmpty ? null : video.channelId.value,
+        artistId: video.channelId.value.isEmpty ? null : video.channelId.value,
       );
 
   Future<List<Track>> search(String query, {int limit = 24}) async {
@@ -210,9 +207,7 @@ class YoutubeService {
         for (final item in data['videos'] as List) {
           if (item is! Map) continue;
           final track = _trackFromInv(item);
-          if (track == null ||
-              track.id.isEmpty ||
-              track.title.trim().isEmpty) {
+          if (track == null || track.id.isEmpty || track.title.trim().isEmpty) {
             continue;
           }
           tracks.add(track);

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:cloudtune/core/app_palette.dart';
+
 import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_recognition_error.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
@@ -50,9 +52,6 @@ class _HomePageState extends State<HomePage> {
   late List<_FeedSource> _feed;
   late Map<String, Future<List<Track>>> _feedFutures;
 
-  Timer? _feedTimer;
-  Timer? _playlistTimer;
-
   List<Track>? _results;
   List<Track> _artistTracks = const <Track>[];
   String? _artistName;
@@ -64,9 +63,11 @@ class _HomePageState extends State<HomePage> {
   bool _prefetched = false;
   bool _speechReady = false;
   bool _voiceSubmitDone = false;
-  bool _voiceFallbackTried = false;
   bool _pausedForVoice = false;
-  String _voiceLocale = 'tr-TR';
+  bool _voiceStopOnUp = false;
+  bool _voiceSubmitOnReady = false;
+  String _voiceText = '';
+  DateTime? _voicePressAt;
   String _lastQuery = '';
   Track? _lastTrack;
 
@@ -76,13 +77,6 @@ class _HomePageState extends State<HomePage> {
     Library.instance.addListener(_onLibraryChanged);
     PlayerController.instance.addListener(_onPlayerChanged);
     _prepareFeed();
-
-    _feedTimer = Timer.periodic(const Duration(seconds: 20), (_) {
-      if (mounted && _results == null) setState(_reloadFeeds);
-    });
-    _playlistTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted && _results == null) _syncPlaylistSources();
-    });
   }
 
   @override
@@ -91,8 +85,6 @@ class _HomePageState extends State<HomePage> {
     PlayerController.instance.removeListener(_onPlayerChanged);
     unawaited(_restorePlaybackAfterVoice());
     unawaited(_speech.cancel());
-    _feedTimer?.cancel();
-    _playlistTimer?.cancel();
     _input.dispose();
     _scroll.dispose();
     super.dispose();
@@ -149,21 +141,38 @@ class _HomePageState extends State<HomePage> {
         .where((source) => source.isPlaylist)
         .map((source) => source.title)
         .toSet();
+    if (names.length == shown.length && names.containsAll(shown)) return;
 
-    for (final name in names) {
-      if (!shown.contains(name)) {
-        _feed.add(_FeedSource(name, name, isPlaylist: true));
+    setState(() {
+      _feed.removeWhere(
+        (source) => source.isPlaylist && !names.contains(source.title),
+      );
+      for (final name in names) {
+        if (!shown.contains(name)) {
+          _feed.add(_FeedSource(name, name, isPlaylist: true));
+        }
       }
-    }
-    _feed.removeWhere(
-      (source) => source.isPlaylist && !names.contains(source.title),
-    );
-    setState(_reloadFeeds);
+      _reloadFeeds();
+    });
   }
 
+  /// Çalma geçmişi/beğeni değişimi feed'i yeniden aratmaz. Kullanıcı içerik
+  /// güncellemesini yalnızca yukarıdan aşağıya kaydırarak ister.
   void _onLibraryChanged() {
-    if (!mounted) return;
+    if (!mounted || _results != null) return;
+    _syncPlaylistSources();
+  }
+
+  Future<void> _refreshFeed() async {
     setState(_prepareFeed);
+    try {
+      await Future.wait(_feedFutures.values, eagerError: false)
+          .timeout(const Duration(seconds: 12));
+    } catch (_) {}
+  }
+
+  Future<void> _refreshResults() async {
+    if (_lastQuery.isNotEmpty) await _submit(_lastQuery);
   }
 
   void _onPlayerChanged() {
@@ -323,76 +332,100 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {}
   }
 
-  Future<void> _stopVoice() async {
+  /// Mikrofonu tamamen bırakır. Tanıma bittikten sonra oturum açık kalırsa
+  /// cihaz kullanıcı konuşmasa da sesi dinlemeye devam ediyordu.
+  Future<void> _releaseVoice() async {
     try {
-      await _speech.stop();
+      await _speech.cancel().timeout(const Duration(seconds: 3));
     } catch (_) {}
     unawaited(_restorePlaybackAfterVoice());
     if (mounted) setState(() => _listening = false);
   }
 
-  void _onVoiceResult(SpeechRecognitionResult result) {
-    final text = result.recognizedWords.trim();
-    if (text.isEmpty || !mounted) return;
-    if (!result.finalResult) {
+  /// `submit=true` kullanıcı mikrofonu bıraktığında araç çubuğuna yazılan
+  /// kısmi metni aratır. Konuşma zaten final sonuç ürettiyse tekrar arama
+  /// yapılmaz (`_voiceSubmitDone`).
+  Future<void> _stopVoice({bool submit = false}) async {
+    final text = _voiceText.trim();
+    try {
+      await _speech.stop().timeout(const Duration(seconds: 3));
+    } catch (_) {}
+    await _releaseVoice();
+    if (submit && text.isNotEmpty && !_voiceSubmitDone) {
+      _voiceSubmitDone = true;
       _input.text = text;
-      return;
+      unawaited(_submit(text));
     }
-    if (_voiceSubmitDone) return;
-    _voiceSubmitDone = true;
-    _input.text = text;
-    unawaited(_stopVoice());
-    unawaited(_submit(text));
   }
 
+  void _onVoiceResult(SpeechRecognitionResult result) {
+    final text = result.recognizedWords.trim();
+    if (text.isNotEmpty) _voiceText = text;
+    if (!mounted || !result.finalResult) return;
+    if (_voiceSubmitDone) return;
+    _voiceSubmitDone = true;
+    final query = text.isEmpty ? _voiceText : text;
+    if (query.isEmpty) return;
+    _input.text = query;
+    unawaited(_stopVoice());
+    unawaited(_submit(query));
+  }
+
+  String _voiceErrorMessage(String code) => switch (code) {
+        'error_no_match' => 'Konuşma algılanmadı. Tekrar deneyin.',
+        'error_speech_timeout' => 'Konuşma algılanmadı. Tekrar deneyin.',
+        'error_audio' => 'Mikrofon sesi alınamadı.',
+        'error_network' ||
+        'error_server' =>
+          'Sesli arama sunucusuna ulaşılamadı.',
+        'error_busy' => 'Sesli arama şu an meşgul.',
+        'error_insufficient_permissions' => 'Mikrofon izni gerekli.',
+        'error_client' => 'Sesli arama başlatılamadı.',
+        _ => 'Sesli arama hatası: $code',
+      };
+
   void _onVoiceError(SpeechRecognitionError error) {
-    final msg = error.errorMsg;
-    // "no_match" / "speech_timeout" kullanıcı konuşmadığında gelir; hata
-    // göstermeden dinlemeyi kapatıp müziği geri ver.
-    if (msg == 'error_no_match' || msg == 'error_speech_timeout') {
-      unawaited(_stopVoice());
-      return;
-    }
-    // Bazı cihazlarda tr-TR ses verisi/user locale uyumsuz. Bir kez cihazın
-    // varsayılan locale'ine düşerek aramayı yaşat.
-    if (!_voiceFallbackTried && _voiceLocale == 'tr-TR') {
-      _voiceFallbackTried = true;
-      unawaited(_startListening(''));
-      return;
-    }
-    _voiceError(msg);
+    // Hata sonrası otomatik yeniden dinleme yok. Mikrofon yalnızca kullanıcı
+    // düğmeye bastığında açılır.
+    _voiceError(_voiceErrorMessage(error.errorMsg));
     unawaited(_stopVoice());
   }
 
   Future<void> _startListening(String localeId) async {
-    _voiceLocale = localeId;
     try {
       // 7.x API'sinde listen() hata callback'i almaz; hata initialize()
-      // sırasında verilen errorListener üzerinden gelir (bkz. _toggleVoice).
-      // listenMode.search, tanıyıcıyı şarkı/sanatçı adlarını yazma moduna
-      // geçirir; confirmation modunda kısa cevap beklediği için kelimeler
-      // yarım kesiliyordu.
-      await _speech.listen(
-        onResult: _onVoiceResult,
-        listenOptions: SpeechListenOptions(
-          localeId: localeId.isEmpty ? null : localeId,
-          partialResults: true,
-          cancelOnError: false,
-          listenMode: ListenMode.search,
-          autoPunctuation: false,
-          pauseFor: const Duration(milliseconds: 900),
-          listenFor: const Duration(seconds: 30),
-        ),
-      );
+      // sırasında verilen errorListener üzerinden gelir (bkz. _beginVoice).
+      // Kısmi sonuçlar yalnızca dahili olarak tutulur; kullanıcı mikrofonu
+      // bıraktığında arama başlatılır. Oturum tek cümleyle sınırlıdır, hata
+      // durumunda kendiliğinden kapanır; arka planda dinleme yapılmaz.
+      await _speech
+          .listen(
+            onResult: _onVoiceResult,
+            listenOptions: SpeechListenOptions(
+              localeId: localeId.isEmpty ? null : localeId,
+              partialResults: true,
+              cancelOnError: true,
+              listenMode: ListenMode.search,
+              autoPunctuation: false,
+              pauseFor: const Duration(seconds: 2),
+              listenFor: const Duration(seconds: 15),
+            ),
+          )
+          .timeout(const Duration(seconds: 6));
       if (mounted) setState(() => _listening = true);
-    } catch (_) {
-      if (!_voiceFallbackTried && localeId == 'tr-TR') {
-        _voiceFallbackTried = true;
-        await _startListening('');
-        return;
+      // Mikrofon bırakılmış ama initialize/listen henüz tamamlanmamış olabilir.
+      if (_voiceSubmitOnReady) {
+        _voiceSubmitOnReady = false;
+        unawaited(_stopVoice(submit: true));
       }
+    } on TimeoutException {
+      // Cihazda konuşma tanıma servisi yoksa/bağlanmıyorsa session sessizce
+      // takılmasın; kullanıcıya anlaşılır mesaj gösterilsin.
+      _voiceError('Sesli arama şu an kullanılamıyor.');
+      unawaited(_releaseVoice());
+    } catch (_) {
       _voiceError('Sesli arama başlatılamadı.');
-      unawaited(_stopVoice());
+      unawaited(_releaseVoice());
     }
   }
 
@@ -401,33 +434,44 @@ class _HomePageState extends State<HomePage> {
   /// oluşuyor ve kullanıcı "çalışmıyor" sanıyor.
   Future<String> _pickVoiceLocale() async {
     try {
-      final locales = await _speech.locales();
+      final locales = await _speech
+          .locales()
+          .timeout(const Duration(seconds: 4), onTimeout: () => []);
       if (locales.any((l) => l.localeId == 'tr-TR')) return 'tr-TR';
-      final system = await _speech.systemLocale();
+      final system = await _speech
+          .systemLocale()
+          .timeout(const Duration(seconds: 4), onTimeout: () => null);
       return system?.localeId ?? '';
     } catch (_) {
       return 'tr-TR';
     }
   }
 
-  Future<void> _toggleVoice() async {
-    if (_listening) {
-      await _stopVoice();
-      return;
-    }
+  Future<void> _beginVoice() async {
+    if (_listening) return;
 
     if (!_speechReady) {
       // speech_to_text izni initialize() sırasında ister; hasPermission
       // yalnızca mevcut durumu okur. Bu yüzden önce initialize çağrılır.
-      final available = await _speech.initialize(
-        onError: _onVoiceError,
-        onStatus: (s) {
-          if (s == 'done' || s == 'notListening' || s == 'aborted') {
-            if (mounted) setState(() => _listening = false);
-            unawaited(_restorePlaybackAfterVoice());
-          }
-        },
-      );
+      bool available;
+      try {
+        available = await _speech
+            .initialize(
+              onError: _onVoiceError,
+              onStatus: (s) {
+                if (s == 'done' || s == 'notListening' || s == 'aborted') {
+                  unawaited(_releaseVoice());
+                }
+              },
+            )
+            .timeout(const Duration(seconds: 6));
+      } on TimeoutException {
+        _voiceError('Sesli arama şu an kullanılamıyor.');
+        return;
+      } catch (_) {
+        _voiceError('Sesli arama başlatılamadı.');
+        return;
+      }
       if (!available) {
         final hasPermission = await _speech.hasPermission;
         _toast(
@@ -447,9 +491,40 @@ class _HomePageState extends State<HomePage> {
     }
 
     _voiceSubmitDone = false;
-    _voiceFallbackTried = false;
+    _voiceText = '';
     final locale = await _pickVoiceLocale();
     await _startListening(locale);
+  }
+
+  /// Kısa dokunuş: dinlemeyi açık bırak, konuşma bitince otomatik ara.
+  /// Uzun basış: bırakıldığında (_onMicUp) söyleneni ara.
+  void _onMicDown() {
+    _voicePressAt = DateTime.now();
+    _voiceStopOnUp = _listening;
+    if (!_listening) unawaited(_beginVoice());
+  }
+
+  void _onMicUp() {
+    final started = _voicePressAt;
+    _voicePressAt = null;
+    final held =
+        started == null ? 0 : DateTime.now().difference(started).inMilliseconds;
+    final shouldStop = _voiceStopOnUp || held >= 250;
+    _voiceStopOnUp = false;
+    if (!shouldStop) return;
+    if (_listening) {
+      unawaited(_stopVoice(submit: true));
+    } else {
+      // İlk kullanımda izin diyaloğu/initialize gecikebilir; oturum açılır
+      // açılmaz bırakma niyeti yerine getirilir.
+      _voiceSubmitOnReady = true;
+    }
+  }
+
+  void _onMicCancel() {
+    _voicePressAt = null;
+    _voiceStopOnUp = false;
+    if (_listening) unawaited(_stopVoice(submit: true));
   }
 
   void _voiceError(String msg) {
@@ -559,8 +634,8 @@ class _HomePageState extends State<HomePage> {
       _artistName = null;
       _artistTracksLoading = false;
       _input.clear();
-      _prepareFeed();
     });
+    _syncPlaylistSources();
     _scroll.animateTo(
       0,
       duration: const Duration(milliseconds: 300),
@@ -598,9 +673,9 @@ class _HomePageState extends State<HomePage> {
   Widget _navBar() {
     final accent = ThemeState.value;
     return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF181818),
-        border: Border(top: BorderSide(color: Colors.white10)),
+      decoration: BoxDecoration(
+        color: AppPalette.surface,
+        border: Border(top: BorderSide(color: AppPalette.divider)),
       ),
       child: Row(
         children: [
@@ -625,7 +700,7 @@ class _HomePageState extends State<HomePage> {
     Color accent,
     VoidCallback onTap,
   ) {
-    final color = active ? accent : Colors.white60;
+    final color = active ? accent : AppPalette.iconSubtle;
     return Expanded(
       child: InkWell(
         onTap: onTap,
@@ -718,7 +793,7 @@ class _HomePageState extends State<HomePage> {
                       onPressed: _busy ? null : _paste,
                     ),
                     filled: true,
-                    fillColor: const Color(0xFF242424),
+                    fillColor: AppPalette.card,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(30),
                       borderSide: BorderSide.none,
@@ -726,13 +801,21 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
               ),
-              IconButton(
-                tooltip: _listening ? 'Dinlemeyi durdur' : 'Sesle ara',
-                icon: Icon(
-                  _listening ? Icons.stop_circle : Icons.mic,
-                  color: _listening ? ThemeState.value : null,
+              Semantics(
+                button: true,
+                label: _listening ? 'Dinlemeyi durdur' : 'Sesle ara',
+                child: GestureDetector(
+                  onTapDown: (_) => _onMicDown(),
+                  onTapUp: (_) => _onMicUp(),
+                  onTapCancel: _onMicCancel,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Icon(
+                      _listening ? Icons.stop_circle : Icons.mic,
+                      color: _listening ? ThemeState.value : null,
+                    ),
+                  ),
                 ),
-                onPressed: _toggleVoice,
               ),
             ],
           ),
@@ -748,7 +831,7 @@ class _HomePageState extends State<HomePage> {
     return Container(
       margin: const EdgeInsets.only(top: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF242424),
+        color: AppPalette.card,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -758,9 +841,9 @@ class _HomePageState extends State<HomePage> {
             padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
             child: Row(
               children: [
-                const Text(
+                Text(
                   'Arama geçmişi',
-                  style: TextStyle(fontSize: 12, color: Colors.white54),
+                  style: TextStyle(fontSize: 12, color: AppPalette.textSubtle),
                 ),
                 const Spacer(),
                 TextButton(
@@ -778,7 +861,7 @@ class _HomePageState extends State<HomePage> {
             physics: const NeverScrollableScrollPhysics(),
             itemCount: history.length,
             separatorBuilder: (_, __) =>
-                const Divider(height: 1, color: Colors.white12),
+                Divider(height: 1, color: AppPalette.divider),
             itemBuilder: (context, i) {
               final query = history[i];
               return ListTile(
@@ -877,51 +960,54 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
         Expanded(
-          child: ListView.builder(
-            itemCount:
-                1 +
-                (primary.isEmpty ? 1 : primary.length) +
-                (showSearchSection ? 1 + results.length : 0),
-            itemBuilder: (context, index) {
-              if (index == 0) {
-                return _resultSectionHeader(
-                  title: 'Çalma Listeleri ve Şarkılar',
-                  subtitle: subtitle,
-                  queue: primary,
-                );
-              }
-
-              var i = index - 1;
-              if (primary.isEmpty) {
-                if (i == 0) {
-                  return _artistTracksLoading
-                      ? const Padding(
-                          padding: EdgeInsets.all(24),
-                          child: Center(child: CircularProgressIndicator()),
-                        )
-                      : const Padding(
-                          padding: EdgeInsets.all(24),
-                          child: Text('Sonuç yok.'),
-                        );
-                }
-                i--;
-              }
-              if (i < primary.length) {
-                return _resultTile(primary[i], primary, i);
-              }
-              i -= primary.length;
-              if (showSearchSection) {
-                if (i == 0) {
+          child: RefreshIndicator(
+            onRefresh: _refreshResults,
+            child: ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
+              itemCount: 1 +
+                  (primary.isEmpty ? 1 : primary.length) +
+                  (showSearchSection ? 1 + results.length : 0),
+              itemBuilder: (context, index) {
+                if (index == 0) {
                   return _resultSectionHeader(
-                    title: 'Arama Sonuçları',
-                    subtitle: '“$_lastQuery” için ${results.length} sonuç',
-                    queue: results,
+                    title: 'Çalma Listeleri ve Şarkılar',
+                    subtitle: subtitle,
+                    queue: primary,
                   );
                 }
-                return _resultTile(results[i - 1], results, i - 1);
-              }
-              return const SizedBox.shrink();
-            },
+
+                var i = index - 1;
+                if (primary.isEmpty) {
+                  if (i == 0) {
+                    return _artistTracksLoading
+                        ? const Padding(
+                            padding: EdgeInsets.all(24),
+                            child: Center(child: CircularProgressIndicator()),
+                          )
+                        : const Padding(
+                            padding: EdgeInsets.all(24),
+                            child: Text('Sonuç yok.'),
+                          );
+                  }
+                  i--;
+                }
+                if (i < primary.length) {
+                  return _resultTile(primary[i], primary, i);
+                }
+                i -= primary.length;
+                if (showSearchSection) {
+                  if (i == 0) {
+                    return _resultSectionHeader(
+                      title: 'Arama Sonuçları',
+                      subtitle: '“$_lastQuery” için ${results.length} sonuç',
+                      queue: results,
+                    );
+                  }
+                  return _resultTile(results[i - 1], results, i - 1);
+                }
+                return const SizedBox.shrink();
+              },
+            ),
           ),
         ),
       ],
@@ -955,7 +1041,8 @@ class _HomePageState extends State<HomePage> {
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      style:
+                          TextStyle(fontSize: 12, color: AppPalette.textSubtle),
                     ),
                   ),
               ],
@@ -1009,26 +1096,30 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildFeed() {
     final history = Library.instance.history;
-    return ListView(
-      controller: _scroll,
-      padding: const EdgeInsets.only(bottom: 12),
-      children: [
-        const UpdateBanner(),
-        if (history.isNotEmpty)
-          _HistoryStrip(history: history, onArtistTap: _openArtist),
-        if (DownloadService.instance.savedTracks.isNotEmpty)
-          _SavedStrip(
-            tracks: DownloadService.instance.savedTracks,
-            onTrackTap: _playSaved,
-            onPlayAll: _playAllSaved,
-          ),
-        for (final source in _feed)
-          _Section(
-            title: source.title,
-            future: _feedFutures[source.title] ?? _load(source.query),
-            onArtistTap: _openArtist,
-          ),
-      ],
+    return RefreshIndicator(
+      onRefresh: _refreshFeed,
+      child: ListView(
+        controller: _scroll,
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.only(bottom: 12),
+        children: [
+          const UpdateBanner(),
+          if (history.isNotEmpty)
+            _HistoryStrip(history: history, onArtistTap: _openArtist),
+          if (DownloadService.instance.savedTracks.isNotEmpty)
+            _SavedStrip(
+              tracks: DownloadService.instance.savedTracks,
+              onTrackTap: _playSaved,
+              onPlayAll: _playAllSaved,
+            ),
+          for (final source in _feed)
+            _Section(
+              title: source.title,
+              future: _feedFutures[source.title] ?? _load(source.query),
+              onArtistTap: _openArtist,
+            ),
+        ],
+      ),
     );
   }
 }
@@ -1057,8 +1148,7 @@ class _HistoryStrip extends StatelessWidget {
               return _ArtCard(
                 track: track,
                 width: 130,
-                onTap: () =>
-                    PlayerController.instance.playQueue(history, i),
+                onTap: () => PlayerController.instance.playQueue(history, i),
                 onLongPress: () => onArtistTap(track),
               );
             },
@@ -1152,8 +1242,9 @@ class _Section extends StatelessWidget {
               }
               final tracks = snap.data;
               if (snap.hasError || tracks == null || tracks.isEmpty) {
-                return const Center(
-                  child: Text('—', style: TextStyle(color: Colors.white24)),
+                return Center(
+                  child:
+                      Text('—', style: TextStyle(color: AppPalette.iconFaint)),
                 );
               }
               return ListView.separated(
@@ -1164,8 +1255,7 @@ class _Section extends StatelessWidget {
                 itemBuilder: (context, i) => _ArtCard(
                   track: tracks[i],
                   width: 150,
-                  onTap: () =>
-                      PlayerController.instance.playQueue(tracks, i),
+                  onTap: () => PlayerController.instance.playQueue(tracks, i),
                   onLongPress: () => onArtistTap(tracks[i]),
                 ),
               );
@@ -1208,10 +1298,9 @@ class _ArtCard extends StatelessWidget {
                 width: width,
                 height: width,
                 fit: BoxFit.cover,
-                placeholder: (_, __) =>
-                    Container(color: const Color(0xFF242424)),
+                placeholder: (_, __) => Container(color: AppPalette.card),
                 errorWidget: (_, __, ___) => Container(
-                  color: const Color(0xFF242424),
+                  color: AppPalette.card,
                   child: const Icon(Icons.music_note, size: 40),
                 ),
               ),
@@ -1227,7 +1316,7 @@ class _ArtCard extends StatelessWidget {
               track.artist,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white54, fontSize: 12),
+              style: TextStyle(color: AppPalette.textSubtle, fontSize: 12),
             ),
           ],
         ),

@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:cloudtune/core/app_palette.dart';
+
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -20,6 +23,8 @@ class UpdateInfo {
   final int versionCode;
   final String notes;
   final String? androidArm64Url;
+  final String? androidArmv7Url;
+  final String? androidX64Url;
   final String? androidUniversalUrl;
   final String? linuxDebUrl;
   final String? iosSourceUrl;
@@ -29,6 +34,8 @@ class UpdateInfo {
     required this.versionCode,
     required this.notes,
     this.androidArm64Url,
+    this.androidArmv7Url,
+    this.androidX64Url,
     this.androidUniversalUrl,
     this.linuxDebUrl,
     this.iosSourceUrl,
@@ -112,10 +119,28 @@ class UpdateService extends ChangeNotifier {
       versionCode: (data['versionCode'] as num?)?.toInt() ?? 0,
       notes: (data['notes'] as String?) ?? '',
       androidArm64Url: platforms['android-arm64'] as String?,
+      androidArmv7Url: platforms['android-armv7'] as String?,
+      androidX64Url: platforms['android-x86_64'] as String?,
       androidUniversalUrl: platforms['android-universal'] as String?,
       linuxDebUrl: platforms['linux'] as String?,
       iosSourceUrl: platforms['ios'] as String?,
     );
+  }
+
+  /// Cihazın ABI'sine uygun APK'yı seçer. Evrensel paket her cihazda
+  /// çalıştığı için son çare olarak kullanılır; eski/x86 cihazlara yanlış
+  /// arm64 paketinin inmesini engeller.
+  String? get _androidApkUrl {
+    final info = _latest;
+    if (info == null) return null;
+    final specific = switch (ffi.Abi.current()) {
+      ffi.Abi.androidArm64 => info.androidArm64Url,
+      ffi.Abi.androidArm => info.androidArmv7Url,
+      ffi.Abi.androidX64 => info.androidX64Url,
+      ffi.Abi.androidIA32 => info.androidUniversalUrl,
+      _ => null,
+    };
+    return specific ?? info.androidUniversalUrl ?? info.androidArm64Url;
   }
 
   /// Downloads the APK ahead of time so the dialog can install it instantly.
@@ -124,7 +149,7 @@ class UpdateService extends ChangeNotifier {
     if (existing != null) return existing;
     final info = _latest;
     if (info == null) return null;
-    final url = info.androidArm64Url ?? info.androidUniversalUrl;
+    final url = _androidApkUrl;
     if (url == null) return null;
     final path = await _download(url, 'cloudtune_update_${info.version}.apk');
     if (path == null) return null;
@@ -139,7 +164,7 @@ class UpdateService extends ChangeNotifier {
 
     var path = _preparedApkPath;
     if (path == null) {
-      final url = info.androidArm64Url ?? info.androidUniversalUrl;
+      final url = _androidApkUrl;
       if (url == null) return 'Android için güncelleme bağlantısı yok.';
       path = await _download(url, 'cloudtune_update.apk');
       if (path == null) return 'İndirme başarısız.';
@@ -281,15 +306,15 @@ class UpdateBanner extends StatelessWidget {
     final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF181818),
-        title: const Text(
+        backgroundColor: AppPalette.surface,
+        title: Text(
           'Güncelleme mevcut',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+          style: TextStyle(color: AppPalette.text, fontWeight: FontWeight.w700),
         ),
         content: Text(
           'CloudTune ${update.latestVersion} sürümü yayınlandı.\n\n'
           'Güncellemek istiyor musun?',
-          style: const TextStyle(color: Colors.white70, height: 1.4),
+          style: TextStyle(color: AppPalette.textMuted, height: 1.4),
         ),
         actions: [
           TextButton(

@@ -101,11 +101,13 @@ class PlayerPage extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: Colors.red.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.red.withValues(alpha: 0.35)),
+                      border:
+                          Border.all(color: Colors.red.withValues(alpha: 0.35)),
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.error_outline, color: Colors.redAccent),
+                        const Icon(Icons.error_outline,
+                            color: Colors.redAccent),
                         const SizedBox(width: 10),
                         const Expanded(
                           child: Text(
@@ -150,9 +152,8 @@ class _SeekBar extends StatelessWidget {
           builder: (context, position) {
             final pos = position.data ?? Duration.zero;
             final max = total.inMilliseconds.toDouble();
-            final value = pos.inMilliseconds
-                .toDouble()
-                .clamp(0.0, max > 0 ? max : 1.0);
+            final value =
+                pos.inMilliseconds.toDouble().clamp(0.0, max > 0 ? max : 1.0);
 
             return Column(
               children: [
@@ -228,9 +229,8 @@ class _Controls extends StatelessWidget {
                 stream: player.playingStream,
                 builder: (context, snap) => IconButton.filled(
                   iconSize: 48,
-                  icon: Icon((snap.data ?? false)
-                      ? Icons.pause
-                      : Icons.play_arrow),
+                  icon: Icon(
+                      (snap.data ?? false) ? Icons.pause : Icons.play_arrow),
                   onPressed: player.toggle,
                 ),
               ),

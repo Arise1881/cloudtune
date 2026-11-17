@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:cloudtune/core/app_palette.dart';
 
 import '../core/library.dart';
 import '../core/models.dart';
@@ -53,7 +54,7 @@ class TrackTile extends StatelessWidget {
               width: 52,
               height: 52,
               fit: BoxFit.cover,
-              placeholder: (_, __) => Container(color: const Color(0xFF242424)),
+              placeholder: (_, __) => Container(color: AppPalette.card),
               errorWidget: (_, __, ___) =>
                   const Icon(Icons.music_note, size: 36),
             ),
@@ -89,7 +90,7 @@ class _LikeButton extends StatelessWidget {
           tooltip: 'Beğen',
           icon: Icon(
             liked ? Icons.favorite : Icons.favorite_border,
-            color: liked ? ThemeState.value : Colors.white54,
+            color: liked ? ThemeState.value : AppPalette.textSubtle,
           ),
           onPressed: () => Library.instance.toggleLike(track),
         );

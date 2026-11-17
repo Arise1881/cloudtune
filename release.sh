@@ -60,6 +60,9 @@ echo "Yeni: $NEW_FULL"
 echo "── flutter analyze ──"
 flutter analyze || true
 
+echo "── flutter test ──"
+flutter test
+
 # ─── 4. Build ───
 echo "── Android split APK ──"
 flutter build apk --release --split-per-abi 2>&1 | tail -3

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:cloudtune/core/app_palette.dart';
 
 import '../core/library.dart';
 import '../core/player_controller.dart';
@@ -78,11 +79,12 @@ class SettingsScreen extends StatelessWidget {
                 icon: Icons.palette_outlined,
                 title: 'Görünüm',
                 children: [
-                  const Padding(
+                  Padding(
                     padding: EdgeInsets.fromLTRB(16, 4, 16, 10),
                     child: Text(
                       'Vurgu rengi uygulamanın tamamına uygulanır.',
-                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                      style:
+                          TextStyle(color: AppPalette.textSubtle, fontSize: 12),
                     ),
                   ),
                   Padding(
@@ -133,8 +135,8 @@ class SettingsScreen extends StatelessWidget {
                   SwitchListTile(
                     secondary: const Icon(Icons.radio),
                     title: const Text('Sonsuz radyo'),
-                    subtitle:
-                        const Text('Şarkı bitince benzer parçalarla devam eder.'),
+                    subtitle: const Text(
+                        'Şarkı bitince benzer parçalarla devam eder.'),
                     value: Library.instance.radioEnabled,
                     onChanged: (value) {
                       Library.instance.setRadioEnabled(value);
@@ -291,7 +293,9 @@ class SettingsScreen extends StatelessWidget {
     if (!bot.active) return 'Beklemede';
     if (bot.scanning) return 'Denetleniyor…';
     final status = 'Arka planda etkin · ${bot.fixCount} onarım';
-    return bot.pendingCount > 0 ? '$status · ${bot.pendingCount} bekliyor' : status;
+    return bot.pendingCount > 0
+        ? '$status · ${bot.pendingCount} bekliyor'
+        : status;
   }
 
   Future<void> _showRepairLogs(BuildContext context) async {
@@ -384,7 +388,7 @@ class _ProfileCard extends StatelessWidget {
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [accent.withValues(alpha: 0.32), const Color(0xFF242424)],
+          colors: [accent.withValues(alpha: 0.32), AppPalette.card],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -398,7 +402,7 @@ class _ProfileCard extends StatelessWidget {
             child: Icon(Icons.settings, color: accent),
           ),
           const SizedBox(width: 14),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -407,7 +411,8 @@ class _ProfileCard extends StatelessWidget {
                         TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
                 SizedBox(height: 4),
                 Text('Müziğini sen yönet · reklamsız, odaklı, hızlı',
-                    style: TextStyle(color: Colors.white70, fontSize: 12)),
+                    style:
+                        TextStyle(color: AppPalette.textMuted, fontSize: 12)),
               ],
             ),
           ),
@@ -432,7 +437,7 @@ class _SectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final accent = ThemeState.value;
     return Card(
-      color: const Color(0xFF1E1E1E),
+      color: AppPalette.cardAlt,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -512,12 +517,12 @@ class _ColorDot extends StatelessWidget {
           color: color,
           shape: BoxShape.circle,
           border: Border.all(
-            color: selected ? Colors.white : Colors.transparent,
+            color: selected ? AppPalette.text : Colors.transparent,
             width: 3,
           ),
         ),
         child: selected
-            ? const Icon(Icons.check, size: 20, color: Colors.black)
+            ? Icon(Icons.check, size: 20, color: AppPalette.text)
             : null,
       ),
     );
@@ -539,7 +544,9 @@ class _RepairDot extends StatelessWidget {
       decoration: BoxDecoration(
         color: color,
         shape: BoxShape.circle,
-        boxShadow: [BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 8)],
+        boxShadow: [
+          BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 8)
+        ],
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:cloudtune/core/app_palette.dart';
 
 import '../core/download_service.dart';
 import '../core/models.dart';
@@ -15,11 +16,11 @@ class DownloadsPage extends StatelessWidget {
     final accent = ThemeState.accent.value;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: AppPalette.scaffold,
       appBar: AppBar(
         title: const Text('İndirilenler'),
-        backgroundColor: const Color(0xFF181818),
-        foregroundColor: Colors.white,
+        backgroundColor: AppPalette.surface,
+        foregroundColor: AppPalette.text,
       ),
       body: ListenableBuilder(
         listenable: DownloadService.instance,
@@ -41,10 +42,10 @@ class DownloadsPage extends StatelessWidget {
                     ? null
                     : TextButton.icon(
                         onPressed: () => PlayerController.instance.playQueue(
-                              saved,
-                              0,
-                              radio: false,
-                            ),
+                          saved,
+                          0,
+                          radio: false,
+                        ),
                         icon: Icon(Icons.play_arrow, size: 18, color: accent),
                         label: Text(
                           'Tümünü çal',
@@ -114,7 +115,7 @@ class DownloadsPage extends StatelessWidget {
     DownloadService service,
   ) {
     return Card(
-      color: const Color(0xFF1E1E1E),
+      color: AppPalette.cardAlt,
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
         leading: _thumb(track, accent),
@@ -127,7 +128,7 @@ class DownloadsPage extends StatelessWidget {
           track.artist,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: Colors.white54, fontSize: 12),
+          style: TextStyle(color: AppPalette.textSubtle, fontSize: 12),
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -136,10 +137,10 @@ class DownloadsPage extends StatelessWidget {
               tooltip: 'Çal',
               icon: Icon(Icons.play_arrow, color: accent),
               onPressed: () => PlayerController.instance.playQueue(
-                    queue,
-                    index,
-                    radio: false,
-                  ),
+                queue,
+                index,
+                radio: false,
+              ),
             ),
             IconButton(
               tooltip: 'İndirmeyi sil',
@@ -155,7 +156,7 @@ class DownloadsPage extends StatelessWidget {
   Widget _failureTile(DownloadService service, String id, Color accent) {
     final reason = service.failureReason(id) ?? 'Bilinmeyen hata';
     return Card(
-      color: const Color(0xFF1E1E1E),
+      color: AppPalette.cardAlt,
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
         leading: CircleAvatar(
@@ -195,7 +196,7 @@ class DownloadsPage extends StatelessWidget {
   Widget _activeTile(String id, double value, Color accent) {
     final progress = value.clamp(0.0, 1.0);
     return Card(
-      color: const Color(0xFF1E1E1E),
+      color: AppPalette.cardAlt,
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
@@ -225,7 +226,7 @@ class DownloadsPage extends StatelessWidget {
             LinearProgressIndicator(
               value: progress,
               minHeight: 4,
-              backgroundColor: Colors.white12,
+              backgroundColor: AppPalette.divider,
               color: accent,
             ),
           ],
@@ -238,7 +239,7 @@ class DownloadsPage extends StatelessWidget {
     Widget fallback() => Container(
           width: 48,
           height: 48,
-          color: const Color(0xFF2A2A2A),
+          color: AppPalette.cardRaised,
           child: Icon(Icons.music_note, color: accent, size: 24),
         );
 
@@ -260,11 +261,11 @@ class DownloadsPage extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 18),
       child: Column(
         children: [
-          Icon(icon, color: Colors.white24, size: 28),
+          Icon(icon, color: AppPalette.iconFaint, size: 28),
           const SizedBox(height: 8),
           Text(
             message,
-            style: const TextStyle(color: Colors.white38, fontSize: 13),
+            style: TextStyle(color: AppPalette.textFaint, fontSize: 13),
           ),
         ],
       ),

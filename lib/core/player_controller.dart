@@ -181,7 +181,6 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       notifyListeners();
 
       await _player.play();
-      unawaited(_fadeInVolume(transition, generation));
       unawaited(Library.instance.remember(track));
       // İlk tampon tamamlanmadan prefetch başlarsa aktif akışa rakip oluyor.
       Timer(const Duration(seconds: 4), () {
@@ -189,7 +188,9 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       });
     } on AudioBlocked catch (error) {
       if (_isStale(transition, generation)) return;
-      if (kDebugMode) debugPrint('CT AudioBlocked ${track.id}: ${error.reason}');
+      if (kDebugMode) {
+        debugPrint('CT AudioBlocked ${track.id}: ${error.reason}');
+      }
       unawaited(RepairBot.instance.reportEvent('audio_blocked', {
         'video_id': track.id,
         'reason': error.reason,
@@ -206,7 +207,6 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
             _broadcast();
             notifyListeners();
             await _player.play();
-            unawaited(_fadeInVolume(transition, generation));
             unawaited(Library.instance.remember(track));
             unawaited(_preloadUpcoming());
             return;
@@ -234,7 +234,6 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
             _broadcast();
             notifyListeners();
             await _player.play();
-            unawaited(_fadeInVolume(transition, generation));
             unawaited(Library.instance.remember(track));
             unawaited(_preloadUpcoming());
             return;
@@ -250,18 +249,6 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     }
   }
 
-  /// Parça ilk açıldığında Android AudioTrack oluşturulurken çıkan kısa
-  /// klik/çizirtiyi maskeler. Ses 0'dan kademeli olarak 1.0'a çıkar.
-  Future<void> _fadeInVolume(int transition, int generation) async {
-    const steps = 8;
-    for (var i = 1; i <= steps; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 25));
-      if (_isStale(transition, generation)) return;
-      await _player.setVolume(i / steps);
-      if (_isStale(transition, generation)) return;
-    }
-  }
-
   Future<Uri> _resolveTrack(Track track) async {
     final saved = DownloadService.instance.savedPathOf(track.id);
     if (saved != null && File(saved).existsSync()) return Uri.file(saved);
@@ -271,9 +258,10 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   }
 
   Future<void> _setSource(Uri uri, Duration? resumeAt) async {
-    // Fade-in öncesi sesi sıfırla: yeni kaynak açılırken eski gain kalırsa
-    // ilk frame'de klik duyuluyor.
-    await _player.setVolume(0);
+    // Gain'i kaynak değişiminden ÖNCE 1'e sabitle. Oynatma başladıktan sonra
+    // yapılan setVolume() çağrıları bazı cihazlarda AudioTrack'e işlenmiyor;
+    // parça sessiz açılıyor, pause/resume sonrası ses geliyordu.
+    await _player.setVolume(1);
     final isYoutube = uri.host.endsWith('googlevideo.com') ||
         uri.host.endsWith('youtube.com');
     final headers = <String, String>{
@@ -482,9 +470,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         _shuffleMode = false;
       } else {
         final active = current;
-        final rest = _queue
-            .where((track) => track.id != active?.id)
-            .toList()
+        final rest = _queue.where((track) => track.id != active?.id).toList()
           ..shuffle();
         _queue = List<Track>.unmodifiable([
           if (active != null) active,
@@ -517,7 +503,8 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         if (_preloaded.length > 120) {
           _preloaded.remove(_preloaded.first);
         }
-      } catch (_) {} finally {
+      } catch (_) {
+      } finally {
         _activePreloads--;
       }
     }
@@ -616,7 +603,8 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   }
 
   @override
-  Future<dynamic> customAction(String name, [Map<String, dynamic>? extras]) async {
+  Future<dynamic> customAction(String name,
+      [Map<String, dynamic>? extras]) async {
     if (name == 'like') {
       final track = current;
       if (track != null) await Library.instance.toggleLike(track);

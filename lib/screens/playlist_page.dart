@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:cloudtune/core/app_palette.dart';
 
 import '../core/models.dart';
 import '../core/player_controller.dart';
@@ -89,8 +90,7 @@ class _PlaylistPageState extends State<PlaylistPage> {
                   count: tracks.length,
                   onPlay: tracks.isEmpty
                       ? null
-                      : () =>
-                          PlayerController.instance.playQueue(tracks, 0),
+                      : () => PlayerController.instance.playQueue(tracks, 0),
                 );
               }
               if (tracks.isEmpty) {
@@ -145,7 +145,7 @@ class _Header extends StatelessWidget {
               height: 168,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
-                color: const Color(0xFF242424),
+                color: AppPalette.card,
                 boxShadow: [
                   BoxShadow(
                     color: accent.withValues(alpha: 0.25),
@@ -176,9 +176,9 @@ class _Header extends StatelessWidget {
           ),
           if (author.isNotEmpty)
             Text(author,
-                style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                style: TextStyle(color: AppPalette.textSubtle, fontSize: 12)),
           Text('$count parça',
-              style: const TextStyle(color: Colors.white54, fontSize: 12)),
+              style: TextStyle(color: AppPalette.textSubtle, fontSize: 12)),
           const SizedBox(height: 12),
           FilledButton.icon(
             onPressed: onPlay,

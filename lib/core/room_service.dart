@@ -148,7 +148,8 @@ class RoomService extends ChangeNotifier {
     var id = prefs.getString(_clientIdKey) ?? '';
     if (id.isEmpty) {
       final random = Random.secure();
-      id = List.generate(16, (_) => random.nextInt(16).toRadixString(16)).join();
+      id =
+          List.generate(16, (_) => random.nextInt(16).toRadixString(16)).join();
       await prefs.setString(_clientIdKey, id);
     }
     _clientId = id;
@@ -171,7 +172,8 @@ class RoomService extends ChangeNotifier {
     return '${code.toUpperCase()}-${hash.toRadixString(16).padLeft(8, '0')}';
   }
 
-  String get _topic => '${RoomRelay.topicPrefix}/${_channel(_roomId ?? '', _password)}/events';
+  String get _topic =>
+      '${RoomRelay.topicPrefix}/${_channel(_roomId ?? '', _password)}/events';
 
   Future<bool> create({
     required String name,
@@ -222,7 +224,8 @@ class RoomService extends ChangeNotifier {
     _roomId = clean;
     _roomName = name.trim().isEmpty ? 'Oda $clean' : name.trim();
     _password = password;
-    _displayName = displayName.trim().isEmpty ? 'Dinleyici' : displayName.trim();
+    _displayName =
+        displayName.trim().isEmpty ? 'Dinleyici' : displayName.trim();
     _isHost = isHost;
     _members.clear();
     _chat.clear();
@@ -405,7 +408,9 @@ class RoomService extends ChangeNotifier {
         } else {
           index = 0;
         }
-        final queue = _queue.isNotEmpty ? _queue : [Track.fromJson(Map<String, dynamic>.from(remote))];
+        final queue = _queue.isNotEmpty
+            ? _queue
+            : [Track.fromJson(Map<String, dynamic>.from(remote))];
         await player.playQueue(queue, index, radio: false);
       }
       final positionMs = (remote['positionMs'] as num?)?.toInt();
@@ -457,8 +462,7 @@ class RoomService extends ChangeNotifier {
       'at': DateTime.now().millisecondsSinceEpoch,
       'payload': payload,
     };
-    final builder = MqttClientPayloadBuilder()
-      ..addString(jsonEncode(envelope));
+    final builder = MqttClientPayloadBuilder()..addString(jsonEncode(envelope));
     client.publishMessage(_topic, MqttQos.atLeastOnce, builder.payload!);
   }
 
@@ -470,7 +474,8 @@ class RoomService extends ChangeNotifier {
   void _publishState({bool force = false}) {
     if (!_isHost) return;
     final now = DateTime.now();
-    if (!force && now.difference(_lastStatePublish) < const Duration(seconds: 2)) {
+    if (!force &&
+        now.difference(_lastStatePublish) < const Duration(seconds: 2)) {
       return;
     }
     _lastStatePublish = now;
