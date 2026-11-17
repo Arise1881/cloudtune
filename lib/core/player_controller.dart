@@ -35,8 +35,21 @@ class _SkipSegment {
 class PlayerController extends BaseAudioHandler with ChangeNotifier {
   PlayerController._() {
     _equalizer = AndroidEqualizer();
+    // ExoPlayer varsayılan olarak 2,5 sn tampon bekler. İlk ses ve parça
+    // geçişi için bu değer ~0,6 sn'ye indirilir; ileri tampon korunur.
     _player = AudioPlayer(
       audioPipeline: AudioPipeline(androidAudioEffects: [_equalizer]),
+      audioLoadConfiguration: AudioLoadConfiguration(
+        androidLoadControl: AndroidLoadControl(
+          minBufferDuration: const Duration(seconds: 12),
+          maxBufferDuration: const Duration(seconds: 30),
+          bufferForPlaybackDuration: const Duration(milliseconds: 600),
+          bufferForPlaybackAfterRebufferDuration:
+              const Duration(milliseconds: 900),
+          prioritizeTimeOverSizeThresholds: true,
+        ),
+      ),
+      useLazyPreparation: true,
     );
 
     _player.playerStateStream.listen(_onPlayerState);
@@ -80,8 +93,21 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   int _failureStreak = 0;
   DateTime _lastRecovery = DateTime.fromMillisecondsSinceEpoch(0);
 
-  static const int _lookahead = 3;
-  static const int _maxPreloads = 2;
+  Timer? _sleepTimer;
+  DateTime? _sleepEndsAt;
+
+  /// Kalan uyku süresi; zamanlayıcı kapalıysa null.
+  Duration? get sleepRemaining {
+    final end = _sleepEndsAt;
+    if (end == null) return null;
+    final left = end.difference(DateTime.now());
+    return left.isNegative ? Duration.zero : left;
+  }
+
+  bool get sleepTimerActive => _sleepEndsAt != null;
+
+  static const int _lookahead = 5;
+  static const int _maxPreloads = 3;
   final Set<String> _preloaded = <String>{};
   int _activePreloads = 0;
 
@@ -299,7 +325,12 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       if (response.statusCode != 200) return;
       final data = jsonDecode(response.body);
       if (data is! List || current?.id != videoId) return;
+      final enabled = SettingsService.instance.sponsorCategories.toSet();
       _skipSegments = data.whereType<Map>().map((item) {
+        final category = item['category']?.toString();
+        if (category != null && category.isNotEmpty && !enabled.contains(category)) {
+          return null;
+        }
         final segment = item['segment'];
         if (segment is! List || segment.length < 2) return null;
         final start = (segment[0] as num?)?.toDouble();
@@ -394,6 +425,34 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   }
 
   Future<void> retry() => _playAt(_index, retry: true);
+
+  /// [minutes] 0 veya daha küçükse zamanlayıcı iptal edilir.
+  Future<void> setSleepTimer(int minutes) async {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepEndsAt = null;
+    if (minutes > 0) {
+      _sleepEndsAt = DateTime.now().add(Duration(minutes: minutes));
+      _sleepTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        final left = sleepRemaining;
+        if (left == null || left > Duration.zero) {
+          notifyListeners();
+          return;
+        }
+        cancelSleepTimer();
+        if (_player.playing) unawaited(_player.pause());
+      });
+    }
+    await SettingsService.instance.setSleepTimerMinutes(minutes);
+    notifyListeners();
+  }
+
+  void cancelSleepTimer() {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepEndsAt = null;
+    notifyListeners();
+  }
 
   Future<void> toggle() async {
     if (_player.playing) {

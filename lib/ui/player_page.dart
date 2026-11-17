@@ -3,10 +3,19 @@ import 'package:flutter/material.dart';
 
 import '../core/download_service.dart';
 import '../core/library.dart';
+import '../core/lyrics_service.dart';
 import '../core/models.dart';
 import '../core/player_controller.dart';
+import '../core/settings_service.dart';
 import '../core/theme_state.dart';
 import '../screens/artist_page.dart';
+
+String _qualityLabel(String quality) => switch (quality) {
+      'low' => 'DÜŞÜK',
+      'medium' => 'ORTA',
+      'veryhigh' => 'ÇOK YÜKSEK',
+      _ => 'YÜKSEK',
+    };
 
 String _fmt(Duration d) {
   final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -93,6 +102,31 @@ class PlayerPage extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (SettingsService.instance.showQualityBadge)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: ThemeState.value.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          _qualityLabel(SettingsService.instance.audioQuality),
+                          style: TextStyle(
+                            color: ThemeState.value,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 const SizedBox(height: 12),
                 _SeekBar(track: track),
                 _Controls(track: track),
@@ -216,7 +250,93 @@ class _Controls extends StatelessWidget {
         ),
         const SizedBox(width: 4),
         _DownloadButton(track: track),
+        if (SettingsService.instance.syncedLyrics)
+          IconButton(
+            tooltip: 'Şarkı sözleri',
+            icon: const Icon(Icons.lyrics_outlined),
+            onPressed: () => showModalBottomSheet(
+              context: context,
+              isScrollControlled: true,
+              builder: (_) => _LyricsSheet(track: track),
+            ),
+          ),
       ],
+    );
+  }
+}
+
+class _LyricsSheet extends StatelessWidget {
+  const _LyricsSheet({required this.track});
+
+  final Track track;
+
+  @override
+  Widget build(BuildContext context) {
+    final player = PlayerController.instance;
+
+    return SafeArea(
+      child: SizedBox(
+        height: MediaQuery.of(context).size.height * 0.7,
+        child: Column(
+          children: [
+            ListTile(
+              title: Text(
+                'Şarkı sözleri · ${track.title}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: const Text(
+                'Belgeler/CloudTune/Lyrics klasörüne videoId.lrc koyun.',
+              ),
+            ),
+            Expanded(
+              child: FutureBuilder<List<LyricLine>>(
+                future: LyricsService.instance.load(track.id),
+                builder: (context, snapshot) {
+                  final lines = snapshot.data ?? const <LyricLine>[];
+                  if (lines.isEmpty) {
+                    return const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Text(
+                          'Bu parça için yerel .lrc dosyası bulunamadı.',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    );
+                  }
+                  return StreamBuilder<Duration>(
+                    stream: player.positionStream,
+                    builder: (context, position) {
+                      final active = LyricsService.activeIndex(
+                        lines,
+                        position.data ?? Duration.zero,
+                      );
+                      return ListView.builder(
+                        itemCount: lines.length,
+                        itemBuilder: (context, index) => ListTile(
+                          dense: true,
+                          title: Text(
+                            lines[index].text,
+                            style: TextStyle(
+                              color: index == active
+                                  ? ThemeState.value
+                                  : Colors.white70,
+                              fontWeight: index == active
+                                  ? FontWeight.w800
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

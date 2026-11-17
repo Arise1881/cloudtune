@@ -176,6 +176,18 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
     return File('${dir.path}/$_logFileName');
   }
 
+  /// Onarım kayıtlarını düz metin olarak döndürür; kullanıcıya hata
+  /// ayrıntısı gösterilmez, yalnızca kopyalama seçeneği sunulur.
+  static Future<String> readLogText() async {
+    try {
+      final file = await _logFile();
+      if (!await file.exists()) return '';
+      return await file.readAsString();
+    } catch (_) {
+      return '';
+    }
+  }
+
   static Future<void> _ensureLogFile() async {
     try {
       final file = await _logFile();

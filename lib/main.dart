@@ -8,7 +8,10 @@ import 'core/download_service.dart';
 import 'core/library.dart';
 import 'core/link_handler.dart';
 import 'core/link_resolver.dart';
+import 'core/local_sync_service.dart'
+    if (dart.library.html) 'core/local_sync_web.dart';
 import 'core/player_controller.dart';
+import 'core/proxy_service.dart';
 import 'core/repair_bot.dart';
 import 'core/room_service.dart';
 import 'core/settings_service.dart';
@@ -21,6 +24,11 @@ Future<void> main() async {
 
   await Library.instance.init();
   await SettingsService.instance.init();
+  await ProxyService.instance.init();
+  await LocalSyncService.instance.init();
+  if (LocalSyncService.instance.enabled) {
+    unawaited(LocalSyncService.instance.start());
+  }
   await DownloadService.instance.init();
   await RoomService.init();
 

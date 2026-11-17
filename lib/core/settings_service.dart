@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Device-only preferences: audio quality, equalizer, OLED background,
-/// theme, language and SponsorBlock. Nothing is sent to a server.
+/// theme, language, SponsorBlock and the extra tool toggles.
+/// Nothing here is sent to a server.
 class SettingsService extends ChangeNotifier {
   SettingsService._();
 
@@ -18,6 +19,10 @@ class SettingsService extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.dark;
   String _languageCode = 'tr';
   bool _sponsorBlockEnabled = false;
+  List<String> _sponsorCategories = List.unmodifiable(defaultSponsorCategories);
+  int _sleepTimerMinutes = 0;
+  bool _syncedLyrics = false;
+  bool _showQualityBadge = false;
 
   bool get ready => _ready;
   String get audioQuality => _audioQuality;
@@ -27,6 +32,28 @@ class SettingsService extends ChangeNotifier {
   ThemeMode get themeMode => _themeMode;
   String get languageCode => _languageCode;
   bool get sponsorBlockEnabled => _sponsorBlockEnabled;
+  List<String> get sponsorCategories => _sponsorCategories;
+  int get sleepTimerMinutes => _sleepTimerMinutes;
+  bool get syncedLyrics => _syncedLyrics;
+  bool get showQualityBadge => _showQualityBadge;
+
+  static const List<String> defaultSponsorCategories = [
+    'sponsor',
+    'intro',
+    'outro',
+    'interaction',
+    'selfpromo',
+    'music_offtopic',
+  ];
+
+  static const Map<String, String> sponsorCategoryLabels = {
+    'sponsor': 'Sponsor',
+    'intro': 'Jenerik',
+    'outro': 'Bitiş jeneriği',
+    'interaction': 'Etkileşim',
+    'selfpromo': 'Kendi tanıtımı',
+    'music_offtopic': 'Konu dışı müzik',
+  };
 
   static const List<String> audioQualities = [
     'low',
@@ -84,6 +111,13 @@ class SettingsService extends ChangeNotifier {
       _equalizerPreset = prefs.getString('ct.equalizerPreset') ?? 'normal';
       _oledBlack = prefs.getBool('ct.oledBlack') ?? false;
       _sponsorBlockEnabled = prefs.getBool('ct.sponsorBlock') ?? false;
+      final storedCategories = prefs.getStringList('ct.sponsorCategories');
+      if (storedCategories != null && storedCategories.isNotEmpty) {
+        _sponsorCategories = List.unmodifiable(storedCategories);
+      }
+      _sleepTimerMinutes = prefs.getInt('ct.sleepTimerMinutes') ?? 0;
+      _syncedLyrics = prefs.getBool('ct.syncedLyrics') ?? false;
+      _showQualityBadge = prefs.getBool('ct.qualityBadge') ?? false;
       _themeMode = _decodeThemeMode(prefs.getString('ct.themeMode'));
       _languageCode = prefs.getString('ct.language') ?? 'tr';
     } catch (_) {
@@ -152,5 +186,39 @@ class SettingsService extends ChangeNotifier {
     _sponsorBlockEnabled = value;
     notifyListeners();
     await _saveBool('ct.sponsorBlock', value);
+  }
+
+  Future<void> setSponsorCategory(String category, bool enabled) async {
+    final next = <String>{..._sponsorCategories};
+    if (enabled) {
+      next.add(category);
+    } else {
+      next.remove(category);
+    }
+    _sponsorCategories = List.unmodifiable(next);
+    notifyListeners();
+    try {
+      await _prefs?.setStringList('ct.sponsorCategories', _sponsorCategories);
+    } catch (_) {}
+  }
+
+  Future<void> setSleepTimerMinutes(int minutes) async {
+    _sleepTimerMinutes = minutes < 0 ? 0 : minutes;
+    notifyListeners();
+    try {
+      await _prefs?.setInt('ct.sleepTimerMinutes', _sleepTimerMinutes);
+    } catch (_) {}
+  }
+
+  Future<void> setSyncedLyrics(bool value) async {
+    _syncedLyrics = value;
+    notifyListeners();
+    await _saveBool('ct.syncedLyrics', value);
+  }
+
+  Future<void> setShowQualityBadge(bool value) async {
+    _showQualityBadge = value;
+    notifyListeners();
+    await _saveBool('ct.qualityBadge', value);
   }
 }

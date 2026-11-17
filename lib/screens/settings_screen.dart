@@ -6,6 +6,9 @@ import '../core/repair_bot.dart';
 import '../core/settings_service.dart';
 import '../core/theme_state.dart';
 import '../core/update_service.dart';
+import 'local_sync_page.dart';
+import 'other_settings_page.dart';
+import 'proxy_settings_page.dart';
 
 /// Application preferences: appearance, playback, language and system tools.
 class SettingsScreen extends StatelessWidget {
@@ -201,15 +204,66 @@ class SettingsScreen extends StatelessWidget {
                 ),
               const Divider(),
 
-              const _SectionTitle('SponsorBlock (Rehber Atla)'),
+              const _SectionTitle('SponsorBlock'),
               SwitchListTile(
                 secondary: const Icon(Icons.skip_next),
-                title: const Text('Sponsor segmentlerini atla'),
+                title: const Text('Sponsor bölümlerini atla'),
                 subtitle: const Text(
-                  'SponsorBlock topluluk verisi ile reklam/sponsor bölümlerini otomatik atlar.',
+                  'Topluluk verisiyle işaretlenen bölümler otomatik geçilir.',
                 ),
                 value: settings.sponsorBlockEnabled,
                 onChanged: (value) => settings.setSponsorBlockEnabled(value),
+              ),
+              if (settings.sponsorBlockEnabled)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final entry
+                          in SettingsService.sponsorCategoryLabels.entries)
+                        ChoiceChip(
+                          label: Text(entry.value),
+                          selected:
+                              settings.sponsorCategories.contains(entry.key),
+                          onSelected: (selected) => settings.setSponsorCategory(
+                            entry.key,
+                            selected,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              const Divider(),
+
+              const _SectionTitle('Bağlantı ve araçlar'),
+              ListTile(
+                leading: const Icon(Icons.public),
+                title: const Text('Proxy ayarları'),
+                subtitle: const Text(
+                  'Ses akışı için proxy sunucuları, sıralı kullanım, test.',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _open(context, const ProxySettingsPage()),
+              ),
+              ListTile(
+                leading: const Icon(Icons.devices_other),
+                title: const Text('Yerel eşitleme'),
+                subtitle: const Text(
+                  'Aynı ağdaki CloudTune cihazlarını bul, eşleştir, veri aktar.',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _open(context, const LocalSyncPage()),
+              ),
+              ListTile(
+                leading: const Icon(Icons.tune),
+                title: const Text('Diğer ayarlar'),
+                subtitle: const Text(
+                  'Sözler, uyku zamanlayıcı, yedekleme, önbellek, kayıtlar.',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _open(context, const OtherSettingsPage()),
               ),
               const Divider(),
 
@@ -283,6 +337,10 @@ class SettingsScreen extends StatelessWidget {
         },
       ),
     );
+  }
+
+  void _open(BuildContext context, Widget page) {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
   }
 
   String _repairStatus() {

@@ -4,6 +4,8 @@ import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import 'models.dart';
+import 'proxy_client_io.dart' if (dart.library.html) 'proxy_client_web.dart';
+import 'proxy_service.dart';
 import 'settings_service.dart';
 
 /// YouTube oturumu/robot doğrulaması istediğinde atılır.
@@ -145,6 +147,14 @@ class YoutubeService {
     _cachedAt[id] = DateTime.now();
   }
 
+  /// Çözülmüş ses adresi önbelleğini tamamen temizler.
+  void clearCache() {
+    _cache.clear();
+    _cachedAt.clear();
+    _inflight.clear();
+    _playability.clear();
+  }
+
   /// Sonraki parçanın adresini arka planda ısıtır.
   Future<void> prefetch(String id) async {
     if (id.isEmpty || _cached(id) != null) return;
@@ -197,6 +207,29 @@ class YoutubeService {
     throw StateError('audio-unavailable: $id');
   }
 
+  /// Proxy etkinse isteği seçili sunucu üzerinden gönderir.
+  /// İstemci her istekten sonra kapatılır; soket sızıntısı olmaz.
+  Future<http.Response> _innerTubePost(
+    Uri url, {
+    required Map<String, String> headers,
+    required String body,
+  }) async {
+    final proxy = ProxyService.instance;
+    if (!proxy.enabled) {
+      return http.post(url, headers: headers, body: body).timeout(
+            _requestTimeout,
+          );
+    }
+    final client = ctProxiedClient(proxy.currentUri());
+    try {
+      return await client.post(url, headers: headers, body: body).timeout(
+            _requestTimeout,
+          );
+    } finally {
+      client.close();
+    }
+  }
+
   /// Doğrudan InnerTube isteğiyle oynatılabilir ses adresini bulur.
   /// İstemci sırası, cihazda doğrulanmış olanlardan başlar.
   Future<Uri?> innerTube(String id) async {
@@ -207,30 +240,28 @@ class YoutubeService {
     _playability.remove(id);
     for (final spec in _clients) {
       try {
-        final response = await http
-            .post(
-              Uri.parse(
-                'https://www.youtube.com/youtubei/v1/player'
-                '?key=${spec['key']}&prettyPrint=false',
-              ),
-              headers: {
-                'content-type': 'application/json',
-                'accept-language': 'en-US,en;q=0.9',
-                'x-youtube-client-name': spec['name'],
-                'x-youtube-client-version': spec['version'],
-                'user-agent': spec['ua'],
-              },
-              body: jsonEncode({
-                'context': {
-                  'client': spec['client'],
-                  'thirdParty': {'embedUrl': 'https://www.youtube.com'},
-                },
-                'videoId': id,
-                'contentCheckOk': true,
-                'racyCheckOk': true,
-              }),
-            )
-            .timeout(_requestTimeout);
+        final response = await _innerTubePost(
+          Uri.parse(
+            'https://www.youtube.com/youtubei/v1/player'
+            '?key=${spec['key']}&prettyPrint=false',
+          ),
+          headers: {
+            'content-type': 'application/json',
+            'accept-language': 'en-US,en;q=0.9',
+            'x-youtube-client-name': spec['name'],
+            'x-youtube-client-version': spec['version'],
+            'user-agent': spec['ua'],
+          },
+          body: jsonEncode({
+            'context': {
+              'client': spec['client'],
+              'thirdParty': {'embedUrl': 'https://www.youtube.com'},
+            },
+            'videoId': id,
+            'contentCheckOk': true,
+            'racyCheckOk': true,
+          }),
+        );
 
         if (response.statusCode != 200) continue;
 
