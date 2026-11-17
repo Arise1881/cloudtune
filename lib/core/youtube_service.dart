@@ -33,7 +33,6 @@ class YoutubeService {
 
   final Map<String, Uri> _cache = {};
   final Map<String, DateTime> _cachedAt = {};
-  final Map<String, Future<Uri>> _inflight = {};
   final Map<String, String> _playability = {};
 
   Track _fromVideo(Video video) => Track(
@@ -151,7 +150,6 @@ class YoutubeService {
   void clearCache() {
     _cache.clear();
     _cachedAt.clear();
-    _inflight.clear();
     _playability.clear();
   }
 
@@ -165,17 +163,11 @@ class YoutubeService {
     }
   }
 
-  /// Çözülmüş akış adresi. Aynı parça için tek istek yapılır.
+  /// Çözülmüş akış adresi. Önbellekte varsa onu kullanır, yoksa çözer.
   Future<Uri> audioUri(String id) {
     final cached = _cached(id);
     if (cached != null) return Future<Uri>.value(cached);
-
-    final pending = _inflight[id];
-    if (pending != null) return pending;
-
-    final future = _resolve(id).whenComplete(() => _inflight.remove(id));
-    _inflight[id] = future;
-    return future;
+    return _resolve(id);
   }
 
   /// Eski çağrılar için uyumluluk takma adı.
@@ -185,7 +177,6 @@ class YoutubeService {
   Future<Uri?> forceDirect(String id) async {
     _cache.remove(id);
     _cachedAt.remove(id);
-    _inflight.remove(id);
     try {
       final uri = await audioUri(id);
       return uri;
