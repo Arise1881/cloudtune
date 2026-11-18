@@ -494,7 +494,7 @@ class _PlaylistEditorPageState extends State<PlaylistEditorPage> {
 
   void _reorder(int oldIndex, int newIndex) {
     setState(() {
-      if (newIndex > oldIndex) newIndex -= 1;
+      // onReorderItem hedef indirisi zaten ayarlar; tekrar -1 yapılmaz.
       if (newIndex < 0 || newIndex >= _tracks.length) return;
       final track = _tracks.removeAt(oldIndex);
       _tracks.insert(newIndex, track);
@@ -601,7 +601,7 @@ class _PlaylistEditorPageState extends State<PlaylistEditorPage> {
                 : ReorderableListView.builder(
                     padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
                     itemCount: _tracks.length,
-                    onReorder: _reorder,
+                    onReorderItem: _reorder,
                     itemBuilder: (context, index) {
                       final track = _tracks[index];
                       return Card(

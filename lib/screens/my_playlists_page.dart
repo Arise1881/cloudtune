@@ -112,8 +112,9 @@ class _MyPlaylistsPageState extends State<MyPlaylistsPage> {
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
                   itemCount: custom.length,
-                  onReorder: (oldIndex, newIndex) {
-                    if (newIndex > oldIndex) newIndex -= 1;
+                  onReorderItem: (oldIndex, newIndex) {
+                    // onReorderItem hedef indirisi zaten ayarlar; eski onReorder
+                    // gibi tekrar -1 çıkarılırsa son sıraya taşıma hatalı olur.
                     if (newIndex < 0 || newIndex >= custom.length) return;
                     setState(() {
                       final moved = custom.removeAt(oldIndex);
