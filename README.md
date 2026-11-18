@@ -241,6 +241,14 @@ flutter build ios --release --no-codesign \
 flutter build web --release
 ```
 
+### 3.0.42+243 — müsify benzeri arama ekranı
+
+- Ortalanmış açık mavi **Ara** başlığı; koyu gri yuvarlatılmış arama çubuğu büyüteç, metin ve X temizle ikonu ile çalışır.
+- **Artists:** tekil sanatçılar yuvarlak avatar, `Sanatçı` alt metni ve `>` ile yatay listede; dokununca sanatçı sayfasına gider.
+- **Parçalar:** kare kapak, sol alt süre rozeti (`00:34`, `1:00:14`), taşan başlıkta `...`, sanatçı alt metni ve dikey 3 nokta menü. Menüde çal, radyo, beğeni, indirme, sanatçı ve çalma listesine ekleme bulunur.
+- **Çalma Listeleri / Radyolar:** arama ekranından kayıtlı listeler çalınabilir, sanatçı kartlarından radyo başlatılabilir; alt nav Home / **Search** / Library / Settings (aktif Search mavi oval).
+- Doğrulama: `flutter analyze` 0 issue, `flutter test` 64/64, UI sözleşme testi eklendi.
+
 ### 3.0.41+242 — kullanıcı sorunları ve tam emülatör testi
 
 - **Vurgu rengi:** seçim `ct.accentColor` anahtarında saklanır, açılışta geri yüklenir; profil kartı ve tüm palet anında güncellenir.

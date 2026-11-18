@@ -26,6 +26,7 @@ import '../screens/playlist_page.dart';
 import '../screens/room_page.dart';
 import '../screens/settings_screen.dart';
 import 'mini_player.dart';
+import 'search_ui.dart';
 
 /// One horizontal recommendation row on the home feed.
 class _FeedSource {
@@ -45,6 +46,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final TextEditingController _input = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
   final ScrollController _scroll = ScrollController();
   // Yerel Whisper: sistem/Google sesli arama kullanılmaz.
   final SpeechService _speech = WhisperSpeechService();
@@ -63,6 +65,7 @@ class _HomePageState extends State<HomePage> {
   bool _busy = false;
   bool _listening = false;
   bool _showHistory = false;
+  int _tab = SearchNavBar.search;
   bool _prefetched = false;
   bool _speechReady = false;
   bool _speechBusy = false;
@@ -96,6 +99,7 @@ class _HomePageState extends State<HomePage> {
     unawaited(_restorePlaybackAfterVoice());
     unawaited(_speech.dispose());
     _input.dispose();
+    _searchFocus.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -176,7 +180,12 @@ class _HomePageState extends State<HomePage> {
   /// Çalma geçmişi/beğeni değişimi feed'i yeniden aratmaz. Kullanıcı içerik
   /// güncellemesini yalnızca yukarıdan aşağıya kaydırarak ister.
   void _onLibraryChanged() {
-    if (!mounted || _results != null) return;
+    if (!mounted) return;
+    if (_tab == SearchNavBar.search) {
+      setState(() {});
+      return;
+    }
+    if (_results != null) return;
     _syncPlaylistSources();
   }
 
@@ -260,6 +269,7 @@ class _HomePageState extends State<HomePage> {
     _lastQuery = value;
     final generation = ++_searchGeneration;
     setState(() {
+      _tab = SearchNavBar.search;
       _showHistory = false;
       _artistTracks = const <Track>[];
       _artistName = null;
@@ -321,6 +331,78 @@ class _HomePageState extends State<HomePage> {
         setState(() => _busy = false);
       }
     }
+  }
+
+  /// X ikonu: arama kutusunu ve sonuçları tamamen temizler.
+  void _clearSearch() {
+    _searchGeneration++;
+    _input.clear();
+    setState(() {
+      _results = null;
+      _artistTracks = const <Track>[];
+      _artistName = null;
+      _artistId = null;
+      _artistTracksLoading = false;
+      _showHistory = false;
+      _lastQuery = '';
+    });
+    _searchFocus.requestFocus();
+  }
+
+  Future<void> _trackAction(
+    String action,
+    Track track,
+    List<Track> queue,
+    int index,
+  ) async {
+    switch (action) {
+      case 'play':
+        PlayerController.instance.playQueue(queue, index);
+        break;
+      case 'radio':
+        PlayerController.instance.startRadio(queue, index);
+        break;
+      case 'artist':
+        _openArtist(track);
+        break;
+      case 'like':
+        await Library.instance.toggleLike(track);
+        break;
+      case 'download':
+        _toast('İndiriliyor: ${track.title}');
+        final path = await DownloadService.instance.download(track);
+        _toast(path == null ? 'İndirilemedi: ${track.title}' : 'İndirildi.');
+        break;
+      case 'playlist':
+        await _addToPlaylist(track);
+        break;
+    }
+  }
+
+  Future<void> _addToPlaylist(Track track) async {
+    final metas = Library.instance.playlistMetas;
+    if (metas.isEmpty) {
+      _toast('Önce bir çalma listesi oluştur.');
+      await _createPlaylist();
+      return;
+    }
+    final selected = await showDialog<PlaylistMeta>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        backgroundColor: AppPalette.surface,
+        title: const Text('Çalma listesine ekle'),
+        children: [
+          for (final meta in metas)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop(meta),
+              child: Text('${meta.name} · ${meta.tracks.length} parça'),
+            ),
+        ],
+      ),
+    );
+    if (selected == null) return;
+    await Library.instance.addToPlaylist(selected.id, track);
+    _toast('${track.title} → ${selected.name}');
   }
 
   Future<void> _loadArtistTracks(
@@ -670,6 +752,8 @@ class _HomePageState extends State<HomePage> {
   void _returnHome() {
     _searchGeneration++;
     setState(() {
+      _tab = SearchNavBar.home;
+      _showHistory = false;
       _results = null;
       _artistTracks = const <Track>[];
       _artistName = null;
@@ -687,82 +771,52 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final searching = _tab == SearchNavBar.search;
     return Scaffold(
+      backgroundColor: AppPalette.surface,
       body: SafeArea(
         bottom: false,
         child: Column(
           children: [
-            _header(),
-            _searchArea(),
+            if (searching) const SearchTitle() else _header(),
+            if (searching) _searchArea(),
             if (_busy) const LinearProgressIndicator(minHeight: 2),
             _roomBanner(),
             Expanded(
-              child: _results != null
-                  ? _buildResults()
+              child: searching
+                  ? (_results != null ? _buildResults() : _searchLanding())
                   : ListenableBuilder(
                       listenable: DownloadService.instance,
                       builder: (context, _) => _buildFeed(),
                     ),
             ),
             const MiniPlayer(),
-            _navBar(),
+            SearchNavBar(selected: _tab, onTap: _onNavTap),
           ],
         ),
       ),
     );
   }
 
-  Widget _navBar() {
-    final accent = ThemeState.value;
-    return Container(
-      decoration: BoxDecoration(
-        color: AppPalette.surface,
-        border: Border(top: BorderSide(color: AppPalette.divider)),
-      ),
-      child: Row(
-        children: [
-          _navItem(Icons.home, 'Ana Sayfa', true, accent, _returnHome),
-          _navItem(Icons.groups, 'Odalar', false, accent, () => _openRooms()),
-          _navItem(Icons.favorite_border, 'Kitaplığım', false, accent,
-              () => _openRooms(tab: 1)),
-          _navItem(Icons.settings_outlined, 'Ayarlar', false, accent, () {
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const SettingsScreen()),
-            );
-          }),
-        ],
-      ),
-    );
-  }
-
-  Widget _navItem(
-    IconData icon,
-    String label,
-    bool active,
-    Color accent,
-    VoidCallback onTap,
-  ) {
-    final color = active ? accent : AppPalette.iconSubtle;
-    return Expanded(
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 7),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 20, color: color),
-              const SizedBox(height: 2),
-              Text(label,
-                  style: TextStyle(
-                      color: color,
-                      fontSize: 10,
-                      fontWeight: active ? FontWeight.w800 : FontWeight.w500)),
-            ],
-          ),
-        ),
-      ),
-    );
+  void _onNavTap(int value) {
+    if (value == SearchNavBar.library) {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const MyPlaylistsPage()),
+      );
+      return;
+    }
+    if (value == SearchNavBar.settings) {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const SettingsScreen()),
+      );
+      return;
+    }
+    if (value == SearchNavBar.home) {
+      _returnHome();
+      return;
+    }
+    setState(() => _tab = SearchNavBar.search);
+    _searchFocus.requestFocus();
   }
 
   void _openRooms({int tab = 0}) {
@@ -784,6 +838,11 @@ class _HomePageState extends State<HomePage> {
                 ?.copyWith(fontWeight: FontWeight.w800),
           ),
           const Spacer(),
+          IconButton(
+            tooltip: 'Odalar',
+            icon: const Icon(Icons.groups_outlined),
+            onPressed: () => _openRooms(),
+          ),
           IconButton(
             tooltip: 'Çalma listesi oluştur',
             icon: const Icon(Icons.playlist_add),
@@ -810,56 +869,82 @@ class _HomePageState extends State<HomePage> {
 
   Widget _searchArea() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(20, 4, 16, 4),
       child: Column(
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _input,
-                  textInputAction: TextInputAction.search,
-                  onSubmitted: _submit,
-                  onTap: () {
-                    if (_input.text.isEmpty &&
-                        Library.instance.searchHistory.isNotEmpty) {
-                      setState(() => _showHistory = true);
-                    }
+          Container(
+            decoration: BoxDecoration(
+              color: SearchUi.fieldFill,
+              borderRadius: BorderRadius.circular(28),
+            ),
+            child: Row(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(left: 16),
+                  child: Icon(Icons.search, color: Colors.white70, size: 22),
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: _input,
+                    focusNode: _searchFocus,
+                    textInputAction: TextInputAction.search,
+                    style: const TextStyle(color: Colors.white),
+                    cursorColor: SearchUi.titleBlue,
+                    onSubmitted: _submit,
+                    onChanged: (value) {
+                      if (value.isEmpty && _results != null) _clearSearch();
+                    },
+                    onTap: () {
+                      if (_input.text.isEmpty &&
+                          Library.instance.searchHistory.isNotEmpty) {
+                        setState(() => _showHistory = true);
+                      }
+                    },
+                    decoration: const InputDecoration(
+                      hintText: 'blued',
+                      hintStyle: TextStyle(color: Colors.white54),
+                      border: InputBorder.none,
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    ),
+                  ),
+                ),
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: _input,
+                  builder: (context, value, _) {
+                    if (value.text.isEmpty) return const SizedBox.shrink();
+                    return IconButton(
+                      tooltip: 'Temizle',
+                      icon: const Icon(Icons.close, color: Colors.white70),
+                      onPressed: _clearSearch,
+                    );
                   },
-                  decoration: InputDecoration(
-                    hintText: 'Şarkı ara veya YouTube bağlantısı yapıştır',
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: IconButton(
-                      tooltip: 'Panodan yapıştır',
-                      icon: const Icon(Icons.content_paste),
-                      onPressed: _busy ? null : _paste,
-                    ),
-                    filled: true,
-                    fillColor: AppPalette.card,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(30),
-                      borderSide: BorderSide.none,
+                ),
+                IconButton(
+                  tooltip: 'Panodan yapıştır',
+                  icon: const Icon(Icons.content_paste, color: Colors.white70),
+                  onPressed: _busy ? null : _paste,
+                ),
+                Semantics(
+                  button: true,
+                  label: _listening ? 'Dinlemeyi durdur' : 'Sesle ara',
+                  child: GestureDetector(
+                    onTapDown: (_) => _onMicDown(),
+                    onTapUp: (_) => _onMicUp(),
+                    onTapCancel: _onMicCancel,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 10, 12, 10),
+                      child: Icon(
+                        _listening ? Icons.stop_circle : Icons.mic,
+                        color: _listening
+                            ? SearchUi.titleBlue
+                            : Colors.white70,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              Semantics(
-                button: true,
-                label: _listening ? 'Dinlemeyi durdur' : 'Sesle ara',
-                child: GestureDetector(
-                  onTapDown: (_) => _onMicDown(),
-                  onTapUp: (_) => _onMicUp(),
-                  onTapCancel: _onMicCancel,
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Icon(
-                      _listening ? Icons.stop_circle : Icons.mic,
-                      color: _listening ? ThemeState.value : null,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
           // Yerel Whisper modeli ilk kullanımda indirilir; ilerleme burada görünür.
           if (_voiceStatus.isNotEmpty)
@@ -867,7 +952,7 @@ class _HomePageState extends State<HomePage> {
               padding: const EdgeInsets.only(top: 6),
               child: Text(
                 _voiceStatus,
-                style: TextStyle(fontSize: 12, color: ThemeState.value),
+                style: TextStyle(fontSize: 12, color: SearchUi.titleBlue),
               ),
             ),
           if (_showHistory && Library.instance.searchHistory.isNotEmpty)
@@ -986,11 +1071,45 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// Arama kutusu boşken sanatçı/parça/playlist kartlarını hazır tutar.
+  Widget _searchLanding() {
+    final library = Library.instance;
+    final recent = library.history.isNotEmpty ? library.history : library.liked;
+    final seeds = SearchUi.artistSeeds(recent);
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 16),
+      children: [
+        if (library.searchHistory.isNotEmpty) _searchHistory(),
+        _artistStrip(seeds),
+        SearchSectionTitle(
+          icon: Icons.music_note,
+          title: 'Parçalar',
+          trailing: recent.isEmpty ? null : '${recent.length}',
+          onPlayAll: recent.isEmpty
+              ? null
+              : () => PlayerController.instance.playQueue(recent, 0, radio: false),
+        ),
+        if (recent.isEmpty)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 24),
+            child: Text('Aramak için yaz, yapıştır veya mikrofona bas.'),
+          )
+        else
+          for (var i = 0; i < recent.length && i < 12; i++)
+            _trackCard(recent[i], recent, i),
+        _playlistSection(),
+        _radioSection(seeds),
+      ],
+    );
+  }
+
   Widget _buildResults() {
     final results = _results!;
+    final seeds = SearchUi.artistSeeds(results);
     final hasArtistTracks = _artistTracks.isNotEmpty;
     final primary = hasArtistTracks ? _artistTracks : results;
-    final showSearchSection = hasArtistTracks && results.isNotEmpty;
     final artist = _artistName ?? 'Sanatçı';
     final subtitle = _artistTracksLoading
         ? '$artist parçaları yükleniyor…'
@@ -1000,160 +1119,194 @@ class _HomePageState extends State<HomePage> {
                 ? '$artist · ek parça bulunamadı'
                 : null;
 
-    return Column(
-      children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: _returnHome,
-            icon: const Icon(Icons.arrow_back),
-            label: const Text('Ana sayfaya dön'),
-          ),
-        ),
-        Expanded(
-          child: RefreshIndicator(
-            onRefresh: _refreshResults,
-            child: ListView.builder(
-              physics: const AlwaysScrollableScrollPhysics(),
-              itemCount: 1 +
-                  (primary.isEmpty ? 1 : primary.length) +
-                  (showSearchSection ? 1 + results.length : 0),
-              itemBuilder: (context, index) {
-                if (index == 0) {
-                  return _resultSectionHeader(
-                    title: 'Çalma Listeleri ve Şarkılar',
-                    subtitle: subtitle,
-                    queue: primary,
-                    onSave: hasArtistTracks ? _saveArtistPlaylist : null,
-                    onDownload: hasArtistTracks ? _downloadArtistPlaylist : null,
-                  );
-                }
-
-                var i = index - 1;
-                if (primary.isEmpty) {
-                  if (i == 0) {
-                    return _artistTracksLoading
-                        ? const Padding(
-                            padding: EdgeInsets.all(24),
-                            child: Center(child: CircularProgressIndicator()),
-                          )
-                        : const Padding(
-                            padding: EdgeInsets.all(24),
-                            child: Text('Sonuç yok.'),
-                          );
-                  }
-                  i--;
-                }
-                if (i < primary.length) {
-                  return _resultTile(primary[i], primary, i);
-                }
-                i -= primary.length;
-                if (showSearchSection) {
-                  if (i == 0) {
-                    return _resultSectionHeader(
-                      title: 'Arama Sonuçları',
-                      subtitle: '“$_lastQuery” için ${results.length} sonuç',
-                      queue: results,
-                    );
-                  }
-                  return _resultTile(results[i - 1], results, i - 1);
-                }
-                return const SizedBox.shrink();
-              },
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _resultSectionHeader({
-    required String title,
-    String? subtitle,
-    required List<Track> queue,
-    VoidCallback? onSave,
-    VoidCallback? onDownload,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-      child: Row(
+    return RefreshIndicator(
+      onRefresh: _refreshResults,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.only(bottom: 16),
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                if (subtitle != null && subtitle.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style:
-                          TextStyle(fontSize: 12, color: AppPalette.textSubtle),
-                    ),
-                  ),
-              ],
-            ),
+          _artistStrip(seeds),
+          SearchSectionTitle(
+            icon: Icons.music_note,
+            title: 'Parçalar',
+            trailing: subtitle ?? '${primary.length} parça',
+            onPlayAll: primary.isEmpty
+                ? null
+                : () =>
+                    PlayerController.instance.playQueue(primary, 0, radio: false),
+            onSave: hasArtistTracks ? _saveArtistPlaylist : null,
+            onDownload: hasArtistTracks ? _downloadArtistPlaylist : null,
           ),
-          if (queue.isNotEmpty)
-            IconButton(
-              icon: Icon(Icons.play_circle_fill, color: ThemeState.value),
-              tooltip: 'Tümünü çal',
-              onPressed: () =>
-                  PlayerController.instance.playQueue(queue, 0, radio: false),
-            ),
-          if (onSave != null)
-            IconButton(
-              icon: const Icon(Icons.playlist_add),
-              tooltip: 'Sanatçı listesini kaydet',
-              onPressed: onSave,
-            ),
-          if (onDownload != null)
-            IconButton(
-              icon: const Icon(Icons.download_for_offline),
-              tooltip: 'Tümünü indir',
-              onPressed: onDownload,
-            ),
+          if (_artistTracksLoading && primary.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (primary.isEmpty)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 24),
+              child: Text('Sonuç yok.'),
+            )
+          else
+            for (var i = 0; i < primary.length; i++)
+              _trackCard(primary[i], primary, i),
+          _playlistSection(),
+          _radioSection(seeds),
         ],
       ),
     );
   }
 
-  Widget _resultTile(Track track, List<Track> queue, int index) {
-    return ListTile(
-      leading: ClipRRect(
-        borderRadius: BorderRadius.circular(6),
-        child: CachedNetworkImage(
-          imageUrl: track.thumb,
-          width: 56,
-          height: 56,
-          fit: BoxFit.cover,
-          errorWidget: (_, __, ___) => const Icon(Icons.music_note, size: 40),
+  Widget _trackCard(Track track, List<Track> queue, int index) {
+    return SearchTrackCard(
+      track: track,
+      liked: Library.instance.isLiked(track.id),
+      onAction: (action) => unawaited(_trackAction(action, track, queue, index)),
+    );
+  }
+
+  Widget _artistStrip(List<Track> seeds) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SearchSectionTitle(
+          icon: Icons.person_outline,
+          title: 'Artists',
+          trailing: seeds.isEmpty ? null : '${seeds.length}',
         ),
-      ),
-      title: Text(
-        track.title,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: GestureDetector(
-        onTap: () => _openArtist(track),
-        child: Text(track.artist, maxLines: 1),
-      ),
-      trailing: IconButton(
-        icon: const Icon(Icons.radio),
-        tooltip: 'Radyo olarak çal',
-        onPressed: () => PlayerController.instance.startRadio(queue, index),
-      ),
-      onTap: () => PlayerController.instance.playQueue(queue, index),
+        if (seeds.isEmpty)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: Text(
+              'Sanatçılar arama sonuçlarında görünür.',
+              style: TextStyle(fontSize: 12),
+            ),
+          )
+        else
+          SizedBox(
+            height: 88,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: seeds.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, i) => SearchArtistCard(
+                seed: seeds[i],
+                onTap: () => _openArtist(seeds[i]),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _playlistSection() {
+    final metas = Library.instance.playlistMetas;
+    if (metas.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SearchSectionTitle(
+          icon: Icons.playlist_play,
+          title: 'Çalma Listeleri',
+          trailing: '${metas.length}',
+          onPlayAll: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const MyPlaylistsPage()),
+          ),
+        ),
+        for (final meta in metas.take(8))
+          ListTile(
+            leading: Icon(Icons.queue_music, color: SearchUi.titleBlue),
+            title: Text(
+              meta.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text('${meta.tracks.length} parça'),
+            trailing: IconButton(
+              tooltip: 'Listeyi aç',
+              icon: const Icon(Icons.chevron_right),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const MyPlaylistsPage()),
+              ),
+            ),
+            onTap: () {
+              if (meta.tracks.isEmpty) {
+                _toast('Bu çalma listesi boş.');
+                return;
+              }
+              PlayerController.instance.playQueue(meta.tracks, 0, radio: false);
+            },
+          ),
+      ],
+    );
+  }
+
+  Widget _radioSection(List<Track> seeds) {
+    if (seeds.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SearchSectionTitle(
+          icon: Icons.radio,
+          title: 'Radyolar',
+        ),
+        SizedBox(
+          height: 104,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: seeds.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (context, i) {
+              final seed = seeds[i];
+              return SizedBox(
+                width: 150,
+                child: Material(
+                  color: AppPalette.card,
+                  borderRadius: BorderRadius.circular(14),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () => PlayerController.instance.startRadio(
+                      _artistName == seed.artist && _artistTracks.isNotEmpty
+                          ? _artistTracks
+                          : [seed],
+                      0,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.radio,
+                              color: SearchUi.titleBlue, size: 26),
+                          const SizedBox(height: 10),
+                          Text(
+                            seed.artist,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          Text(
+                            'Radyo',
+                            style: TextStyle(
+                              color: AppPalette.textSubtle,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 

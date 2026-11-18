@@ -262,7 +262,7 @@ with open('update.json') as f:
     d = json.load(f)
 d['version'] = '$NEW_VER'
 d['versionCode'] = $NEW_BUILD
-d['notes'] = 'Vurgu rengi kapanıp açılınca korunuyor; oda eşzamanlı çalma ve http davet linki düzeltildi; 28 dil seçilebilir; Whisper base Q5_1 + net kayıt; radyo hata geçişi ve 50 parça sınırı kaldırıldı; just_audio cleartext proxy hatası giderildi. Android/Linux güncel; Windows/iOS CI ödeme limiti nedeniyle eski.'
+d['notes'] = 'Yeni müsify benzeri arama ekranı: açık mavi Ara başlığı, koyu gri arama çubuğu, Artists/Parçalar kartları, süre rozeti ve 3 nokta menü; şarkı, playlist ve radyo erişimi korundu. Önceki düzeltmeler de sürüldü: kalıcı vurgu rengi, oda senkronu, 28 dil, net Whisper sesli arama, çalışan radyolar. Android/Linux güncel; Windows/iOS CI ödeme limiti nedeniyle eski.'
 d['platforms']['linux'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.deb'
 d['platforms']['linux-targz'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.tar.gz'
 d['platforms']['android-arm64'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-arm64.apk'
