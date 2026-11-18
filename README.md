@@ -241,6 +241,13 @@ flutter build ios --release --no-codesign \
 flutter build web --release
 ```
 
+### 3.0.43+244 — iki cihazlı oda senkronu
+
+- Oda state artık `seq`, `sentAt` ve `hostId` taşır; QoS1 tekrarı veya gecikmiş paket eski parçayı geri getirmez. Host değişiminde yeni state üstünlük kazanır.
+- Katılımcı tarafında kullanıcı shuffle tercihi oda kuyruğuna uygulanmaz. Böylece aynı parça her 3 saniyede baştan başlamaz; kuyruk ve index host ile birebir kalır.
+- Aynı parça görünürse bile kaynak hatası varsa joiner parçayı yeniden açar; `stopped` ve `playing` komutları açık uygulanır.
+- Ana sayfaya dönüşte bağlı olmayan `ScrollController` üzerinde `animateTo()` çağrısı engellendi; emülatör tam testi 18/18, `flutter analyze` 0 issue, `flutter test` 66/66.
+
 ### 3.0.42+243 — müsify benzeri arama ekranı
 
 - Ortalanmış açık mavi **Ara** başlığı; koyu gri yuvarlatılmış arama çubuğu büyüteç, metin ve X temizle ikonu ile çalışır.

@@ -226,6 +226,8 @@ class RoomService extends ChangeNotifier {
   Timer? _stateTimer;
   Timer? _pruneTimer;
   DateTime _lastStatePublish = DateTime.fromMillisecondsSinceEpoch(0);
+  int _stateSeq = 0;
+  Map<String, dynamic>? _lastRemoteState;
   bool _applyingRemote = false;
   Map<String, dynamic>? _pendingRemoteState;
   Completer<bool>? _ackCompleter;
@@ -296,12 +298,20 @@ class RoomService extends ChangeNotifier {
     required int index,
     required int positionMs,
     required bool playing,
+    int seq = 0,
+    int sentAt = 0,
+    String hostId = '',
   }) {
     final safeIndex =
         tracks.isEmpty ? 0 : index.clamp(0, tracks.length - 1);
     final track = tracks.isEmpty ? null : tracks[safeIndex];
     return <String, dynamic>{
       'roomName': roomName,
+      // MQTT QoS1 aynı paketi iki kez teslim edebilir; sıra ve zaman damgası
+      // olmadan eski bir state yeni parçayı geri alabiliyordu.
+      'seq': seq,
+      'sentAt': sentAt,
+      'hostId': hostId,
       'queue': tracks.map((item) => item.toJson()).toList(),
       'playback': track == null
           ? <String, dynamic>{
@@ -319,6 +329,25 @@ class RoomService extends ChangeNotifier {
               'stopped': false,
             },
     };
+  }
+
+  static int _stateNumber(dynamic value) =>
+      value is num ? value.toInt() : 0;
+
+  /// QoS1 tekrarı, geciken paket veya host değişiminden sonra eski state
+  /// uygulanmasın diye zaman + sıra karşılaştırması yapılır.
+  static bool isRemoteStateNewer(
+    Map<String, dynamic> incoming,
+    Map<String, dynamic>? current,
+  ) {
+    if (current == null) return true;
+    final incomingAt = _stateNumber(incoming['sentAt']);
+    final currentAt = _stateNumber(current['sentAt']);
+    if (incomingAt != currentAt) return incomingAt > currentAt;
+    final incomingSeq = _stateNumber(incoming['seq']);
+    final currentSeq = _stateNumber(current['seq']);
+    if (incomingSeq != currentSeq) return incomingSeq > currentSeq;
+    return '${incoming['hostId'] ?? ''}' != '${current['hostId'] ?? ''}';
   }
 
   /// Gelen index yabancı kuyruğa ait olabilir; parça id'si her zaman
@@ -521,6 +550,10 @@ class RoomService extends ChangeNotifier {
     _memberSeen.clear();
     _queue = const [];
     _playback = null;
+    _stateSeq = 0;
+    _lastRemoteState = null;
+    _pendingRemoteState = null;
+    _applyingRemote = false;
 
     final connected = await _attach();
     if (!connected) {
@@ -760,6 +793,7 @@ class RoomService extends ChangeNotifier {
           }
           if (targetId == _clientId && !_isHost) {
             _isHost = true;
+            _lastRemoteState = null;
             _pendingRemoteState = null;
             _startStateTimer();
             _publishState(force: true);
@@ -772,7 +806,15 @@ class RoomService extends ChangeNotifier {
 
       case 'state':
         if (payload is Map && !_isHost) {
-          _applyRemoteState(Map<String, dynamic>.from(payload));
+          // Eski sürüm/relay paketlerinde sentAt yoksa zarf zamanını kullan.
+          final state = Map<String, dynamic>.from(payload);
+          state.putIfAbsent(
+            'sentAt',
+            () => (envelope['at'] as num?)?.toInt() ?? 0,
+          );
+          state.putIfAbsent('seq', () => 0);
+          state.putIfAbsent('hostId', () => remoteId);
+          unawaited(_applyRemoteState(state));
         }
 
       case 'chat':
@@ -815,6 +857,18 @@ class RoomService extends ChangeNotifier {
   }
 
   Future<void> _applyRemoteState(Map<String, dynamic> payload) async {
+    // Eski/geciken state yeni parçayı geri almasın. Bu kontrol kuyruk
+    // güncellenmeden önce yapılmalı; aksi halde UI eski sıraya döner.
+    if (!isRemoteStateNewer(payload, _lastRemoteState)) return;
+    _lastRemoteState = payload;
+
+    // Önceki uygulama sürüyorsa en yeni durumu kuyruğa al; 3 sn'lik tick'ler
+    // arasında kaybolmasın.
+    if (_applyingRemote) {
+      _pendingRemoteState = payload;
+      return;
+    }
+
     final incoming = payload['queue'];
     List<Track> decoded = const <Track>[];
     if (incoming is List) {
@@ -834,12 +888,6 @@ class RoomService extends ChangeNotifier {
     }
     notifyListeners();
 
-    // Önceki uygulama sürüyorsa en yeni durumu kuyruğa al; 3 sn'lik tick'ler
-    // arasında kaybolmasın.
-    if (_applyingRemote) {
-      _pendingRemoteState = payload;
-      return;
-    }
     if (!_autoSync || _isHost) return;
 
     final player = PlayerController.instance;
@@ -861,20 +909,33 @@ class RoomService extends ChangeNotifier {
             ? _queue
             : <Track>[Track.fromJson(remoteMap)]);
     final index = resolveStateIndex(queue, remoteMap);
+    final shouldPlay = remoteMap['playing'] == true;
 
     _applyingRemote = true;
     try {
-      if (player.current?.id != id || !_sameQueue(player.tracks, queue)) {
-        await player.playQueue(queue, index, radio: false);
+      // Aynı parça görünse bile hata varsa kaynak yeniden açılmalı. Shuffle
+      // tercihi oda kuyruğuna uygulanmaz; yoksa her tick kuyruğu karıştırıp
+      // parçayı baştan başlatıyordu.
+      final needsReload = player.current?.id != id ||
+          !_sameQueue(player.tracks, queue) ||
+          player.error != null;
+      if (needsReload) {
+        await player.playQueue(
+          queue,
+          index,
+          radio: false,
+          useShufflePreference: false,
+        );
       }
-      final positionMs = (remoteMap['positionMs'] as num?)?.toInt();
+      final rawPosition = remoteMap['positionMs'];
+      final positionMs = rawPosition is num ? rawPosition.toInt() : null;
       if (positionMs != null &&
           (player.position.inMilliseconds - positionMs).abs() > 5000) {
         await player.seek(Duration(milliseconds: positionMs));
       }
       // toggle() yerine açık komut: backend henüz "playing" olmadan toggling
       // yanlış yöne gidebiliyordu.
-      if (remoteMap['playing'] == true) {
+      if (shouldPlay) {
         if (!player.playing) await player.play();
       } else if (player.playing) {
         await player.pause();
@@ -967,6 +1028,7 @@ class RoomService extends ChangeNotifier {
     final player = PlayerController.instance;
     // Oda kuyruğu değil, çaların gerçek kuyruğu yayınlanır. Aksi halde
     // radyo/shuffle sırasında index ve parça birbirinden ayrışıyordu.
+    final seq = ++_stateSeq;
     _publish(
       'state',
       buildStatePayload(
@@ -975,6 +1037,9 @@ class RoomService extends ChangeNotifier {
         index: player.index,
         positionMs: player.position.inMilliseconds,
         playing: player.playing,
+        seq: seq,
+        sentAt: now.millisecondsSinceEpoch,
+        hostId: _clientId,
       ),
     );
   }
@@ -1166,6 +1231,8 @@ class RoomService extends ChangeNotifier {
     _memberSeen.clear();
     _queue = const [];
     _playback = null;
+    _stateSeq = 0;
+    _lastRemoteState = null;
     _pendingRemoteState = null;
     _applyingRemote = false;
   }

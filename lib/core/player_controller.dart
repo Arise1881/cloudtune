@@ -157,6 +157,11 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     List<Track> tracks,
     int startIndex, {
     bool radio = true,
+
+    /// Oda senkronu gibi kuyruğun birebir uygulanması gereken durumlarda
+    /// kullanıcı shuffle tercihi yerel sırayı karıştırmasın. Tercih korunur;
+    /// sonraki elle başlatılan çalmalarda yeniden uygulanır.
+    bool useShufflePreference = true,
   }) async {
     if (tracks.isEmpty) return;
     await _restorePreferences();
@@ -166,7 +171,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     _index = safeIndex;
     _shuffleMode = false;
     _radioMode = radio && Library.instance.radioEnabled;
-    _applyShuffle(enabled: _shuffleEnabled);
+    _applyShuffle(enabled: useShufflePreference && _shuffleEnabled);
     _publishQueue();
     await _playAt(_index);
   }

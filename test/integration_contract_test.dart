@@ -132,4 +132,54 @@ void main() {
     expect(stoppedPlayback['stopped'], isTrue);
     expect(stoppedPlayback['id'], '');
   });
+
+  test('oda state tekrar ve gecikmiş paketleri ayırt eder', () {
+    final first = RoomService.buildStatePayload(
+      roomName: 'Test',
+      tracks: const <Track>[],
+      index: 0,
+      positionMs: 0,
+      playing: false,
+      seq: 4,
+      sentAt: 1000,
+      hostId: 'host-a',
+    );
+    final replay = Map<String, dynamic>.from(first);
+    final newer = RoomService.buildStatePayload(
+      roomName: 'Test',
+      tracks: const <Track>[],
+      index: 0,
+      positionMs: 0,
+      playing: false,
+      seq: 5,
+      sentAt: 1000,
+      hostId: 'host-a',
+    );
+    final lateOldHost = RoomService.buildStatePayload(
+      roomName: 'Test',
+      tracks: const <Track>[],
+      index: 0,
+      positionMs: 0,
+      playing: false,
+      seq: 99,
+      sentAt: 900,
+      hostId: 'host-b',
+    );
+    final newHost = RoomService.buildStatePayload(
+      roomName: 'Test',
+      tracks: const <Track>[],
+      index: 0,
+      positionMs: 0,
+      playing: false,
+      seq: 1,
+      sentAt: 1100,
+      hostId: 'host-b',
+    );
+
+    expect(RoomService.isRemoteStateNewer(first, null), isTrue);
+    expect(RoomService.isRemoteStateNewer(replay, first), isFalse);
+    expect(RoomService.isRemoteStateNewer(newer, first), isTrue);
+    expect(RoomService.isRemoteStateNewer(lateOldHost, newer), isFalse);
+    expect(RoomService.isRemoteStateNewer(newHost, newer), isTrue);
+  });
 }

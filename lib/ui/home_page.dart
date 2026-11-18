@@ -762,11 +762,15 @@ class _HomePageState extends State<HomePage> {
       _input.clear();
     });
     _syncPlaylistSources();
-    _scroll.animateTo(
-      0,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeOut,
-    );
+    // ListView yeni build edilmeden animateTo() çağrılırsa controller'ın
+    // position'ı olmadığı için assertion fırlıyordu.
+    if (_scroll.hasClients) {
+      _scroll.animateTo(
+        0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
   }
 
   @override
