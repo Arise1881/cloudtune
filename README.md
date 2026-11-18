@@ -51,7 +51,7 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 ### Arama ve keşif
 - **Metin arama** — şarkı, sanatçı ve YouTube bağlantıları; sonuçlar TTL önbellekte tutulur, gereksiz tekrar araması yapılmaz
-- **Yerel Whisper sesli arama** — Google/sistem tanıma servisi kullanılmaz. Mikrofona basıldığında kayıt yapılır, çok dilli Whisper modeli cihazda transkript üretir; ilk kullanımda model indirilir. Mikrofon **yalnızca** bu akışta açılır; uygulama açılışında izin istenmez, kullanıcı dokununca istenir.
+- **Yerel Whisper sesli arama** — Google/sistem tanıma servisi kullanılmaz. Mikrofona basıldığında kayıt yapılır; çok dilli `baseQ5_1` modeli cihazda transkript üretir. Otomatik kazanç, gürültü ve yankı filtreleri açıktır; desteklenmeyen UI dillerinde Whisper dili otomatik algılanır. İlk kullanımda model indirilir. Mikrofon **yalnızca** bu akışta açılır; uygulama açılışında izin istenmez, kullanıcı dokununca istenir.
 - **Sanatçı parçaları** — arama sonuçlarında “Çalma Listeleri ve Şarkılar” başlığı altında sanatçının tüm parçaları ayrı bir çalma listesi olarak listelenir; “Tümünü indir” ve “Kitaplığıma kaydet” aksiyonları vardır
 - **Kişisel ana sayfa** — dinleme geçmişine göre bölümler; içerik kendiliğinden değişmez, zamanlayıcı veya Library bildirimiyle yeniden arama yapılmaz
 - **Pull-to-refresh** — ana sayfa ve arama sonuçları **yalnızca** yukarıdan aşağıya kaydırıldığında yenilenir
@@ -63,8 +63,8 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 - **İndirilenler** — Android `Download/CloudTune`, masaüstü Belgeler klasörü; MIME/itag'e göre doğru uzantı (`.webm`/`.m4a`/`.mp3`), sanatçı ve arama grupları ayrı kartlarda, internet olmadan çalınabilir
 - **Odalar** — oda listesi (ad, kod, kişi sayısı, kilit durumu), şifresiz odaya tek dokunuşla katılım, davet linkinde şifre, uzaktan katılımcı avatarları
 - **Kararlı avatar** — sürümlü dosya adı ve cache key'i; kitaplık/oda avatarı her yeniden çizimde değişmez
-- **Dil** — Ayarlar'dan seçilen dil `MaterialApp.locale` olarak uygulanır; TR/EN tam çeviri, diğer diller EN'ye düşer
-- **18 vurgu rengi**, açık/koyu/sistem teması, OLED siyah zemin
+- **Dil** — Ayarlar'dan 28 dil seçilebilir ve seçim kalıcıdır; bölgesel kodlar (`pt-BR` vb.) ana dile indirgenir. TR/EN tam çeviri, diğer dillerde arayüz EN'ye düşer ve dil seçicisinin altında `English UI` açıkça gösterilir
+- **18 vurgu rengi** kalıcıdır; uygulama kapatılıp açılsa da korunur. Açık/koyu/sistem teması ve OLED siyah zemin de aynı ekranda
 
 ### Bakım ve güncelleme
 - **Uygulama içi güncelleme** — `update.json` manifestini okur, ABI'ye uygun APK'yı indirir
@@ -240,6 +240,18 @@ flutter build ios --release --no-codesign \
   --obfuscate --split-debug-info=build/ios/symbols  # macOS'ta
 flutter build web --release
 ```
+
+### 3.0.41+242 — kullanıcı sorunları ve tam emülatör testi
+
+- **Vurgu rengi:** seçim `ct.accentColor` anahtarında saklanır, açılışta geri yüklenir; profil kartı ve tüm palet anında güncellenir.
+- **Oda:** state artık çaların gerçek kuyruğundan üretilir; parça kimliği bazlı index çözümü, açık `stopped` durumu, `state_request`, host transfer sonrası state yayını ve `play`/`pause` komutları eşzamanlı çalmayı düzeltir. Davet linki `http://cloudtune.app/room/KOD?p=sifre` biçimindedir; http/https/eski custom şemalar ayrıştırılır.
+- **Dil:** 28 kodun tamamı seçilebilir, bölgesel kodlar normalize edilir, seçim hemen yazılır; fallback `English UI` ile belirtilir.
+- **Sesli arama:** `baseQ5_1` Whisper modeli, 16 kHz mono kayıt, AGC/gürültü/yankı filtreleri, desteklenmeyen dilde `auto` algılama ve tek seferlik segment birleştirme.
+- **Radyo:** hata sonrası otomatik sonraki parça, 50 parça üretim sınırının kaldırılması, HEAD yerine Range-GET doğrulama ve yalnızca YouTube host'larına özel header'lar. “Radyo olarak çal” tercih kapalıyken de radyoyu açar.
+- **Oynatıcı:** `just_audio` header proxy'si kapatıldı; 127.0.0.1 cleartext proxy kaynaklı `Source error` giderildi. Genel HTTPS/wss politikası korunuyor.
+- **Doğrulama:** `flutter analyze` 0 issue, `flutter test` 61/61, emülatör tam testi 18/18 (`no_ui_playback_error` dahil), logcat'ta cleartext hatası 0.
+
+Windows/iOS ikili paketleri GitHub billing/spending limiti nedeniyle eski sürümde kaldı; limit düzelince dispatch ile yenilenecek.
 
 ### 3.0.40+241 — platform optimizasyonları
 

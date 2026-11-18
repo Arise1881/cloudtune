@@ -4,8 +4,11 @@ import 'package:flutter/material.dart';
 class ThemeState {
   ThemeState._();
 
+  /// Varsayılan vurgu rengi. Ayarlar listesindeki ilk renkle aynıdır.
+  static const int defaultAccentArgb = 0xFF1DB954;
+
   static final ValueNotifier<Color> accent =
-      ValueNotifier(const Color(0xFF1DB954));
+      ValueNotifier(const Color(defaultAccentArgb));
 
   /// `ThemeMode.system` cihaz parlaklığından çözümlenir; palet buradan okur.
   static final ValueNotifier<Brightness> brightness =

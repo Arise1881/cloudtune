@@ -117,15 +117,17 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
       ));
       return;
     }
+    final isWebRoomLink = uri != null &&
+        (uri.scheme == 'http' || uri.scheme == 'https') &&
+        uri.host.toLowerCase() == 'cloudtune.app' &&
+        uri.pathSegments.isNotEmpty &&
+        uri.pathSegments.first.toLowerCase() == 'room';
     final isRoom = uri != null &&
         ((uri.scheme == 'cloudtune' && uri.host == 'room') ||
-            (uri.scheme == 'https' &&
-                uri.host == 'cloudtune.app' &&
-                uri.pathSegments.isNotEmpty &&
-                uri.pathSegments.first == 'room'));
+            isWebRoomLink);
     if (isRoom) {
       final segments = uri.pathSegments;
-      final code = uri.scheme == 'cloudtune'
+      final code = !isWebRoomLink
           ? (segments.isNotEmpty ? segments.first : '')
           : (segments.length > 1 ? segments[1] : '');
       if (code.isNotEmpty && context.mounted) {

@@ -227,6 +227,7 @@ class RoomService extends ChangeNotifier {
   Timer? _pruneTimer;
   DateTime _lastStatePublish = DateTime.fromMillisecondsSinceEpoch(0);
   bool _applyingRemote = false;
+  Map<String, dynamic>? _pendingRemoteState;
   Completer<bool>? _ackCompleter;
 
   MqttServerClient? _discoveryClient;
@@ -273,16 +274,76 @@ class RoomService extends ChangeNotifier {
   List<Track> get queue => List<Track>.unmodifiable(_queue);
   Map<String, dynamic>? get playback => _playback;
 
-  /// Şifre davet bağlantısında taşınır; kopyalanan metin tek başına yeterli.
+  /// Kullanıcı tarafından kopyalanan http davet bağlantısı. Şifre `?p=`
+  /// parametresinde taşınır; bağlantı tek başına katılım için yeterlidir.
+  /// Eski `cloudtune://` biçimi [parseInvite] tarafından hâlâ kabul edilir.
   String get inviteLink {
     final code = _roomId;
     if (code == null) return '';
-    final base = 'cloudtune://room/$code';
+    final base = 'http://cloudtune.app/room/$code';
     if (!hasPassword) return base;
     return '$base?p=${Uri.encodeComponent(_password)}';
   }
 
   String get roomPassword => _password;
+
+  /// Ev sahibinin gerçek çalar kuyruğunu ve konumunu taşıyan state mesajı.
+  /// Radyo/sıralama kuyruğu ile oda kuyruğunun ayrışması eşzamanlı çalmayı
+  /// bozduğu için kaynak tek noktada üretilir.
+  static Map<String, dynamic> buildStatePayload({
+    required String roomName,
+    required List<Track> tracks,
+    required int index,
+    required int positionMs,
+    required bool playing,
+  }) {
+    final safeIndex =
+        tracks.isEmpty ? 0 : index.clamp(0, tracks.length - 1);
+    final track = tracks.isEmpty ? null : tracks[safeIndex];
+    return <String, dynamic>{
+      'roomName': roomName,
+      'queue': tracks.map((item) => item.toJson()).toList(),
+      'playback': track == null
+          ? <String, dynamic>{
+              'id': '',
+              'index': 0,
+              'positionMs': 0,
+              'playing': false,
+              'stopped': true,
+            }
+          : <String, dynamic>{
+              ...track.toJson(),
+              'index': safeIndex,
+              'positionMs': positionMs,
+              'playing': playing,
+              'stopped': false,
+            },
+    };
+  }
+
+  /// Gelen index yabancı kuyruğa ait olabilir; parça id'si her zaman
+  /// önceliklidir. Böylece sıra/radyo değişince joiner yanlış parçaya atlamaz.
+  static int resolveStateIndex(
+    List<Track> tracks,
+    Map<String, dynamic> playback,
+  ) {
+    if (tracks.isEmpty) return 0;
+    final id = playback['id']?.toString() ?? '';
+    if (id.isNotEmpty) {
+      final found = tracks.indexWhere((track) => track.id == id);
+      if (found >= 0) return found;
+    }
+    final fallback = (playback['index'] as num?)?.toInt() ?? 0;
+    return fallback.clamp(0, tracks.length - 1);
+  }
+
+  static bool _sameQueue(List<Track> local, List<Track> remote) {
+    if (local.length != remote.length) return false;
+    for (var i = 0; i < local.length; i++) {
+      if (local[i].id != remote[i].id) return false;
+    }
+    return true;
+  }
 
   /// Oda kodları büyük harf, boşluksuz ve MQTT topic'i için güvenli olmalı.
   /// Ağdan gelen bozuk kodlar doğrulanmadan topic'e concat edilmesin.
@@ -475,9 +536,7 @@ class RoomService extends ChangeNotifier {
       _publishPresence();
       _pruneMembers();
     });
-    _stateTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (_isHost) _publishState(force: true);
-    });
+    _startStateTimer();
     _publishPresence();
     if (avatar.isNotEmpty) unawaited(uploadAvatar(avatar));
     if (_isHost) _publishState(force: true);
@@ -502,6 +561,10 @@ class RoomService extends ChangeNotifier {
         return RoomJoinResult.failed(message, RoomJoinFailure.notFound);
       }
     }
+
+    // ack host varlığını doğrular; state_request ilk oda durumunu hemen ister.
+    // hello kaybolursa 3 saniyelik periyodik yayını beklemek gerekmez.
+    if (!_isHost) _publish('state_request', const <String, dynamic>{});
 
     _setBusy(false, '');
     return RoomJoinResult.success;
@@ -687,13 +750,25 @@ class RoomService extends ChangeNotifier {
         }
 
       case 'host_transfer':
-        if (payloadMap['memberId'] == remoteId) {
+        // payload.memberId = YENİ host. Eski kod remoteId'yi (eski host'u)
+        // host sanıyordu; transfer sonrası kimse state yayınlamıyordu.
+        final targetId = payloadMap['memberId']?.toString() ?? '';
+        if (targetId.isNotEmpty) {
           for (final entry in _members.entries.toList()) {
             _members[entry.key] =
-                entry.value.copyWith(isHost: entry.key == remoteId);
+                entry.value.copyWith(isHost: entry.key == targetId);
+          }
+          if (targetId == _clientId && !_isHost) {
+            _isHost = true;
+            _pendingRemoteState = null;
+            _startStateTimer();
+            _publishState(force: true);
           }
           notifyListeners();
         }
+
+      case 'state_request':
+        if (_isHost) _publishState(force: true);
 
       case 'state':
         if (payload is Map && !_isHost) {
@@ -741,51 +816,76 @@ class RoomService extends ChangeNotifier {
 
   Future<void> _applyRemoteState(Map<String, dynamic> payload) async {
     final incoming = payload['queue'];
+    List<Track> decoded = const <Track>[];
     if (incoming is List) {
-      final tracks = incoming
+      decoded = incoming
           .whereType<Map>()
           .map((item) => Track.fromJson(Map<String, dynamic>.from(item)))
           .where((track) => track.id.isNotEmpty)
           .toList();
-      if (tracks.isNotEmpty) _queue = List<Track>.unmodifiable(tracks);
+      if (decoded.isNotEmpty) _queue = List<Track>.unmodifiable(decoded);
     }
     final remote = payload['playback'];
-    if (remote is Map) _playback = Map<String, dynamic>.from(remote);
+    final remoteMap =
+        remote is Map ? Map<String, dynamic>.from(remote) : <String, dynamic>{};
+    if (remote is Map) _playback = remoteMap;
     if (payload['roomName'] is String) {
       _roomName = payload['roomName'] as String;
     }
     notifyListeners();
 
-    if (_applyingRemote || !_autoSync || remote is! Map) return;
-    final id = remote['id']?.toString() ?? '';
-    if (id.isEmpty) return;
+    // Önceki uygulama sürüyorsa en yeni durumu kuyruğa al; 3 sn'lik tick'ler
+    // arasında kaybolmasın.
+    if (_applyingRemote) {
+      _pendingRemoteState = payload;
+      return;
+    }
+    if (!_autoSync || _isHost) return;
 
     final player = PlayerController.instance;
+    final stopped = payload['stopped'] == true ||
+        remoteMap['stopped'] == true ||
+        (remoteMap['id']?.toString() ?? '').isEmpty;
+    if (stopped) {
+      // Host durduğunda joiner eski parçayı çalmaya devam etmesin.
+      if (player.playing) await player.pause();
+      _playback = null;
+      notifyListeners();
+      return;
+    }
+
+    final id = remoteMap['id']!.toString();
+    final queue = decoded.isNotEmpty
+        ? decoded
+        : (_queue.isNotEmpty
+            ? _queue
+            : <Track>[Track.fromJson(remoteMap)]);
+    final index = resolveStateIndex(queue, remoteMap);
+
     _applyingRemote = true;
     try {
-      if (player.current?.id != id) {
-        var index = (remote['index'] as num?)?.toInt() ?? 0;
-        if (_queue.isNotEmpty) {
-          index = index.clamp(0, _queue.length - 1);
-        } else {
-          index = 0;
-        }
-        final queue = _queue.isNotEmpty
-            ? _queue
-            : [Track.fromJson(Map<String, dynamic>.from(remote))];
+      if (player.current?.id != id || !_sameQueue(player.tracks, queue)) {
         await player.playQueue(queue, index, radio: false);
       }
-      final positionMs = (remote['positionMs'] as num?)?.toInt();
+      final positionMs = (remoteMap['positionMs'] as num?)?.toInt();
       if (positionMs != null &&
           (player.position.inMilliseconds - positionMs).abs() > 5000) {
         await player.seek(Duration(milliseconds: positionMs));
       }
-      final shouldPlay = remote['playing'] == true;
-      if (shouldPlay != player.playing) await player.toggle();
-    } catch (_) {
-      // Sunucu durumu uygulanamazsa yerel çalma korunur.
+      // toggle() yerine açık komut: backend henüz "playing" olmadan toggling
+      // yanlış yöne gidebiliyordu.
+      if (remoteMap['playing'] == true) {
+        if (!player.playing) await player.play();
+      } else if (player.playing) {
+        await player.pause();
+      }
+    } catch (error) {
+      if (kDebugMode) debugPrint('CT room state apply error: $error');
     } finally {
       _applyingRemote = false;
+      final pending = _pendingRemoteState;
+      _pendingRemoteState = null;
+      if (pending != null) unawaited(_applyRemoteState(pending));
     }
   }
 
@@ -849,6 +949,13 @@ class RoomService extends ChangeNotifier {
     });
   }
 
+  void _startStateTimer() {
+    _stateTimer?.cancel();
+    _stateTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (_isHost) _publishState(force: true);
+    });
+  }
+
   void _publishState({bool force = false}) {
     if (!_isHost) return;
     final now = DateTime.now();
@@ -858,19 +965,18 @@ class RoomService extends ChangeNotifier {
     }
     _lastStatePublish = now;
     final player = PlayerController.instance;
-    final track = player.current;
-    _publish('state', {
-      'roomName': _roomName,
-      'queue': _queue.map((track) => track.toJson()).toList(),
-      'playback': track == null
-          ? null
-          : {
-              ...track.toJson(),
-              'index': player.index,
-              'positionMs': player.position.inMilliseconds,
-              'playing': player.playing,
-            },
-    });
+    // Oda kuyruğu değil, çaların gerçek kuyruğu yayınlanır. Aksi halde
+    // radyo/shuffle sırasında index ve parça birbirinden ayrışıyordu.
+    _publish(
+      'state',
+      buildStatePayload(
+        roomName: _roomName,
+        tracks: player.tracks,
+        index: player.index,
+        positionMs: player.position.inMilliseconds,
+        playing: player.playing,
+      ),
+    );
   }
 
   // ---------------------------------------------------------------------
@@ -1060,6 +1166,8 @@ class RoomService extends ChangeNotifier {
     _memberSeen.clear();
     _queue = const [];
     _playback = null;
+    _pendingRemoteState = null;
+    _applyingRemote = false;
   }
 
   Future<void> leave() async {
@@ -1182,7 +1290,11 @@ class RoomService extends ChangeNotifier {
   }
 
   void setAutoSync(bool value) {
+    final wasOff = !_autoSync;
     _autoSync = value;
+    if (value && wasOff && !_isHost) {
+      _publish('state_request', const <String, dynamic>{});
+    }
     notifyListeners();
   }
 

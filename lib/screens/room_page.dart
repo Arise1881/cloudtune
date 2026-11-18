@@ -320,7 +320,7 @@ class _RoomPageState extends State<RoomPage>
           autofocus: true,
           decoration: const InputDecoration(
             labelText: 'Bağlantı veya oda kodu',
-            hintText: 'cloudtune://room/KOD?p=sifre',
+            hintText: 'http://cloudtune.app/room/KOD?p=sifre',
           ),
         ),
         actions: [

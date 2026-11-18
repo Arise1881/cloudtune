@@ -39,7 +39,6 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = ThemeState.accent.value;
     final s = AppStrings.of(context);
 
     return Scaffold(
@@ -68,7 +67,7 @@ class SettingsScreen extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
             children: [
-              _ProfileCard(accent: accent, s: s),
+              _ProfileCard(s: s),
               const SizedBox(height: 20),
               _SectionCard(
                 icon: Icons.palette_outlined,
@@ -92,7 +91,7 @@ class SettingsScreen extends StatelessWidget {
                           _ColorDot(
                             color: color,
                             selected: ThemeState.value == color,
-                            onTap: () => ThemeState.set(color),
+                            onTap: () => settings.setAccentColor(color),
                           ),
                       ],
                     ),
@@ -204,6 +203,7 @@ class SettingsScreen extends StatelessWidget {
                   _DropdownRow<String>(
                     icon: Icons.translate,
                     title: s.appLanguage,
+                    subtitle: _languageSubtitle(settings.languageCode),
                     value: settings.languageCode,
                     items: [
                       for (final entry
@@ -287,7 +287,7 @@ class SettingsScreen extends StatelessWidget {
                   if (UpdateService.instance.updateAvailable)
                     ListTile(
                       leading: Icon(Icons.download_for_offline_outlined,
-                          color: accent),
+                          color: ThemeState.value),
                       title: Text(s.updateInstall),
                       subtitle: UpdateService.instance.downloading
                           ? LinearProgressIndicator(
@@ -459,6 +459,15 @@ String _qualityLabel(String quality, AppStrings s) => switch (quality) {
       _ => quality,
     };
 
+/// Seçili dil her zaman görünür olsun. Çeviri kapsamı yalnızca Ayarlar
+/// ekranı olduğu için, Türkçe/İngilizce dışındaki dillerde fallback'i açıkça
+/// belirtiriz; kullanıcı seçimin "aktif olmadığını" sanmaz.
+String _languageSubtitle(String code) {
+  final name = SettingsService.supportedLanguages[code] ?? code;
+  if (code == 'tr' || code == 'en') return '$name · $code';
+  return '$name · $code · English UI';
+}
+
 String _eqLabel(String preset, AppStrings s) => switch (preset) {
       'bass' => s.eqBass,
       'treble' => s.eqTreble,
@@ -468,13 +477,15 @@ String _eqLabel(String preset, AppStrings s) => switch (preset) {
     };
 
 class _ProfileCard extends StatelessWidget {
-  const _ProfileCard({required this.accent, required this.s});
+  const _ProfileCard({required this.s});
 
-  final Color accent;
   final AppStrings s;
 
   @override
   Widget build(BuildContext context) {
+    // Accent burada okunur; outer build'de yakalanırsa profil kartı eski
+    // renkte kalıyordu.
+    final accent = ThemeState.value;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -558,6 +569,7 @@ class _DropdownRow<T> extends StatelessWidget {
   const _DropdownRow({
     required this.icon,
     required this.title,
+    this.subtitle,
     required this.value,
     required this.items,
     required this.onChanged,
@@ -565,6 +577,7 @@ class _DropdownRow<T> extends StatelessWidget {
 
   final IconData icon;
   final String title;
+  final String? subtitle;
   final T value;
   final List<DropdownMenuItem<T>> items;
   final ValueChanged<T?> onChanged;
@@ -574,6 +587,7 @@ class _DropdownRow<T> extends StatelessWidget {
     return ListTile(
       leading: Icon(icon),
       title: Text(title),
+      subtitle: subtitle == null ? null : Text(subtitle!),
       trailing: DropdownButtonHideUnderline(
         child: DropdownButton<T>(
           value: value,

@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Uygulamadaki tüm uç noktalar HTTPS/wss; düz metin trafiğe gerek yok. -->
+    <!-- Uygulamadaki akış uç noktaları HTTPS/wss; genel düz metin kapalı. -->
     <base-config cleartextTrafficPermitted="false" />
+    <!-- Yalnızca http davet bağlantısı için istisna. Deep-link dispatch NSC'ye
+         tabi değildir; yine de aynı host üzerinden yapılacak istekler kırılmaz. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">cloudtune.app</domain>
+    </domain-config>
 </network-security-config>

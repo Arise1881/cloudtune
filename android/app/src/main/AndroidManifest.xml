@@ -25,7 +25,6 @@
         android:label="CloudTune"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/network_security_config">
         <activity
             android:name=".MainActivity"
@@ -93,6 +92,15 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="cloudtune" android:host="room"/>
+            </intent-filter>
+            <!-- Kullanıcıya kopyalanan http davet linki:
+                 http://cloudtune.app/room/KOD?p=sifre -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="http" android:host="cloudtune.app"/>
+                <data android:scheme="https" android:host="cloudtune.app"/>
             </intent-filter>
         </activity>
         <!-- Arka plan ses servisi (just_audio_background / audio_service) + Android Auto -->

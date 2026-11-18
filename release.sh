@@ -60,6 +60,8 @@ NEW_VER="$MAJOR.$MINOR.$PATCH"
 NEW_BUILD=$((BUILD+1))
 [[ "$BUMP" == "current" ]] && NEW_BUILD=$BUILD
 NEW_FULL="$NEW_VER+$NEW_BUILD"
+CURRENT_DASH="${CURRENT//+/-}"
+NEW_DASH="${NEW_FULL//+/-}"
 NEW_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 echo "Yeni: $NEW_FULL"
@@ -74,7 +76,9 @@ import sys
 old, new = sys.argv[1], sys.argv[2]
 p = 'README.md'
 s = open(p, encoding='utf-8').read()
-open(p, 'w', encoding='utf-8').write(s.replace(old, new))
+# Yalnızca dosya haritasındaki güncel sürümü değiştir; sayfadaki eski
+# changelog başlıklarını bozma.
+open(p, 'w', encoding='utf-8').write(s.replace(old, new, 1))
 PY
 
 # ─── 3. Analiz ───
@@ -241,13 +245,24 @@ ls -la "$STAGING/"
 
 # ─── 6. update.json güncelle ───
 cd "$DIST"
+
+# Portal ve dağıtım README'sindeki görünen sürüm etiketlerini de taşı.
+python3 - "$CURRENT" "$NEW_FULL" "$CURRENT_DASH" "$NEW_DASH" <<'PY'
+import sys
+old, new, old_dash, new_dash = sys.argv[1:5]
+for name in ('index.html', 'README.md'):
+    s = open(name, encoding='utf-8').read()
+    s = s.replace(old, new).replace(old_dash, new_dash)
+    open(name, 'w', encoding='utf-8').write(s)
+PY
+
 python3 -c "
 import json
 with open('update.json') as f:
     d = json.load(f)
 d['version'] = '$NEW_VER'
 d['versionCode'] = $NEW_BUILD
-d['notes'] = 'Yerel Whisper sesli arama; oda presence/ack ve kişi sayısı düzeltmeleri; Android R8 + kaynak küçültme + HTTPS-only; Linux deb/tar.gz strip, libmpv doğrulama ve masaüstü entegrasyonu; Windows LTCG + runtime DLL; iOS obfuscation. Windows/iOS binary CI ödeme limiti nedeniyle eski.'
+d['notes'] = 'Vurgu rengi kapanıp açılınca korunuyor; oda eşzamanlı çalma ve http davet linki düzeltildi; 28 dil seçilebilir; Whisper base Q5_1 + net kayıt; radyo hata geçişi ve 50 parça sınırı kaldırıldı; just_audio cleartext proxy hatası giderildi. Android/Linux güncel; Windows/iOS CI ödeme limiti nedeniyle eski.'
 d['platforms']['linux'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.deb'
 d['platforms']['linux-targz'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.tar.gz'
 d['platforms']['android-arm64'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-arm64.apk'
@@ -270,7 +285,7 @@ with open(p) as f:
 app = a['apps'][0]
 app['version'] = '$NEW_VER'
 app['versionDate'] = '$NEW_DATE'
-app['versionDescription'] = 'CloudTune $NEW_FULL — R8/strip/LTCG/obfuscation, oda presence/ack ve kişi sayısı düzeltmeleri'
+app['versionDescription'] = 'CloudTune $NEW_FULL — vurgu rengi kalıcılığı, oda eşzamanlı çalma + http davet, 28 dil, Whisper base Q5_1, radyo düzeltmeleri'
 with open(p, 'w') as f:
     json.dump(a, f, indent=2, ensure_ascii=False)
 print(f'apps.json -> {app[\"version\"]} / {app[\"versionDate\"]}')

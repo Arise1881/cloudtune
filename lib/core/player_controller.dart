@@ -171,6 +171,16 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     await _playAt(_index);
   }
 
+  /// "Radyo olarak çal" kullanıcı niyeti: tercih kapalıysa da radyo modunu
+  /// açar. Aksi halde düğme sessizce hiçbir şey yapmıyordu.
+  Future<void> startRadio(List<Track> tracks, int startIndex) async {
+    if (tracks.isEmpty) return;
+    if (!Library.instance.radioEnabled) {
+      await Library.instance.setRadioEnabled(true);
+    }
+    await playQueue(tracks, startIndex, radio: true);
+  }
+
   Future<void> playAt(
     int index, {
     Duration? resumeAt,
@@ -360,15 +370,23 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         code = 'offline';
       }
     } catch (_) {}
+    // Radyo modunda hata "completed" üretmediği için kuyruk duruyordu.
+    // Tekrar ve radyo açıksa sessiz kalmak yerine sonraki parçaya geç.
+    final skipForRadio = _radioUsable &&
+        _repeatMode == RepeatMode.off &&
+        _queue.length > 1 &&
+        !_isStale(transition, generation);
     _loading = false;
-    _error = code;
+    _error = skipForRadio ? null : code;
     unawaited(RepairBot.instance.reportEvent('playback_alternative_failed', {
       'video_id': track.id,
       'blocked': blocked,
       'code': code,
+      'radio_skip': skipForRadio,
     }));
     _broadcast();
     notifyListeners();
+    if (skipForRadio) unawaited(_advance(auto: true));
   }
 
   Future<Uri> _resolveTrack(Track track) async {
@@ -386,16 +404,18 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     await _player.setVolume(1);
     final isYoutube = uri.host.endsWith('googlevideo.com') ||
         uri.host.endsWith('youtube.com');
-    final headers = <String, String>{
-      'User-Agent': 'Mozilla/5.0 (Linux; Android 14) '
-          'AppleWebKit/537.36 (KHTML, like Gecko) '
-          'Chrome/126.0 Mobile Safari/537.36',
-      'Accept': '*/*',
-      'Accept-Encoding': 'identity;q=1, *;q=0',
-    };
+    // Tarayıcı header'ları yalnızca YouTube hostlarına gönderilir. Doğrudan
+    // MP3/CDN adreslerinde bazı sunucular bu header'larla 406/boş yanıt veriyordu.
+    final headers = <String, String>{'Accept': '*/*'};
     if (isYoutube) {
-      headers['Referer'] = 'https://www.youtube.com/';
-      headers['Origin'] = 'https://www.youtube.com/';
+      headers.addAll(<String, String>{
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/126.0 Mobile Safari/537.36',
+        'Accept-Encoding': 'identity;q=1, *;q=0',
+        'Referer': 'https://www.youtube.com/',
+        'Origin': 'https://www.youtube.com/',
+      });
     }
     await _player
         .open(

@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+    show TargetPlatform, debugPrint, defaultTargetPlatform, kIsWeb;
 import 'package:flutter_whisper_ggml/flutter_whisper.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -63,12 +63,17 @@ abstract class SpeechService {
 class WhisperSpeechService implements SpeechService {
   WhisperSpeechService();
 
-  // Çok dilli (İngilizce özel DEĞİL) ve küçük model: Türkçe için gerekli.
-  // Quantize edilmiş Q5_1 ~32 MB; ilk kullanımda indirilir, sonrası diskte cache.
-  static const WhisperModel _model = WhisperModels.tinyQ5_1;
+  // Çok dilli model. tinyQ5_1 (~32 MB) Türkçede kelimeleri sık karıştırıyordu;
+  // baseQ5_1 (~59 MB) belirgin daha net. İlk kullanımda indirilir, sonrası
+  // diskte cache'lenir.
+  static const WhisperModel _model = WhisperModels.baseQ5_1;
   static const _config = WhisperModelConfig(useGpu: false);
 
-  final AudioRecorder _recorder = AudioRecorder();
+  // Platform kanalı oluşturucuda açılıyordu; test/ci ortamında (ve henüz
+  // mikrofon kullanılmayacak oturumlarda) gereksiz MissingPluginException
+  // üretiyordu. İlk gerçek kayıtta açılır.
+  AudioRecorder? _recorderInstance;
+  AudioRecorder get _recorder => _recorderInstance ??= AudioRecorder();
   final StreamController<String> _partialController =
       StreamController<String>.broadcast();
   final StreamController<SpeechStatus> _statusController =
@@ -85,7 +90,7 @@ class WhisperSpeechService implements SpeechService {
   String _languageCode = 'tr';
 
   /// Whisper'ın desteklediği diller. Uygulama dili bunlardan biri değilse
-  /// transkripsiyon İngilizce model diliyle yapılır (arama yine çalışır).
+  /// modele dil dayatılmaz; `auto` ile dil otomatik algılanır.
   static const Set<String> _supportedLanguages = <String>{
     'af', 'am', 'ar', 'as', 'az', 'ba', 'be', 'bg', 'bn', 'bo', 'br', 'bs',
     'ca', 'cs', 'cy', 'da', 'de', 'el', 'en', 'es', 'et', 'eu', 'fa', 'fi',
@@ -98,8 +103,14 @@ class WhisperSpeechService implements SpeechService {
     'yo', 'zh',
   };
 
-  String get _whisperLanguage =>
-      _supportedLanguages.contains(_languageCode) ? _languageCode : 'en';
+  /// Test edilebilir dil eşlemesi. Desteklenmeyen uygulama dillerinde
+  /// İngilizceye düşmek yerine otomatik algılama kullanılır.
+  static String whisperLanguageFor(String locale) {
+    final code = locale.trim().toLowerCase().split('-').first;
+    return _supportedLanguages.contains(code) ? code : 'auto';
+  }
+
+  String get _whisperLanguage => whisperLanguageFor(_languageCode);
 
   @override
   Stream<String> get partialResults => _partialController.stream;
@@ -219,6 +230,11 @@ class WhisperSpeechService implements SpeechService {
           encoder: AudioEncoder.wav,
           sampleRate: 16000,
           numChannels: 1,
+          // Cihaz mikrofonundaki otomatik kazanç/gürültü ve yankı filtreleri
+          //_varsayılan olarak kapalı_; sesli aramanın net algılanması için açık.
+          autoGain: true,
+          noiseSuppress: true,
+          echoCancel: true,
         ),
         path: _wavPath!,
       );
@@ -301,24 +317,44 @@ class WhisperSpeechService implements SpeechService {
     }
 
     _emit(SpeechPhase.transcribing, message: 'Ses metne çevriliyor…');
+    final segments = <String>[];
     try {
       final result = await whisper.transcribeFile(
         input,
-        config: WhisperTranscribeConfig(language: _whisperLanguage, threads: 4),
+        config: WhisperTranscribeConfig(
+          language: _whisperLanguage,
+          threads: 4,
+          // Kısa arama komutlarında tek parça daha tutarlı sonuç verir.
+          singleSegment: true,
+          initialPrompt: _languageCode == 'tr'
+              ? 'Türkçe şarkı, sanatçı ve parça adları.'
+              : 'Song, artist and track names.',
+          noSpeechThreshold: 0.5,
+        ),
         onSegment: (segment) {
           if (_partialController.isClosed) return;
-          _partialController.add(segment.text);
+          final piece = segment.text.trim();
+          if (piece.isEmpty || segments.contains(piece)) return;
+          segments.add(piece);
+          // Segmentler tek kez, birikimli olarak yayınlanır; final metin
+          // aynı içerikse tekrar basılmaz.
+          _partialController.add(segments.join(' '));
         },
       );
       if (!_active(session)) return;
       final text = result.text.trim();
-      if (text.isNotEmpty) {
-        _lastTranscript = text;
-        if (!_partialController.isClosed) _partialController.add(text);
+      final joined = segments.join(' ').trim();
+      final finalText = text.isNotEmpty ? text : joined;
+      if (finalText.isNotEmpty) {
+        _lastTranscript = finalText;
+        if (!_partialController.isClosed && finalText != joined) {
+          _partialController.add(finalText);
+        }
       }
       _emit(SpeechPhase.done);
-    } catch (_) {
+    } catch (error) {
       if (!_active(session)) return;
+      debugPrint('CT speech transcribe error: $error');
       _emit(
         SpeechPhase.error,
         message: 'Ses metne çevrilemedi. Tekrar deneyin.',
@@ -348,7 +384,8 @@ class WhisperSpeechService implements SpeechService {
     _session++;
     _recording = false;
     try {
-      await _recorder.dispose();
+      await _recorderInstance?.dispose();
+      _recorderInstance = null;
     } catch (_) {}
     final whisper = _whisper;
     _whisper = null;

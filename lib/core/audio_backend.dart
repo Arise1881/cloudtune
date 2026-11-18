@@ -69,9 +69,17 @@ class JustAudioBackend implements AudioBackend {
       _player = AudioPlayer(
         audioPipeline: AudioPipeline(androidAudioEffects: [_equalizer!]),
         useLazyPreparation: false,
+        // just_audio varsayılan olarak header'ları 127.0.0.1 üzerinden düz
+        // metin proxy ile gönderir. NSC cleartext'i kapalı olduğu için bu,
+        // her parçada "Source error" üretiyordu. Android ExoPlayer ve iOS
+        // AVPlayer header'ları doğrudan destekliyor; ara proxy gerekmez.
+        useProxyForRequestHeaders: false,
       );
     } else {
-      _player = AudioPlayer(useLazyPreparation: false);
+      _player = AudioPlayer(
+        useLazyPreparation: false,
+        useProxyForRequestHeaders: false,
+      );
     }
 
     _player.playbackEventStream.listen(

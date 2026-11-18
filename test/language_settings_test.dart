@@ -1,4 +1,5 @@
 import 'package:cloudtune/core/settings_service.dart';
+import 'package:cloudtune/core/theme_state.dart';
 import 'package:cloudtune/l10n/app_strings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -102,6 +103,54 @@ void main() {
 
       await SettingsService.instance.setLanguage('tr');
       await tester.pumpAndSettle();
+    });
+  });
+
+  group('kalıcı tercihler', () {
+    test('vurgu rengi kapatıp açınca korunur', () async {
+      const selected = Color(0xFFE91E63);
+      await SettingsService.instance.setAccentColor(selected);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getInt('ct.accentColor'), selected.toARGB32());
+      expect(ThemeState.value, selected);
+
+      await SettingsService.resetForTesting();
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'ct.accentColor': selected.toARGB32(),
+      });
+      await SettingsService.instance.init();
+      expect(SettingsService.instance.accentColor, selected);
+      expect(ThemeState.value, selected);
+    });
+
+    test('28 dilin tamamı seçilebilir ve bölgesel kod normalize edilir',
+        () async {
+      for (final code in SettingsService.supportedLanguages.keys) {
+        await SettingsService.instance.setLanguage(code);
+        expect(SettingsService.instance.languageCode, code);
+      }
+      expect(SettingsService.supportedLanguages.length, 28);
+
+      await SettingsService.instance.setLanguage('pt-BR');
+      expect(SettingsService.instance.languageCode, 'pt');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('ct.language'), 'pt');
+
+      await SettingsService.resetForTesting();
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'ct.language': 'de-DE',
+      });
+      await SettingsService.instance.init();
+      expect(SettingsService.instance.languageCode, 'de');
+    });
+
+    test('bozuk kayıtlı dil kodu güvenli varsayılana düşer', () async {
+      await SettingsService.resetForTesting();
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'ct.language': 'xx',
+      });
+      await SettingsService.instance.init();
+      expect(SettingsService.instance.languageCode, 'tr');
     });
   });
 }

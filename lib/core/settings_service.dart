@@ -17,6 +17,7 @@ class SettingsService extends ChangeNotifier {
   String _equalizerPreset = 'normal';
   bool _oledBlack = false;
   ThemeMode _themeMode = ThemeMode.dark;
+  Color _accentColor = const Color(ThemeState.defaultAccentArgb);
   String _languageCode = 'tr';
 
   bool get ready => _ready;
@@ -25,15 +26,30 @@ class SettingsService extends ChangeNotifier {
   String get equalizerPreset => _equalizerPreset;
   bool get oledBlack => _oledBlack;
   ThemeMode get themeMode => _themeMode;
+  Color get accentColor => _accentColor;
   String get languageCode => _languageCode;
 
   /// `MaterialApp.locale` için kullanılan değer. Dil değişince
   /// `notifyListeners()` ile birlikte yeniden kurulur.
   Locale get locale => Locale(_languageCode);
 
+  /// Bölgesel kodları (`pt-BR`, `zh_CN`) ana dile indirger. Desteklenmeyen
+  /// kodlar için null döner; böylece `xx` sessizce Türkçe olmaz.
+  static String? canonicalLanguageCode(String raw) {
+    final cleaned = raw.trim().toLowerCase().replaceAll('_', '-');
+    if (cleaned.isEmpty) return null;
+    final base = cleaned.split('-').first;
+    final mapped = switch (base) {
+      'iw' => 'he',
+      'in' => 'id',
+      _ => base,
+    };
+    return supportedLanguages.containsKey(mapped) ? mapped : null;
+  }
+
   /// Kaydedilmiş kod desteklenmiyorsa varsayılan Türkçeye düşür.
   bool isSupportedLanguage(String code) =>
-      supportedLanguages.containsKey(code);
+      canonicalLanguageCode(code) != null;
 
   static const List<String> audioQualities = [
     'low',
@@ -91,14 +107,21 @@ class SettingsService extends ChangeNotifier {
       _equalizerPreset = prefs.getString('ct.equalizerPreset') ?? 'normal';
       _oledBlack = prefs.getBool('ct.oledBlack') ?? false;
       _themeMode = _decodeThemeMode(prefs.getString('ct.themeMode'));
+      final storedAccent = prefs.getInt('ct.accentColor');
+      _accentColor = (storedAccent != null &&
+              storedAccent >= 0 &&
+              storedAccent <= 0xFFFFFFFF)
+          ? Color(storedAccent)
+          : const Color(ThemeState.defaultAccentArgb);
+      ThemeState.set(_accentColor);
       final storedLanguage = prefs.getString('ct.language');
       // Bozuk/artık desteklenmeyen kod uygulamayı kilitlemesin.
-      _languageCode = (storedLanguage != null &&
-              isSupportedLanguage(storedLanguage))
-          ? storedLanguage
-          : 'tr';
+      _languageCode = canonicalLanguageCode(storedLanguage ?? '') ?? 'tr';
     } catch (_) {
       // Unreadable storage: keep defaults and continue normally.
+      _accentColor = const Color(ThemeState.defaultAccentArgb);
+      ThemeState.set(_accentColor);
+      _languageCode = 'tr';
     }
     _ready = true;
     ThemeState.applyThemeMode(_themeMode);
@@ -120,6 +143,12 @@ class SettingsService extends ChangeNotifier {
   Future<void> _saveBool(String key, bool value) async {
     try {
       await _prefs?.setBool(key, value);
+    } catch (_) {}
+  }
+
+  Future<void> _saveInt(String key, int value) async {
+    try {
+      await _prefs?.setInt(key, value);
     } catch (_) {}
   }
 
@@ -154,12 +183,40 @@ class SettingsService extends ChangeNotifier {
     await _saveString('ct.themeMode', value.name);
   }
 
-  Future<void> setLanguage(String code) async {
-    // Yalnızca desteklenen kodlar kabul edilir; aynı dil tekrar bildirim
-    // üretmez (gereksiz yeniden kurulum olmasın).
-    if (!isSupportedLanguage(code) || _languageCode == code) return;
-    _languageCode = code;
+  /// Vurgu rengi hem bellek içi temaya hem cihaz depolamasına yazılır.
+  Future<void> setAccentColor(Color color) async {
+    _accentColor = color;
+    ThemeState.set(color);
     notifyListeners();
-    await _saveString('ct.language', code);
+    await _saveInt('ct.accentColor', color.toARGB32());
+  }
+
+  Future<void> setLanguage(String code) async {
+    // Bölgesel kodlar ana dile indirgenir; gerçekten desteklenmeyen kodlar
+    // reddedilir. Aynı kod seçilse bile prefs'e tekrar yazılır: kullanıcı
+    // hemen uygulamayı kapatırsa seçim kaybolmasın.
+    final canonical = canonicalLanguageCode(code);
+    if (canonical == null) return;
+    final changed = _languageCode != canonical;
+    _languageCode = canonical;
+    if (changed) notifyListeners();
+    await _saveString('ct.language', canonical);
+  }
+
+  /// Testlerde singleton'u sıfırlayıp yeni mock prefs ile yeniden init etmek
+  /// için. Üretim kodu çağırmaz.
+  @visibleForTesting
+  static Future<void> resetForTesting() async {
+    final service = instance;
+    service._ready = false;
+    service._prefs = null;
+    service._audioQuality = 'high';
+    service._equalizerEnabled = false;
+    service._equalizerPreset = 'normal';
+    service._oledBlack = false;
+    service._themeMode = ThemeMode.dark;
+    service._accentColor = const Color(ThemeState.defaultAccentArgb);
+    ThemeState.set(service._accentColor);
+    service._languageCode = 'tr';
   }
 }

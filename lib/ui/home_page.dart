@@ -1151,11 +1151,7 @@ class _HomePageState extends State<HomePage> {
       trailing: IconButton(
         icon: const Icon(Icons.radio),
         tooltip: 'Radyo olarak çal',
-        onPressed: () => PlayerController.instance.playQueue(
-          queue,
-          index,
-          radio: true,
-        ),
+        onPressed: () => PlayerController.instance.startRadio(queue, index),
       ),
       onTap: () => PlayerController.instance.playQueue(queue, index),
     );

@@ -69,7 +69,6 @@ class YoutubeService {
 
   static const int _maxSearchResults = 50;
   static const int _maxSearchEntries = 40;
-  static const int _maxRadioTracks = 50;
 
   /// Sırayla denen herkese açık Invidious örnekleri.
   static const List<String> _invBases = [
@@ -85,8 +84,6 @@ class YoutubeService {
   final Map<String, String> _playability = {};
   final Map<String, _CachedSearch> _searchCache = {};
   final Map<String, List<Track>> _relatedCache = {};
-  final Set<String> _issuedRelatedIds = <String>{};
-
   /// Null ise SettingsService değeri kullanılır; aksi halde kullanıcı
   /// [setQuality] ile servis seviyesinde kaliteyi değiştirmiştir.
   String? _qualityOverride;
@@ -451,23 +448,10 @@ class YoutubeService {
         _relatedCache.remove(_relatedCache.keys.first);
       }
 
-      // Radyo kuyruğu büyümesini sınırla: oturum başına en fazla 50 yeni
-      // ilgili parça. Sonrasında yalnızca daha önce verilmiş parçalar döner;
-      // çalar bunları kendi kuyruğunda zaten bulunduğu için eklemez.
-      final room = _maxRadioTracks - _issuedRelatedIds.length;
-      if (room <= 0) {
-        return collected
-            .where((track) => _issuedRelatedIds.contains(track.id))
-            .take(limit)
-            .toList();
-      }
-      final fresh = collected
-          .where((track) => !_issuedRelatedIds.contains(track.id))
-          .take(limit < room ? limit : room)
-          .toList();
-      if (fresh.isEmpty) return collected.take(limit).toList();
-      _issuedRelatedIds.addAll(fresh.map((track) => track.id));
-      return fresh;
+      // Oturum başına 50 parça sınırı radyoyu susturuyordu. Tekrar eden
+      // parçaları çalar kendi kuyruğunda zaten ayıklıyor; burada tüm sonuçlar
+      // döndürülür, böylece her yeni tohum parça kuyruğu büyütmeye devam eder.
+      return collected.take(limit).toList();
     } catch (_) {
       return const <Track>[];
     }
@@ -674,11 +658,20 @@ class YoutubeService {
     _uriCheckedAt[id] = DateTime.now();
   }
 
-  /// İmzalı URI'nin hâlâ geçerli olup olmadığını HEAD ile kontrol eder.
-  /// Ağ hatası gibi belirsiz durumlarda mevcut URI korunur.
+  /// İmzalı URI'nin hâlâ geçerli olup olmadığını kontrol eder.
+  ///
+  /// YouTube imzalı googlevideo adresleri HEAD isteğine sık sık 403 döndürür;
+  /// bu yüzden doğrulamayı atlarız, TTL zaten yeniden çözümü garanti eder.
+  /// Diğer hostlarda 1 baytlık Range-GET, HEAD'den daha güvenilirdir.
   Future<bool> _isUriUsable(Uri uri) async {
+    if (uri.host.endsWith('googlevideo.com')) return true;
     try {
-      final response = await http.head(uri).timeout(_requestTimeout);
+      final response = await http
+          .get(
+            uri,
+            headers: const <String, String>{'Range': 'bytes=0-0'},
+          )
+          .timeout(_requestTimeout);
       return !_staleUriStatuses.contains(response.statusCode);
     } catch (_) {
       return true;
