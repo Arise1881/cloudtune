@@ -18,12 +18,6 @@ mkdir -p "$TMP_ROOT"
 PROJECT="${CT_PROJECT_DIR:-$SCRIPT_DIR}"
 DIST="${CT_DIST_DIR:-$TMP_ROOT/cloudtune-dist}"
 STAGING="${CT_STAGING_DIR:-$TMP_ROOT/cloudtune-release}"
-if [[ ! -d "$DIST/.git" ]]; then
-  echo "Dağıtım reposu klonlanıyor: $DIST"
-  # Token remote config'e yazılmaz; yalnızca bu komut için başlıkta tutulur.
-  git -c http.extraheader="AUTHORIZATION: bearer $GH_TOKEN" clone \
-    https://github.com/Arise1881/cloudtune-dist.git "$DIST"
-fi
 # Token sürüm kontrolünde saklanmaz; ortam değişkeninden veya yerel dosyadan okunur.
 GH_TOKEN="${GH_TOKEN:-}"
 if [[ -z "$GH_TOKEN" && -f "$HOME/.config/cloudtune-gh-token" ]]; then
@@ -32,6 +26,14 @@ fi
 if [[ -z "$GH_TOKEN" ]]; then
   echo "GH_TOKEN gerekli (ortam değişkeni veya ~/.config/cloudtune-gh-token)"
   exit 1
+fi
+# Token yalnızca bu komutların URL'sinde tutulur; remote config'e yazılmaz.
+ct_repo_url() {
+  printf 'https://x-access-token:%s@github.com/%s' "$GH_TOKEN" "$1"
+}
+if [[ ! -d "$DIST/.git" ]]; then
+  echo "Dağıtım reposu klonlanıyor: $DIST"
+  git clone "$(ct_repo_url Arise1881/cloudtune-dist.git)" "$DIST"
 fi
 RELEASE_TAG="cloudtune-latest"
 
@@ -367,8 +369,7 @@ echo "── Push ──"
 git add update.json apps.json index.html README.md
 git -c user.name="Arise1881" -c user.email="arise1881@users.noreply.github.com" \
   commit -m "v$NEW_FULL: $BUMP bump, Pages manifest URL, release guncellemesi" 2>&1 | tail -1
-git -c http.extraheader="AUTHORIZATION: bearer $GH_TOKEN" \
-  push https://github.com/Arise1881/cloudtune-dist.git main 2>&1 | tail -1
+git push "$(ct_repo_url Arise1881/cloudtune-dist.git)" main 2>&1 | tail -1
 
 # ─── 8b. Kaynak repoyu push et (CI aynı sürümü derlesin) ───
 cd "$PROJECT"
@@ -377,8 +378,7 @@ cd "$PROJECT"
 git add pubspec.yaml README.md
 git -c user.name="Arise1881" -c user.email="arise1881@users.noreply.github.com" \
   commit -m "chore: surum $NEW_FULL - tam yeniden yazim" 2>&1 | tail -1 || true
-git -c http.extraheader="AUTHORIZATION: bearer $GH_TOKEN" \
-  push https://github.com/Arise1881/cloudtune.git HEAD 2>&1 | tail -1
+git push "$(ct_repo_url Arise1881/cloudtune.git)" HEAD 2>&1 | tail -1
 
 # ─── 8c. iOS + Windows CI derlemelerini tetikle ───
 echo "── iOS + Windows derlemelerini tetikle ──"
