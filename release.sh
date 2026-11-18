@@ -120,11 +120,16 @@ if [[ -n "$LIBMPV" ]]; then
   mkdir -p build/linux/x64/release/bundle/lib
   cp -L "$LIBMPV" build/linux/x64/release/bundle/lib/libmpv.so.2
   ln -sfn libmpv.so.2 build/linux/x64/release/bundle/lib/libmpv.so
-  # Kütüphane eksikse bozuk paket üretme; derlemeyi durdur.
-  ldd build/linux/x64/release/bundle/cloudtune | grep -q 'libmpv.so.2' || {
-    echo "HATA: libmpv.so.2 bundle RUNPATH üzerinden çözümlenemedi."
+  # media_kit libmpv'yi dlopen ile yükler; ana binary'nin ldd çıktısında
+  # görünmez. Bundle içindeki kütüphanenin kendisini ve bağımlılıklarını
+  # doğrula, böylece bozuk tarball üretilmez.
+  MPV_LIB="build/linux/x64/release/bundle/lib/libmpv.so.2"
+  [[ -f "$MPV_LIB" ]] || { echo "HATA: $MPV_LIB bulunamadı."; exit 1; }
+  if ldd "$MPV_LIB" | grep -q 'not found'; then
+    echo "HATA: libmpv.so.2 bağımlılıkları eksik."
+    ldd "$MPV_LIB"
     exit 1
-  }
+  fi
   echo "libmpv bundle'a eklendi: $LIBMPV"
 else
   echo "HATA: libmpv.so.2 bulunamadı; Linux paketi üretilemez."
