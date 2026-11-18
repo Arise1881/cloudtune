@@ -251,9 +251,14 @@ python3 - "$CURRENT" "$NEW_FULL" "$CURRENT_DASH" "$NEW_DASH" <<'PY'
 import sys
 old, new, old_dash, new_dash = sys.argv[1:5]
 for name in ('index.html', 'README.md'):
-    s = open(name, encoding='utf-8').read()
-    s = s.replace(old, new).replace(old_dash, new_dash)
-    open(name, 'w', encoding='utf-8').write(s)
+    out = []
+    for line in open(name, encoding='utf-8'):
+        # Changelog başlıkları geçmiş sürümü anlatır; onları yeniden yazma.
+        if line.startswith('### '):
+            out.append(line)
+        else:
+            out.append(line.replace(old, new).replace(old_dash, new_dash))
+    open(name, 'w', encoding='utf-8').writelines(out)
 PY
 
 python3 -c "
