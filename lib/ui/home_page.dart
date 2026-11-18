@@ -889,7 +889,7 @@ class _HomePageState extends State<HomePage> {
                     focusNode: _searchFocus,
                     textInputAction: TextInputAction.search,
                     style: const TextStyle(color: Colors.white),
-                    cursorColor: SearchUi.titleBlue,
+                    cursorColor: SearchUi.titleAccent,
                     onSubmitted: _submit,
                     onChanged: (value) {
                       if (value.isEmpty && _results != null) _clearSearch();
@@ -937,7 +937,7 @@ class _HomePageState extends State<HomePage> {
                       child: Icon(
                         _listening ? Icons.stop_circle : Icons.mic,
                         color: _listening
-                            ? SearchUi.titleBlue
+                            ? SearchUi.titleAccent
                             : Colors.white70,
                       ),
                     ),
@@ -952,7 +952,7 @@ class _HomePageState extends State<HomePage> {
               padding: const EdgeInsets.only(top: 6),
               child: Text(
                 _voiceStatus,
-                style: TextStyle(fontSize: 12, color: SearchUi.titleBlue),
+                style: TextStyle(fontSize: 12, color: SearchUi.titleAccent),
               ),
             ),
           if (_showHistory && Library.instance.searchHistory.isNotEmpty)
@@ -1216,7 +1216,7 @@ class _HomePageState extends State<HomePage> {
         ),
         for (final meta in metas.take(8))
           ListTile(
-            leading: Icon(Icons.queue_music, color: SearchUi.titleBlue),
+            leading: Icon(Icons.queue_music, color: SearchUi.titleAccent),
             title: Text(
               meta.name,
               maxLines: 1,
@@ -1279,7 +1279,7 @@ class _HomePageState extends State<HomePage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Icon(Icons.radio,
-                              color: SearchUi.titleBlue, size: 26),
+                              color: SearchUi.titleAccent, size: 26),
                           const SizedBox(height: 10),
                           Text(
                             seed.artist,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:cloudtune/core/models.dart';
+import 'package:cloudtune/core/theme_state.dart';
 import 'package:cloudtune/ui/search_ui.dart';
 
 void _noop(int _) {}
@@ -17,6 +18,17 @@ void main() {
       );
       expect(SearchUi.durationLabel(const Duration(minutes: 5, seconds: 3)),
           '05:03');
+    });
+
+    test('arama renkleri vurgu rengini izler', () {
+      final previous = ThemeState.value;
+      addTearDown(() => ThemeState.set(previous));
+      ThemeState.set(Colors.red);
+      expect(SearchUi.titleAccent, Colors.red);
+      expect(SearchUi.activeAccent, Colors.red);
+      ThemeState.set(Colors.orange);
+      expect(SearchUi.titleAccent, Colors.orange);
+      expect(SearchUi.activeAccent, Colors.orange);
     });
 
     test('sanatçı kartları tekil ve sıralı', () {
@@ -53,7 +65,7 @@ void main() {
     );
 
     final title = tester.widget<Text>(find.text('Ara'));
-    expect(title.style?.color, SearchUi.titleBlue);
+    expect(title.style?.color, SearchUi.titleAccent);
     expect(find.text('Home'), findsOneWidget);
     expect(find.text('Search'), findsOneWidget);
     expect(find.text('Library'), findsOneWidget);

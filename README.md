@@ -247,7 +247,9 @@ flutter build web --release
 - **Artists:** tekil sanatçılar yuvarlak avatar, `Sanatçı` alt metni ve `>` ile yatay listede; dokununca sanatçı sayfasına gider.
 - **Parçalar:** kare kapak, sol alt süre rozeti (`00:34`, `1:00:14`), taşan başlıkta `...`, sanatçı alt metni ve dikey 3 nokta menü. Menüde çal, radyo, beğeni, indirme, sanatçı ve çalma listesine ekleme bulunur.
 - **Çalma Listeleri / Radyolar:** arama ekranından kayıtlı listeler çalınabilir, sanatçı kartlarından radyo başlatılabilir; alt nav Home / **Search** / Library / Settings (aktif Search mavi oval).
-- Doğrulama: `flutter analyze` 0 issue, `flutter test` 64/64, UI sözleşme testi eklendi.
+- **Library korundu:** Library sekmesi mevcut `MyPlaylistsPage`'i açar; üstteki ikonlardan indirilenler, beğeniler, dinleme geçmişi ve profil (`RoomPage` kitaplık sekmesi) erişilebilir. Veri modeli ve kayıt anahtarları değişmedi.
+- **Vurgu rengi:** arama başlığı, bölüm ikonları, aktif Search ovali, mikrofon ve beğeni simgeleri `ThemeState.value`'dan okunur; seçilen renk kapanıp açılsa da arama dahil tüm UI aynı renkte kalır.
+- Doğrulama: `flutter analyze` 0 issue, `flutter test` 65/65, UI sözleşme testi eklendi.
 
 ### 3.0.41+242 — kullanıcı sorunları ve tam emülatör testi
 

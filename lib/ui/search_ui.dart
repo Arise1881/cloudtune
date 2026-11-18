@@ -3,16 +3,18 @@ import 'package:flutter/material.dart';
 
 import '../core/app_palette.dart';
 import '../core/models.dart';
+import '../core/theme_state.dart';
 
 /// Müsify benzeri arama ekranının sabitleri ve saf yardımcıları.
 class SearchUi {
   const SearchUi._();
 
-  /// "Ara" başlığı ve bölüm ikonları için açık mavi.
-  static const Color titleBlue = Color(0xFF4FC3F7);
+  /// "Ara" başlığı ve bölüm ikonları. Kullanıcı vurgu rengini değiştirdiğinde
+  /// arama ekranı da aynı renge geçer; varsayılan açık mavi temadır.
+  static Color get titleAccent => ThemeState.value;
 
-  /// Aktif alt menü ovalli için mavi.
-  static const Color activeBlue = Color(0xFF2196F3);
+  /// Aktif alt menü ovali de aynı vurgu rengini kullanır.
+  static Color get activeAccent => ThemeState.value;
 
   /// Koyu gri yuvarlatılmış arama çubuğu.
   static const Color fieldFill = Color(0xFF242424);
@@ -71,8 +73,8 @@ class SearchTitle extends StatelessWidget {
         child: Text(
           title,
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: SearchUi.titleBlue,
+          style: TextStyle(
+            color: SearchUi.titleAccent,
             fontSize: 24,
             fontWeight: FontWeight.w800,
           ),
@@ -106,7 +108,7 @@ class SearchSectionTitle extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 12, 8, 6),
       child: Row(
         children: [
-          Icon(icon, color: SearchUi.titleBlue, size: 20),
+          Icon(icon, color: SearchUi.titleAccent, size: 20),
           const SizedBox(width: 8),
           Text(
             title,
@@ -127,20 +129,20 @@ class SearchSectionTitle extends StatelessWidget {
           if (onPlayAll != null)
             IconButton(
               tooltip: 'Tümünü çal',
-              icon: Icon(Icons.play_circle_fill, color: SearchUi.titleBlue),
+              icon: Icon(Icons.play_circle_fill, color: SearchUi.titleAccent),
               onPressed: onPlayAll,
             ),
           if (onSave != null)
             IconButton(
               tooltip: 'Listeyi kaydet',
-              icon: Icon(Icons.playlist_add, color: SearchUi.titleBlue),
+              icon: Icon(Icons.playlist_add, color: SearchUi.titleAccent),
               onPressed: onSave,
             ),
           if (onDownload != null)
             IconButton(
               tooltip: 'Tümünü indir',
               icon: Icon(Icons.download_for_offline,
-                  color: SearchUi.titleBlue),
+                  color: SearchUi.titleAccent),
               onPressed: onDownload,
             ),
         ],
@@ -297,7 +299,7 @@ class SearchTrackCard extends StatelessWidget {
               ),
             ),
             if (liked)
-              Icon(Icons.favorite, size: 16, color: SearchUi.titleBlue),
+              Icon(Icons.favorite, size: 16, color: SearchUi.titleAccent),
             PopupMenuButton<String>(
               tooltip: 'Parça menüsü',
               icon: const Icon(Icons.more_vert),
@@ -377,7 +379,7 @@ class SearchNavBar extends StatelessWidget {
                     vertical: 3,
                   ),
                   decoration: BoxDecoration(
-                    color: SearchUi.activeBlue,
+                    color: SearchUi.activeAccent,
                     borderRadius: BorderRadius.circular(18),
                   ),
                   child:
@@ -392,7 +394,7 @@ class SearchNavBar extends StatelessWidget {
               Text(
                 label,
                 style: TextStyle(
-                  color: active ? SearchUi.activeBlue : AppPalette.iconSubtle,
+                  color: active ? SearchUi.activeAccent : AppPalette.iconSubtle,
                   fontSize: 10,
                   fontWeight: active ? FontWeight.w800 : FontWeight.w500,
                 ),

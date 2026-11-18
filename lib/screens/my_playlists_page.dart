@@ -6,7 +6,9 @@ import '../core/library.dart';
 import '../core/models.dart';
 import '../core/player_controller.dart';
 import '../core/theme_state.dart';
+import 'downloads_page.dart';
 import 'playlist_editor_page.dart';
+import 'room_page.dart';
 
 /// Kullanıcının cihazında sakladığı yerel çalma listeleri.
 class MyPlaylistsPage extends StatefulWidget {
@@ -48,6 +50,22 @@ class _MyPlaylistsPageState extends State<MyPlaylistsPage> {
             tooltip: 'Yeni çalma listesi',
             icon: const Icon(Icons.add),
             onPressed: _createPlaylist,
+          ),
+          IconButton(
+            tooltip: 'İndirilenler',
+            icon: const Icon(Icons.download),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const DownloadsPage()),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Beğeniler, geçmiş ve profil',
+            icon: const Icon(Icons.favorite_border),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const RoomPage(initialTab: 1),
+              ),
+            ),
           ),
           IconButton(
             tooltip: 'Ana sayfa',
