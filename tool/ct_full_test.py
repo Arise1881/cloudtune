@@ -460,6 +460,9 @@ def main() -> int:
                 fallback=(int(width * 0.42), int(height * 0.105)),
             )
             tap(target)
+            # Ana sayfadaki arama ikonu Search sekmesine geçip alanı odaklar;
+            # TextField'ın ağaçta oluşması için bir kare beklenir.
+            time.sleep(action_delay)
             adb(
                 args.serial,
                 "shell",

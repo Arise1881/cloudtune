@@ -23,10 +23,15 @@ void main() {
     expect(library.artistPlaylists, isA<List<PlaylistMeta>>());
     expect(library.avatarVersion, isA<int>());
 
+    // Temiz kurulum varsayılanı: işaretçi yazılır, sonsuz radyo açık gelir.
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool('ct.fresh_defaults_v1'), isTrue);
+    expect(prefs.getBool('ct.radio'), isTrue);
+    expect(library.radioEnabled, isTrue);
+
     await library.setRepeatMode(1);
     expect(library.repeatMode, 1);
     // PlayerController ile aynı anahtar: çift kaynak oluşmasın.
-    final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('ct.repeatMode'), 'all');
   });
 

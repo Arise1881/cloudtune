@@ -20,11 +20,34 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 ---
 
+## Ekran görüntüleri
+
+Cihaz üzerinden alınmış güncel görünümler. Büyütmek için görsele tıklayın.
+
+<p align="center">
+  <a href="docs/screenshots/device-01.png"><img src="docs/screenshots/device-01.png" width="24%" alt="CloudTune ekran görüntüsü 1"></a>
+  <a href="docs/screenshots/device-02.png"><img src="docs/screenshots/device-02.png" width="24%" alt="CloudTune ekran görüntüsü 2"></a>
+  <a href="docs/screenshots/device-03.png"><img src="docs/screenshots/device-03.png" width="24%" alt="CloudTune ekran görüntüsü 3"></a>
+  <a href="docs/screenshots/device-04.png"><img src="docs/screenshots/device-04.png" width="24%" alt="CloudTune ekran görüntüsü 4"></a>
+</p>
+
+<details>
+<summary>Tam boyut bağlantılar</summary>
+
+1. [Ekran görüntüsü 1](docs/screenshots/device-01.png)
+2. [Ekran görüntüsü 2](docs/screenshots/device-02.png)
+3. [Ekran görüntüsü 3](docs/screenshots/device-03.png)
+4. [Ekran görüntüsü 4](docs/screenshots/device-04.png)
+
+</details>
+
+---
+
 ## İlk kurulum (yeni kullanıcı)
 
 1. [Son sürüm](https://github.com/Arise1881/cloudtune-dist/releases/tag/cloudtune-latest) sayfasından platformunuza uygun dosyayı indirin.
 2. Android 7.0+ gerekir. **Bilinmeyen kaynaklardan yükleme** iznini verin (Ayarlar → Güvenlik). Paket imzalı olduğu için Google Play koruması uyarı verebilir; devam edin.
-3. APK'yı kurun ve uygulamayı açın.
+3. APK'yı kurun ve uygulamayı açın. Uygulama doğrudan **ana sayfa** ile açılır; **sonsuz radyo** varsayılan olarak açıktır.
 4. İlk açılışta izinler:
    - **Bildirimler** — arka plan çalma ve kilit ekranı kontrolleri için,
    - **Mikrofon** — uygulama açılışta **istemez**; sesli arama düğmesine bastığınızda ister ve yalnızca kayıt süresince aktif kalır,
@@ -240,6 +263,13 @@ flutter build ios --release --no-codesign \
   --obfuscate --split-debug-info=build/ios/symbols  # macOS'ta
 flutter build web --release
 ```
+
+### 3.0.44+245 — temiz kurulum varsayılanları ve ekran galerisi
+
+- **Ana sayfa açılışı:** uygulama artık arama sekmesi yerine doğrudan ana sayfa ile başlar; aramaya üstteki büyüteçten veya alt nav’dan geçilir.
+- **Sonsuz radyo:** ilk kurulumda açık gelir. Sürüm yükseltmesinde tek seferlik varsayılan uygulanır, sonraki açılışlarda kullanıcı tercihi korunur; beğeni/geçmiş/çalma listeleri sıfırlanmaz.
+- **README:** cihazdan alınmış dört ekran görüntüsü `docs/screenshots/` altına eklendi ve galeri olarak gösteriliyor.
+- Doğrulama: `flutter analyze` 0 issue, `flutter test` 66/66, emülatör tam testi 18/18.
 
 ### 3.0.43+244 — iki cihazlı oda senkronu
 

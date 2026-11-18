@@ -65,6 +65,10 @@ class Library extends ChangeNotifier {
   static const int _historyLimit = 60;
   static const int _searchHistoryLimit = 50;
 
+  /// İlk kurulum/yükseltmede uygulanacak temiz kurulum varsayılanları.
+  /// Kullanıcı verisi (beğeni, geçmiş, liste) asla sıfırlanmaz.
+  static const String _freshDefaultsKey = 'ct.fresh_defaults_v1';
+
   SharedPreferences? _prefs;
 
   final List<Track> _history = [];
@@ -181,6 +185,12 @@ class Library extends ChangeNotifier {
 
       _linkHandlerEnabled = prefs.getBool('ct.linkHandler') ?? true;
       _downloadToDevice = prefs.getBool('ct.download') ?? true;
+      // Yeni kurulumda (veya bu varsayının ilk uygulandığı yükseltmede)
+      // sonsuz radyo açık gelir. Sonraki açılışlarda kullanıcı tercihi korunur.
+      if (prefs.getBool(_freshDefaultsKey) != true) {
+        await prefs.setBool('ct.radio', true);
+        await prefs.setBool(_freshDefaultsKey, true);
+      }
       _radioEnabled = prefs.getBool('ct.radio') ?? true;
 
       _restoreMetas(prefs.getString('ct.playlist_metas'));

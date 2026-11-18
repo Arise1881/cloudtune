@@ -65,7 +65,8 @@ class _HomePageState extends State<HomePage> {
   bool _busy = false;
   bool _listening = false;
   bool _showHistory = false;
-  int _tab = SearchNavBar.search;
+  // Temiz kurulum deneyimi: uygulama açılınca doğrudan ana sayfa görünür.
+  int _tab = SearchNavBar.home;
   bool _prefetched = false;
   bool _speechReady = false;
   bool _speechBusy = false;
@@ -845,6 +846,11 @@ class _HomePageState extends State<HomePage> {
                 ?.copyWith(fontWeight: FontWeight.w800),
           ),
           const Spacer(),
+          IconButton(
+            tooltip: 'Şarkı ara',
+            icon: const Icon(Icons.search),
+            onPressed: () => _onNavTap(SearchNavBar.search),
+          ),
           IconButton(
             tooltip: 'Odalar',
             icon: const Icon(Icons.groups_outlined),
