@@ -132,7 +132,7 @@ Loglar yalnızca cihazda `repair_bot_logs.json` dosyasına yazılır; e-posta ve
 ```
 README.md                  Bu dosya: özellikler, kurulum, uyum, güncelleme, gizlilik
 LICENSE                    MIT lisans
-pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.45+246)
+pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.46+247)
 analysis_options.yaml      Dart/Flutter linter kuralları
 .metadata                  Flutter proje metadata
 release.sh                 Build → analyze/test → artifact → GitHub release → push
