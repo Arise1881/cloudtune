@@ -186,7 +186,7 @@ with open('update.json') as f:
     d = json.load(f)
 d['version'] = '$NEW_VER'
 d['versionCode'] = $NEW_BUILD
-d['notes'] = 'Yerel Whisper sesli arama; tekrar/karistik calma ve ses kalitesi; sanatci parcalarini indirme/kaydetme; siralanabilir calma listeleri; oda listesi, sifreli davet ve avatar onayi; TR/EN dil; tam onarim.'
+d['notes'] = 'Yerel Whisper sesli arama; tekrar/karışık çalma ve ses kalitesi; sanatçı parçalarını indirme/kaydetme; sıralanabilir çalma listeleri; oda listesi, şifreli davet ve avatar onayı; TR/EN dil; tam onarım.'
 d['platforms']['linux'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.deb'
 d['platforms']['linux-targz'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.tar.gz'
 d['platforms']['android-arm64'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-arm64.apk'
