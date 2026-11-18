@@ -800,8 +800,11 @@ class _HomePageState extends State<HomePage> {
 
   void _onNavTap(int value) {
     if (value == SearchNavBar.library) {
+      // Eski "Kitaplığım" davranışı: profil/avatar, beğeniler ve dinleme
+      // geçmişi RoomPage'in kitaplık sekmesinde. Çalma listeleri arama
+      // ekranındaki playlist kartlarından ve ana sayfa üstünden açılır.
       Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const MyPlaylistsPage()),
+        MaterialPageRoute(builder: (_) => const RoomPage(initialTab: 1)),
       );
       return;
     }
