@@ -264,6 +264,14 @@ flutter build ios --release --no-codesign \
 flutter build web --release
 ```
 
+### 3.0.46+247 — arama sonuçları sabit kalır
+
+- Aratılan şarkılar artık kendiliğinden sanatçının diğer parçalarına
+  dönüşmüyor. İlk sonuç listesi sabit; ilgili yeni parçalar yalnızca
+  yukarıdan aşağıya kaydırıp yenilediğinizde listeye **ekleniyor**.
+- Arama kutusu, dil/vurgu rengi tercihleri ve diğer ayarlar değiştirilmedi.
+- Doğrulama: `flutter analyze` 0 issue, `flutter test` 73/73, emülatör tam testi 18/18.
+
 ### 3.0.45+246 — hızlı parça açılışı
 
 - **Adres çözümü:** InnerTube istemcileri ve Invidious örnekleri artık sırayla

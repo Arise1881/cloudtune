@@ -41,6 +41,22 @@ class SearchUi {
     return hours > 0 ? '$hours:$mm:$ss' : '$mm:$ss';
   }
 
+  /// Arama sonuçlarını korur, ek parçaları yalnızca sona ekler.
+  /// Böylece aratılan şarkı listeden kaybolmaz; yenilemeyle gelen ilgili
+  /// parçalar aynı listede yeni satırlar olarak görünür.
+  static List<Track> mergedResults(List<Track> results, List<Track> extra) {
+    final seen = <String>{};
+    final merged = <Track>[];
+    for (final track in [...results, ...extra]) {
+      if (track.id.isEmpty) {
+        merged.add(track);
+        continue;
+      }
+      if (seen.add(track.id)) merged.add(track);
+    }
+    return merged;
+  }
+
   /// Arama sonuçlarından tekil sanatçı kartları üretir.
   /// Kanal ID varsa sanatçı adından önce gelir; aynı ad farklı kanallar
   /// farklı kart olabilir.

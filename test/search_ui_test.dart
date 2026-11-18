@@ -31,6 +31,25 @@ void main() {
       expect(SearchUi.activeAccent, Colors.orange);
     });
 
+    test('sonuçlar korunur, yenilenen parçalar sona eklenir', () {
+      const found = [
+        Track(id: '1', title: 'Aratılan', artist: 'Blued'),
+        Track(id: '2', title: 'Diğer sonuç', artist: 'Blued'),
+      ];
+      const extra = [
+        Track(id: '3', title: 'Yeni', artist: 'Blued'),
+        Track(id: '1', title: 'Tekrar', artist: 'Blued'),
+      ];
+      final merged = SearchUi.mergedResults(found, extra);
+      expect(merged.map((t) => t.id), ['1', '2', '3']);
+      expect(merged.first.title, 'Aratılan');
+    });
+
+    test('yenileme boşsa arama sonuçları değişmez', () {
+      const found = [Track(id: '1', title: 'Aratılan', artist: 'Blued')];
+      expect(SearchUi.mergedResults(found, const []), found);
+    });
+
     test('sanatçı kartları tekil ve sıralı', () {
       final tracks = [
         const Track(id: '1', title: 'A', artist: 'Blued'),

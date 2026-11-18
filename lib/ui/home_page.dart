@@ -310,10 +310,10 @@ class _HomePageState extends State<HomePage> {
       if (found.isEmpty) _toast('Sonuç bulunamadı.');
       await Library.instance.addSearchHistory(value);
 
-      // "Çalma Listeleri ve Şarkılar" başlığı altında sanatçının tüm
-      // parçaları gösterilir. Kanal ID varsa yüklemeler, yoksa sanatçı
-      // araması kullanılır; arama sonuçları ayrıca korunur.
-      if (found.isNotEmpty) {
+      // Sanatçının diğer parçaları yalnızca kullanıcı yukarıdan aşağıya
+      // kaydırıp yenilediğinde eklenir. İlk aramada sonuçlar sabit kalır;
+      // aratılan şarkı kendiliğinden başka parçalara dönüşmez.
+      if (refresh && found.isNotEmpty) {
         final seed = found.firstWhere(
           (t) => t.artistId != null && t.artistId!.isNotEmpty,
           orElse: () => found.first,
@@ -323,7 +323,7 @@ class _HomePageState extends State<HomePage> {
           _artistId = seed.artistId;
           _artistTracksLoading = true;
         });
-        unawaited(_loadArtistTracks(seed, generation, refresh: refresh));
+        unawaited(_loadArtistTracks(seed, generation, refresh: true));
       }
     } catch (_) {
       RepairBot.instance.reportEvent('search_failed', {'query': value});
@@ -1122,12 +1122,13 @@ class _HomePageState extends State<HomePage> {
     final results = _results!;
     final seeds = SearchUi.artistSeeds(results);
     final hasArtistTracks = _artistTracks.isNotEmpty;
-    final primary = hasArtistTracks ? _artistTracks : results;
+    // Aratılan parçalar her zaman listede kalır; yenilemeyle gelenler eklenir.
+    final primary = SearchUi.mergedResults(results, _artistTracks);
     final artist = _artistName ?? 'Sanatçı';
     final subtitle = _artistTracksLoading
         ? '$artist parçaları yükleniyor…'
         : hasArtistTracks
-            ? '$artist · ${_artistTracks.length} parça'
+            ? '$artist · +${_artistTracks.length} parça'
             : _artistName != null
                 ? '$artist · ek parça bulunamadı'
                 : null;
