@@ -94,9 +94,9 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   final Set<String> _preloaded = <String>{};
   int _activePreloads = 0;
 
-  /// Otomatik parça geçişinde beklenen süre. Önbellek ve ısıtma sayesinde
-  /// toplam geçiş yaklaşık 1 saniyede tamamlanır.
-  static const Duration transitionDelay = Duration(milliseconds: 1000);
+  /// Otomatik parça geçişindeki kısa nefes. Adres önbellekteyse 1 sn boşluk
+  /// gereksizdi; radyo önerisi artık geçişi bloklamadığı için 300 ms yeterli.
+  static const Duration transitionDelay = Duration(milliseconds: 300);
 
   /// Radyo önerisi + sanatçı fallback toplamda 10 saniyeden fazla sürmez.
   static const Duration _radioTimeout = Duration(seconds: 10);
@@ -106,7 +106,10 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   /// "bazı parçalar hiç açılmıyordu" şikayetine yol açıyordu.
   static const Duration _resolveTimeout = Duration(seconds: 20);
   static const Duration _openTimeout = Duration(seconds: 20);
-  static const Duration _readyTimeout = Duration(seconds: 5);
+  // Motor "ready" sinyali göndermeden de play() çoğu zaman çalışır. 5 sn
+  // beklemek her parçada gereksiz gecikmeydi; kısa süre sonra play() yine
+  // denenir (bkz. _ensurePlaying).
+  static const Duration _readyTimeout = Duration(milliseconds: 1500);
 
   List<Track> get tracks => _queue;
   int get index => _index;
@@ -276,8 +279,10 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
       await _ensurePlaying(transition, generation);
       unawaited(Library.instance.remember(track));
-      // İlk tampon tamamlanmadan prefetch başlarsa aktif akışa rakip oluyor.
-      Timer(const Duration(seconds: 4), () {
+      // İlk tamponun bir kısmı gelir gelmez sonraki parçayı ısıt. 4 sn
+      // beklemek radyo geçişinde adresin soğuk kalmasına yol açıyordu;
+      // eşzamanlı prefetch sayısı _maxPreloads ile sınırlı.
+      Timer(const Duration(milliseconds: 1200), () {
         if (!_isStale(transition, generation)) unawaited(_preloadUpcoming());
       });
       return null;
@@ -489,18 +494,20 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         }
 
         final nextIndex = _index + 1;
-        // Kuyruk bitmeden, son iki parça kala radyoyu genişlet.
+        final hasQueuedNext = nextIndex < _queue.length;
+        // Radyo önerisi bir ağ isteği; son iki parça kala kuyruğu genişletirken
+        // sonraki parçayı bekletme. Yalnızca kuyruk bitmişse beklemek gerekir.
         if (canExtendRadio &&
-            nextIndex < _queue.length &&
+            hasQueuedNext &&
             nextIndex >= _queue.length - 2) {
-          await _extendRadio();
+          unawaited(_extendRadio());
         }
-        if (nextIndex < _queue.length &&
-            (_queue[nextIndex].sourceUrl ?? '').isEmpty) {
+        if (hasQueuedNext && (_queue[nextIndex].sourceUrl ?? '').isEmpty) {
           unawaited(YoutubeService.instance.prefetch(_queue[nextIndex].id));
         }
         await Future<void>.delayed(transitionDelay);
         if (_generation != generation) return;
+        if (!hasQueuedNext && canExtendRadio) await _extendRadio();
       }
 
       if (hasNext) {

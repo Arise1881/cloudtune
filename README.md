@@ -264,6 +264,18 @@ flutter build ios --release --no-codesign \
 flutter build web --release
 ```
 
+### 3.0.45+246 — hızlı parça açılışı
+
+- **Adres çözümü:** InnerTube istemcileri ve Invidious örnekleri artık sırayla
+  değil eşzamanlı deneniyor; ilk çalışan yanıt parçayı açıyor. Bir istemci
+  takıldığında diğerlerinin 6'şar saniye daha beklemesi kalktı.
+- **Parça geçişi:** radyo önerisi arka planda genişletiliyor, sonraki parçayı
+  bekletmiyor; geçiş boşluğu 1 sn'den 300 ms'ye indi. Sonraki parça adresi
+  4 sn yerine 1,2 sn sonra ısıtılmaya başlanıyor.
+- **`play()` zamanı:** motor "hazır" sinyalini bekleme süresi 5 sn'den 1,5 sn'ye
+  indi; sinyal gelmese de oynatma deneniyor.
+- Doğrulama: `flutter analyze` 0 issue, `flutter test` 71/71, emülatör tam testi 18/18.
+
 ### 3.0.44+245 — temiz kurulum varsayılanları ve ekran galerisi
 
 - **Ana sayfa açılışı:** uygulama artık arama sekmesi yerine doğrudan ana sayfa ile başlar; aramaya üstteki büyüteçten veya alt nav’dan geçilir.

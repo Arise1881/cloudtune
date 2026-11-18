@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
+import 'async_helpers.dart';
 import 'models.dart';
 import 'settings_service.dart';
 
@@ -144,19 +145,22 @@ class YoutubeService {
     'lossless': _QualitySpec([141, 251], true),
   };
 
-  /// Invidious örneklerini sırayla dener; ilk başarılı JSON döner.
-  Future<dynamic> _invGet(String path) async {
-    for (final base in _invBases) {
-      try {
-        final response =
-            await http.get(Uri.parse('$base$path')).timeout(_invTimeout);
-        if (response.statusCode != 200) continue;
-        return jsonDecode(response.body);
-      } catch (_) {
-        continue;
-      }
+  /// Invidious örneklerini eşzamanlı dener; ilk başarılı JSON döner.
+  /// Sıralı denemede ilk üç örnek yanıt vermediğinde arama/öneri de 18 sn
+  /// bekliyordu; artık en yavaş tek örnek kadar sürer.
+  Future<dynamic> _invGet(String path) => firstSuccess<dynamic>([
+        for (final base in _invBases) _invGetBase(base, path),
+      ]);
+
+  Future<dynamic> _invGetBase(String base, String path) async {
+    try {
+      final response =
+          await http.get(Uri.parse('$base$path')).timeout(_invTimeout);
+      if (response.statusCode != 200) return null;
+      return jsonDecode(response.body);
+    } catch (_) {
+      return null;
     }
-    return null;
   }
 
   /// Invidious video/search kaydını [Track]'a çevirir. Geçersizse null.
@@ -797,66 +801,17 @@ class YoutubeService {
       http.post(url, headers: headers, body: body).timeout(_requestTimeout);
 
   /// Doğrudan InnerTube isteğiyle oynatılabilir ses adresini bulur.
-  /// İstemci sırası, cihazda doğrulanmış olanlardan başlar.
+  /// İstemciler eşzamanlı başlatılır; ilk çalışan yanıt kullanılır. Sıralı
+  /// denemede ilk istemci 6 sn takıldığında parça açılışı 30 sn'ye çıkıyordu.
   Future<Uri?> innerTube(String id) async {
     final quality = this.quality;
     final spec = _qualitySpec[quality] ?? _qualitySpec['high']!;
 
     _playability.remove(id);
-    for (final client in _clients) {
-      try {
-        final response = await _innerTubePost(
-          Uri.parse(
-            'https://www.youtube.com/youtubei/v1/player'
-            '?key=${client['key']}&prettyPrint=false',
-          ),
-          headers: {
-            'content-type': 'application/json',
-            'accept-language': 'en-US,en;q=0.9',
-            'x-youtube-client-name': client['name'],
-            'x-youtube-client-version': client['version'],
-            'user-agent': client['ua'],
-          },
-          body: jsonEncode({
-            'context': {
-              'client': client['client'],
-              'thirdParty': {'embedUrl': 'https://www.youtube.com'},
-            },
-            'videoId': id,
-            'contentCheckOk': true,
-            'racyCheckOk': true,
-          }),
-        );
-
-        if (response.statusCode != 200) continue;
-
-        final data = jsonDecode(response.body);
-        if (data is! Map) continue;
-
-        final status = data['playabilityStatus'];
-        if (status is Map && status['status'] is String) {
-          final value = status['status'] as String;
-          if (value != 'OK') {
-            _playability[id] = value;
-            continue;
-          }
-        }
-
-        final streaming = data['streamingData'];
-        if (streaming is! Map) continue;
-
-        final formats = <Map>[
-          ...(streaming['adaptiveFormats'] as List? ?? const [])
-              .whereType<Map>(),
-          ...(streaming['formats'] as List? ?? const []).whereType<Map>(),
-        ];
-
-        final uri = await _pickAudioUri(formats, spec);
-        if (uri != null) return uri;
-      } catch (_) {
-        // Bir istemci başarısızsa sıradakine geç.
-      }
-    }
+    final uri = await firstSuccess<Uri>([
+      for (final client in _clients) _innerTubeClient(client, id, spec),
+    ]);
+    if (uri != null) return uri;
 
     // Son çare: birden fazla Invidious örneğinden local=true akış adresleri.
     final inv = await _invGet(
@@ -867,12 +822,70 @@ class YoutubeService {
         ...(inv['formatStreams'] as List? ?? const []).whereType<Map>(),
         ...(inv['adaptiveFormats'] as List? ?? const []).whereType<Map>(),
       ];
-      final uri = await _pickAudioUri(formats, spec);
-      if (uri != null) return uri;
+      final picked = await _pickAudioUri(formats, spec);
+      if (picked != null) return picked;
     }
 
     // Çözülemezse null: oynatıcı aynı parçada hata gösterir, atlama yapmaz.
     return null;
+  }
+
+  /// Tek InnerTube istemcisi. Hata/engel durumunda null döner; diğer
+  /// istemciler aynı anda çalışmaya devam eder.
+  Future<Uri?> _innerTubeClient(
+    Map<String, dynamic> client,
+    String id,
+    _QualitySpec spec,
+  ) async {
+    try {
+      final response = await _innerTubePost(
+        Uri.parse(
+          'https://www.youtube.com/youtubei/v1/player'
+          '?key=${client['key']}&prettyPrint=false',
+        ),
+        headers: {
+          'content-type': 'application/json',
+          'accept-language': 'en-US,en;q=0.9',
+          'x-youtube-client-name': client['name'],
+          'x-youtube-client-version': client['version'],
+          'user-agent': client['ua'],
+        },
+        body: jsonEncode({
+          'context': {
+            'client': client['client'],
+            'thirdParty': {'embedUrl': 'https://www.youtube.com'},
+          },
+          'videoId': id,
+          'contentCheckOk': true,
+          'racyCheckOk': true,
+        }),
+      );
+
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body);
+      if (data is! Map) return null;
+
+      final status = data['playabilityStatus'];
+      if (status is Map && status['status'] is String) {
+        final value = status['status'] as String;
+        if (value != 'OK') {
+          _playability[id] = value;
+          return null;
+        }
+      }
+
+      final streaming = data['streamingData'];
+      if (streaming is! Map) return null;
+      final formats = <Map>[
+        ...(streaming['adaptiveFormats'] as List? ?? const [])
+            .whereType<Map>(),
+        ...(streaming['formats'] as List? ?? const []).whereType<Map>(),
+      ];
+      return await _pickAudioUri(formats, spec);
+    } catch (_) {
+      // Bir istemci başarısızsa diğerleri devam eder.
+      return null;
+    }
   }
 
   static bool _isAudioFormat(Map format) {
