@@ -36,6 +36,8 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
   bool _started = false;
   bool _scanning = false;
   Future<void>? _scanFuture;
+  bool _fullRepairRunning = false;
+  Future<RepairReport>? _fullRepairFuture;
   bool _foreground = true;
   int _consecutiveFailures = 0;
   int _fixCount = 0;
@@ -49,6 +51,7 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
 
   bool get active => _timer?.isActive ?? false;
   bool get scanning => _scanning;
+  bool get fullRepairRunning => _fullRepairRunning;
   int get fixCount => _fixCount;
   DateTime? get lastFixAt => _lastFixAt;
   String? get lastIssue => _lastIssue;
@@ -88,6 +91,218 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     await _runScan();
+  }
+
+  /// Kullanıcı tarafından tetiklenen tam onarım. Sessiz taramanın aksine
+  /// bekleme sürelerini/deneme sınırlarını yok sayar, üç aşamayı sırayla
+  /// zorla çalıştırır ve sonucu rapor + log olarak döndürür.
+  /// Eşzamanlı çağrılar aynı raporu paylaşır.
+  Future<RepairReport> runFullRepair() {
+    final existing = _fullRepairFuture;
+    if (existing != null) return existing;
+    final future = _runFullRepair();
+    _fullRepairFuture = future;
+    return future;
+  }
+
+  Future<RepairReport> _runFullRepair() async {
+    _fullRepairRunning = true;
+    notifyListeners();
+    try {
+      // Sessiz tarama uçaksa çakışmamak için bitmesini bekle.
+      final scan = _scanFuture;
+      if (scan != null) await scan;
+
+      final startedAt = DateTime.now();
+      final stages = <RepairStageResult>[
+        await _guardedStage('playback', _forcePlayback),
+        await _guardedStage('downloads', _forceDownloads),
+        await _guardedStage('pending', _forcePending),
+      ];
+      final report = RepairReport(
+        startedAt: startedAt,
+        finishedAt: DateTime.now(),
+        stages: stages,
+      );
+      // Raporun tamamı tek log kaydı olarak yazılır.
+      await _log('full_repair_completed', report.toJson());
+      return report;
+    } finally {
+      _fullRepairFuture = null;
+      _fullRepairRunning = false;
+      notifyListeners();
+    }
+  }
+
+  /// Bir aşama patlarsa diğerlerini çalıştırmaya devam et; hata kullanıcıya
+  /// gösterilmez, yalnızca loga yazılır.
+  Future<RepairStageResult> _guardedStage(
+    String name,
+    Future<RepairStageResult> Function() stage,
+  ) async {
+    try {
+      return await stage();
+    } catch (e) {
+      await _log('full_repair_stage_error', {
+        'stage': name,
+        'error': e.toString(),
+      });
+      return RepairStageResult(
+        name: name,
+        status: RepairStageStatus.problem,
+        remaining: 1,
+      );
+    }
+  }
+
+  Future<RepairStageResult> _forcePlayback() async {
+    final player = PlayerController.instance;
+    final error = player.error;
+    if (error == null) {
+      return const RepairStageResult(
+          name: 'playback', status: RepairStageStatus.skipped);
+    }
+    final track = player.current;
+    if (track == null) {
+      return const RepairStageResult(
+          name: 'playback', status: RepairStageStatus.skipped);
+    }
+
+    _lastIssue = error;
+    await player.retry();
+    if (player.error == null) {
+      _consecutiveFailures = 0;
+      _lastPlaybackUnrecoverableAt = null;
+      _fixCount++;
+      _lastFixAt = DateTime.now();
+      _schedule(_foreground ? _idleInterval : _backgroundInterval);
+      await _log('full_repair_playback_repaired', {'video_id': track.id});
+      return const RepairStageResult(
+        name: 'playback',
+        status: RepairStageStatus.success,
+        fixed: 1,
+      );
+    }
+
+    await _log('full_repair_playback_failed', {
+      'video_id': track.id,
+      'issue': player.error,
+    });
+    return const RepairStageResult(
+      name: 'playback',
+      status: RepairStageStatus.problem,
+      remaining: 1,
+    );
+  }
+
+  Future<RepairStageResult> _forceDownloads() async {
+    final service = DownloadService.instance;
+    final failureIds = service.failureIds;
+    if (failureIds.isEmpty) {
+      return const RepairStageResult(
+          name: 'downloads', status: RepairStageStatus.skipped);
+    }
+
+    var fixed = 0;
+    var remaining = 0;
+    // Zorla mod: cooldown ve deneme sınırı yok, tüm kimlikler tek tek denenir.
+    for (final id in failureIds) {
+      final Track? track = service.failedTrack(id);
+      var succeeded = false;
+      try {
+        await service.retryDownload(id);
+        succeeded = service.savedPathOf(id) != null;
+      } catch (_) {
+        succeeded = false;
+      }
+      if (succeeded) {
+        service.forgetFailure(id);
+        _downloadAttempts.remove(id);
+        _nextDownloadAt.remove(id);
+        _fixCount++;
+        _lastFixAt = DateTime.now();
+        fixed++;
+        await _log('full_repair_download_repaired', {
+          'video_id': id,
+          'title': track?.title,
+        });
+      } else {
+        remaining++;
+        // Sessiz tarama yine deneyebilsin: sayacı sıfırla, kısa cooldown ver.
+        _downloadAttempts[id] = 0;
+        _nextDownloadAt[id] = DateTime.now().add(_downloadCooldown);
+        _lastIssue = 'download_failed:$id';
+        await _log('full_repair_download_failed', {
+          'video_id': id,
+          'title': track?.title,
+        });
+      }
+    }
+
+    return RepairStageResult(
+      name: 'downloads',
+      status: remaining > 0 ? RepairStageStatus.problem : RepairStageStatus.success,
+      fixed: fixed,
+      remaining: remaining,
+    );
+  }
+
+  Future<RepairStageResult> _forcePending() async {
+    if (_pending.isEmpty) {
+      return const RepairStageResult(
+          name: 'pending', status: RepairStageStatus.skipped);
+    }
+
+    var fixed = 0;
+    var remaining = 0;
+    // Kopya üzerinde gez: başarılı öğeler listeden çıkarılacak.
+    for (final item in _pending.toList(growable: false)) {
+      late final bool success;
+      if (item.type.startsWith('link_')) {
+        success = await LinkHandler.open(item.payload);
+      } else if (item.type.startsWith('search_')) {
+        try {
+          final results = await YoutubeService.instance.search(
+            item.payload,
+            limit: 5,
+          );
+          success = results.isNotEmpty;
+        } catch (_) {
+          success = false;
+        }
+      } else {
+        _pending.remove(item);
+        continue;
+      }
+
+      if (success) {
+        _pending.remove(item);
+        _fixCount++;
+        _lastFixAt = DateTime.now();
+        fixed++;
+        await _log('full_repair_pending_repaired', {
+          'type': item.type,
+          'payload': item.payload,
+        });
+      } else {
+        remaining++;
+        // Kuyrukta kalsın; sessiz tarama normal backoff ile yeniden denesin.
+        item.attempts = 0;
+        item.nextAt = DateTime.now().add(_pendingBackoff(1));
+        _lastIssue = item.type;
+        await _log('full_repair_pending_failed', {
+          'type': item.type,
+          'payload': item.payload,
+        });
+      }
+    }
+
+    return RepairStageResult(
+      name: 'pending',
+      status: remaining > 0 ? RepairStageStatus.problem : RepairStageStatus.success,
+      fixed: fixed,
+      remaining: remaining,
+    );
   }
 
   void _schedule(Duration interval) {
@@ -414,6 +629,68 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
     } catch (_) {}
   }
 }
+
+/// Tam onarımda tek aşamanın sonucu: başarılı / sorunlu / atlanan + sayılar.
+class RepairStageResult {
+  const RepairStageResult({
+    required this.name,
+    required this.status,
+    this.fixed = 0,
+    this.remaining = 0,
+  });
+
+  /// `playback`, `downloads` veya `pending`.
+  final String name;
+  final RepairStageStatus status;
+  final int fixed;
+  final int remaining;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'stage': name,
+        'status': status.name,
+        'fixed': fixed,
+        'remaining': remaining,
+      };
+
+  @override
+  String toString() =>
+      '$name:${status.name}(fixed=$fixed, remaining=$remaining)';
+}
+
+/// Tam onarımın toplu raporu. UI'da sonuç diyaloğu ve log kaydı için kullanılır.
+class RepairReport {
+  RepairReport({
+    required this.startedAt,
+    required this.finishedAt,
+    required this.stages,
+  });
+
+  final DateTime startedAt;
+  final DateTime finishedAt;
+  final List<RepairStageResult> stages;
+
+  int get fixedCount => stages.fold(0, (sum, stage) => sum + stage.fixed);
+  int get remainingCount =>
+      stages.fold(0, (sum, stage) => sum + stage.remaining);
+  bool get hasRemaining => remainingCount > 0;
+  Duration get duration => finishedAt.difference(startedAt);
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'started_at': startedAt.toUtc().toIso8601String(),
+        'finished_at': finishedAt.toUtc().toIso8601String(),
+        'duration_ms': duration.inMilliseconds,
+        'fixed': fixedCount,
+        'remaining': remainingCount,
+        'stages': [for (final stage in stages) stage.toJson()],
+      };
+
+  @override
+  String toString() =>
+      'RepairReport(fixed=$fixedCount, remaining=$remainingCount, '
+      'duration=${duration.inMilliseconds}ms, stages=$stages)';
+}
+
+enum RepairStageStatus { success, problem, skipped }
 
 class _PendingRepair {
   _PendingRepair({

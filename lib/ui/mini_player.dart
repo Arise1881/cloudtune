@@ -8,6 +8,14 @@ import '../core/player_controller.dart';
 import '../core/theme_state.dart';
 import 'player_page.dart';
 
+bool _radioActive(Object player) {
+  try {
+    final value = (player as dynamic).radioMode;
+    if (value is bool) return value;
+  } catch (_) {}
+  return false;
+}
+
 /// Compact now-playing bar pinned above the page content.
 class MiniPlayer extends StatelessWidget {
   const MiniPlayer({super.key});
@@ -29,6 +37,20 @@ class MiniPlayer extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (_radioActive(player))
+                  Semantics(
+                    label: 'Radyo modu açık',
+                    child: Container(
+                      height: 2,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(colors: [
+                          Colors.transparent,
+                          ThemeState.value,
+                          Colors.transparent,
+                        ]),
+                      ),
+                    ),
+                  ),
                 _Progress(track: track),
                 if (player.error != null)
                   Container(

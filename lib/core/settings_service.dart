@@ -27,6 +27,14 @@ class SettingsService extends ChangeNotifier {
   ThemeMode get themeMode => _themeMode;
   String get languageCode => _languageCode;
 
+  /// `MaterialApp.locale` için kullanılan değer. Dil değişince
+  /// `notifyListeners()` ile birlikte yeniden kurulur.
+  Locale get locale => Locale(_languageCode);
+
+  /// Kaydedilmiş kod desteklenmiyorsa varsayılan Türkçeye düşür.
+  bool isSupportedLanguage(String code) =>
+      supportedLanguages.containsKey(code);
+
   static const List<String> audioQualities = [
     'low',
     'medium',
@@ -83,7 +91,12 @@ class SettingsService extends ChangeNotifier {
       _equalizerPreset = prefs.getString('ct.equalizerPreset') ?? 'normal';
       _oledBlack = prefs.getBool('ct.oledBlack') ?? false;
       _themeMode = _decodeThemeMode(prefs.getString('ct.themeMode'));
-      _languageCode = prefs.getString('ct.language') ?? 'tr';
+      final storedLanguage = prefs.getString('ct.language');
+      // Bozuk/artık desteklenmeyen kod uygulamayı kilitlemesin.
+      _languageCode = (storedLanguage != null &&
+              isSupportedLanguage(storedLanguage))
+          ? storedLanguage
+          : 'tr';
     } catch (_) {
       // Unreadable storage: keep defaults and continue normally.
     }
@@ -142,7 +155,9 @@ class SettingsService extends ChangeNotifier {
   }
 
   Future<void> setLanguage(String code) async {
-    if (!supportedLanguages.containsKey(code)) return;
+    // Yalnızca desteklenen kodlar kabul edilir; aynı dil tekrar bildirim
+    // üretmez (gereksiz yeniden kurulum olmasın).
+    if (!isSupportedLanguage(code) || _languageCode == code) return;
     _languageCode = code;
     notifyListeners();
     await _saveString('ct.language', code);

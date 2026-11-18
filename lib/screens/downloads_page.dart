@@ -6,6 +6,7 @@ import '../core/download_service.dart';
 import '../core/models.dart';
 import '../core/player_controller.dart';
 import '../core/theme_state.dart';
+import 'playlist_editor_page.dart';
 
 /// Cihazdaki indirmeler, başarısız indirmeler ve devam eden indirmeler.
 class DownloadsPage extends StatelessWidget {
@@ -31,10 +32,20 @@ class DownloadsPage extends StatelessWidget {
           final active = service.downloadProgress.entries
               .where((entry) => entry.value >= 0 && entry.value < 1)
               .toList();
+          final groups = readDownloadGroups();
 
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
             children: [
+              if (groups.isNotEmpty) ...[
+                _sectionHeader(
+                  'Kayıtlı indirme grupları (${groups.length})',
+                  accent,
+                ),
+                const SizedBox(height: 8),
+                for (final group in groups) _groupCard(group, accent, context),
+                const SizedBox(height: 24),
+              ],
               _sectionHeader(
                 'Cihazdaki müzikler',
                 accent,
@@ -89,6 +100,91 @@ class DownloadsPage extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+
+  Widget _groupCard(
+    DownloadGroupView group,
+    Color accent,
+    BuildContext context,
+  ) {
+    final service = DownloadService.instance;
+    return Card(
+      color: AppPalette.cardAlt,
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ExpansionTile(
+        leading: CircleAvatar(
+          backgroundColor: accent.withValues(alpha: 0.14),
+          child: Icon(group.kindIcon, color: accent),
+        ),
+        title: Text(
+          group.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(
+          '${group.tracks.length} parça · ${group.kindLabel}',
+          style: TextStyle(color: AppPalette.textSubtle, fontSize: 12),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'Tümünü çal',
+              icon: Icon(Icons.play_arrow, color: accent),
+              onPressed: () => PlayerController.instance.playQueue(
+                group.tracks,
+                0,
+                radio: false,
+              ),
+            ),
+            IconButton(
+              tooltip: 'Grubu sil',
+              icon: const Icon(Icons.delete_outline, size: 20),
+              onPressed: () => _confirmDeleteGroup(context, group),
+            ),
+            const Icon(Icons.expand_more, size: 18),
+          ],
+        ),
+        children: [
+          for (var i = 0; i < group.tracks.length; i++)
+            _savedTile(
+                group.tracks[i], group.tracks, i, accent, context, service),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteGroup(
+    BuildContext context,
+    DownloadGroupView group,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppPalette.surface,
+        title: const Text('Grubu sil'),
+        content: Text('${group.name} indirme grubu kaldırılacak.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('İptal'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Sil'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await deleteDownloadGroup(group);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('${group.name} grubu silindi.')),
     );
   }
 

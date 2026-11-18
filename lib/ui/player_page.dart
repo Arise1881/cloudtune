@@ -1,10 +1,12 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../core/app_palette.dart';
 import '../core/download_service.dart';
 import '../core/library.dart';
 import '../core/models.dart';
 import '../core/player_controller.dart';
+import '../core/settings_service.dart';
 import '../core/theme_state.dart';
 import '../screens/artist_page.dart';
 
@@ -12,6 +14,142 @@ String _fmt(Duration d) {
   final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
   final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
   return d.inHours > 0 ? '${d.inHours}:$m:$s' : '$m:$s';
+}
+
+const Map<String, String> _qualityLabels = {
+  'low': 'DÜŞÜK',
+  'medium': 'ORTA',
+  'high': 'YÜKSEK',
+  'lossless': 'KAYIPSIZ',
+};
+
+// Yeni controller API'leri henüz yoksa derleme bozulmasın: dynamic okuma +
+// mevcut API'lere düşüş. API gelince aynı kod yeni alanları kullanır.
+bool _shuffleEnabled(Object player) {
+  try {
+    final value = (player as dynamic).shuffleEnabled;
+    if (value is bool) return value;
+  } catch (_) {}
+  try {
+    final value = (player as dynamic).shuffleMode;
+    if (value is bool) return value;
+  } catch (_) {}
+  return false;
+}
+
+void _setShuffleEnabled(Object player, bool enabled) {
+  try {
+    final result = (player as dynamic).setShuffleEnabled(enabled);
+    if (result is Future) result.catchError((_) {});
+    return;
+  } catch (_) {}
+  try {
+    if (_shuffleEnabled(player) != enabled) {
+      (player as dynamic).toggleShuffle();
+    }
+  } catch (_) {}
+}
+
+String _repeatMode(Object player) {
+  try {
+    final value = (player as dynamic).repeatMode;
+    final text = value?.toString().toLowerCase() ?? '';
+    if (text.contains('one')) return 'one';
+    if (text.contains('all')) return 'all';
+  } catch (_) {}
+  return 'off';
+}
+
+void _cycleRepeat(Object player, BuildContext context) {
+  try {
+    final result = (player as dynamic).cycleRepeatMode();
+    if (result is Future) result.catchError((_) {});
+    return;
+  } catch (_) {}
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  messenger?.showSnackBar(
+    const SnackBar(content: Text('Tekrar ayarı bu sürümde kullanılamıyor.')),
+  );
+}
+
+bool _radioActive(Object player) {
+  try {
+    final value = (player as dynamic).radioMode;
+    if (value is bool) return value;
+  } catch (_) {}
+  return false;
+}
+
+String _normalizeQuality(String raw) {
+  final q = raw.toLowerCase().replaceAll(' ', '').replaceAll('_', '');
+  if (q.contains('lossless') || q.contains('veryhigh')) return 'lossless';
+  if (q.contains('medium')) return 'medium';
+  if (q.contains('low')) return 'low';
+  return 'high';
+}
+
+String _qualityOf(Object player) {
+  try {
+    final value = (player as dynamic).quality;
+    if (value != null) return _normalizeQuality(value.toString());
+  } catch (_) {}
+  try {
+    return _normalizeQuality(SettingsService.instance.audioQuality);
+  } catch (_) {
+    return 'high';
+  }
+}
+
+Future<void> _setQuality(Object player, String value) async {
+  try {
+    final result = (player as dynamic).setQuality(value);
+    if (result is Future) await result;
+    return;
+  } catch (_) {}
+  // Ayarlar ekranındaki mevcut anahtar 'veryhigh' kullanıyor.
+  try {
+    await SettingsService.instance
+        .setAudioQuality(value == 'lossless' ? 'veryhigh' : value);
+  } catch (_) {}
+}
+
+RelativeRect _menuRect(BuildContext context) {
+  final box = context.findRenderObject() as RenderBox;
+  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+  if (overlay == null) return RelativeRect.fill;
+  return RelativeRect.fromRect(
+    Rect.fromPoints(
+      box.localToGlobal(Offset.zero, ancestor: overlay),
+      box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlay),
+    ),
+    Offset.zero & overlay.size,
+  );
+}
+
+Future<void> _showQualityMenu(BuildContext context, Object player) async {
+  final current = _qualityOf(player);
+  final selected = await showMenu<String>(
+    context: context,
+    position: _menuRect(context),
+    items: [
+      for (final entry in _qualityLabels.entries)
+        PopupMenuItem<String>(
+          value: entry.key,
+          child: Row(
+            children: [
+              Icon(
+                entry.key == current ? Icons.check : Icons.circle,
+                size: 14,
+              ),
+              const SizedBox(width: 10),
+              Text(entry.value),
+            ],
+          ),
+        ),
+    ],
+  );
+  if (selected == null || !context.mounted) return;
+  await _setQuality(player, selected);
 }
 
 /// Full-screen playback view.
@@ -41,7 +179,7 @@ class PlayerPage extends StatelessWidget {
         centerTitle: true,
       ),
       body: ListenableBuilder(
-        listenable: player,
+        listenable: Listenable.merge([player, SettingsService.instance]),
         builder: (context, _) {
           final track = player.current;
           if (track == null) {
@@ -92,6 +230,20 @@ class PlayerPage extends StatelessWidget {
                       ),
                     ),
                   ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    if (_radioActive(player))
+                      _StatusBadge(
+                        label: 'RADYO',
+                        icon: Icons.radio,
+                        color: ThemeState.value,
+                        tooltip: 'Radyo modu açık',
+                      ),
+                    if (_radioActive(player)) const SizedBox(width: 8),
+                    _QualityBadge(player: player),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 if (player.error != null)
@@ -192,6 +344,25 @@ class _Controls extends StatelessWidget {
   Widget build(BuildContext context) {
     final player = PlayerController.instance;
 
+    final shuffleOn = _shuffleEnabled(player);
+    final repeatMode = _repeatMode(player);
+    final active = ThemeState.value;
+    final inactive = AppPalette.textSubtle;
+    const compact = BoxConstraints.tightFor(width: 42, height: 42);
+
+    // Flutter Material ikon setinde `repeat_off` yok. Kapalı durumda aynı
+    // `repeat` glifini soluk renkte gösteriyoruz; `repeat_one` ayrı glif.
+    final repeatIcon = switch (repeatMode) {
+      'one' => Icon(Icons.repeat_one, color: active),
+      'all' => Icon(Icons.repeat, color: active),
+      _ => Icon(Icons.repeat, color: inactive),
+    };
+    final repeatTooltip = switch (repeatMode) {
+      'one' => 'Tekrar: bir parça',
+      'all' => 'Tekrar: tümü',
+      _ => 'Tekrar: kapalı',
+    };
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -200,22 +371,32 @@ class _Controls extends StatelessWidget {
           builder: (context, _) {
             final liked = Library.instance.isLiked(track.id);
             return IconButton(
-              tooltip: 'Beğen',
+              tooltip: liked ? 'Beğeniyi kaldır' : 'Beğen',
               icon: Icon(
                 liked ? Icons.favorite : Icons.favorite_border,
-                color: liked ? ThemeState.value : null,
+                color: liked ? active : null,
               ),
               onPressed: () => Library.instance.toggleLike(track),
             );
           },
         ),
-        const SizedBox(width: 4),
         IconButton(
-          iconSize: 40,
+          tooltip: 'Önceki parça',
+          iconSize: 36,
+          constraints: compact,
           icon: const Icon(Icons.skip_previous),
           onPressed: player.previous,
         ),
-        const SizedBox(width: 8),
+        IconButton(
+          tooltip: shuffleOn ? 'Karışık çalma açık' : 'Karışık çalma kapalı',
+          iconSize: 20,
+          constraints: compact,
+          icon: Icon(
+            Icons.shuffle,
+            color: shuffleOn ? active : inactive,
+          ),
+          onPressed: () => _setShuffleEnabled(player, !shuffleOn),
+        ),
         player.loading
             ? const SizedBox(
                 width: 64,
@@ -226,20 +407,27 @@ class _Controls extends StatelessWidget {
                 ),
               )
             : IconButton.filled(
+                tooltip: player.playing ? 'Duraklat' : 'Oynat',
                 iconSize: 48,
                 // Broadcast stream ilk durumu kaçırabiliyor;
                 // _broadcast() zaten notifyListeners() çağırır.
-                icon:
-                    Icon(player.playing ? Icons.pause : Icons.play_arrow),
+                icon: Icon(player.playing ? Icons.pause : Icons.play_arrow),
                 onPressed: player.toggle,
               ),
-        const SizedBox(width: 8),
         IconButton(
-          iconSize: 40,
+          tooltip: 'Sonraki parça',
+          iconSize: 36,
+          constraints: compact,
           icon: const Icon(Icons.skip_next),
           onPressed: player.hasNext ? player.next : null,
         ),
-        const SizedBox(width: 4),
+        IconButton(
+          tooltip: repeatTooltip,
+          iconSize: 20,
+          constraints: compact,
+          icon: repeatIcon,
+          onPressed: () => _cycleRepeat(player, context),
+        ),
         _DownloadButton(track: track),
       ],
     );
@@ -292,6 +480,80 @@ class _DownloadButton extends StatelessWidget {
           },
         );
       },
+    );
+  }
+}
+
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({
+    required this.label,
+    required this.color,
+    required this.icon,
+    this.tooltip,
+    this.onTap,
+  });
+
+  final String label;
+  final Color color;
+  final IconData icon;
+  final String? tooltip;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final badge = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.45)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.6,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final semantic = Semantics(
+      button: onTap != null,
+      label: tooltip ?? label,
+      child: badge,
+    );
+    if (onTap == null) return semantic;
+    return Tooltip(
+      message: tooltip ?? label,
+      child: GestureDetector(onTap: onTap, child: semantic),
+    );
+  }
+}
+
+class _QualityBadge extends StatelessWidget {
+  const _QualityBadge({required this.player});
+
+  final Object player;
+
+  @override
+  Widget build(BuildContext context) {
+    final quality = _qualityOf(player);
+    final label = _qualityLabels[quality] ?? quality.toUpperCase();
+    return _StatusBadge(
+      label: label,
+      icon: Icons.high_quality_outlined,
+      color: ThemeState.value,
+      tooltip: 'Ses kalitesi: $label · değiştirmek için dokun',
+      onTap: () => _showQualityMenu(context, player),
     );
   }
 }

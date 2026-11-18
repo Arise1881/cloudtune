@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:audio_service/audio_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'audio_backend.dart';
 import 'download_service.dart';
@@ -12,6 +13,10 @@ import 'models.dart';
 import 'repair_bot.dart';
 import 'settings_service.dart';
 import 'youtube_service.dart';
+
+/// Tekrar modu. Tercih olarak saklanır ve `playbackState.repeatMode`
+/// üzerinden MediaSession/Android Auto'ya da yayınlanır.
+enum RepeatMode { off, all, one }
 
 /// Merkezi çalar. Bildirim, kilit ekranı, Bluetooth ve Android Auto
 /// `audio_service` üzerinden bu sınıfa bağlanır.
@@ -34,6 +39,8 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         unawaited(_playAt(_index, resumeAt: _player.position, retry: true));
       }
     });
+
+    unawaited(_restorePreferences());
   }
 
   static final PlayerController instance = PlayerController._();
@@ -44,6 +51,13 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   List<Track> _originalQueue = const <Track>[];
   bool _shuffleMode = false;
   bool _radioMode = true;
+  RepeatMode _repeatMode = RepeatMode.off;
+  bool _shuffleEnabled = false;
+  String _quality = 'high';
+
+  SharedPreferences? _prefs;
+  Future<void>? _prefsFuture;
+  bool _prefsReady = false;
 
   int _index = -1;
   int _transitionId = 0;
@@ -51,6 +65,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   int _generation = 0;
 
   bool _loading = false;
+  bool _opening = false;
   bool _advancing = false;
   bool _recovering = false;
   bool _extending = false;
@@ -83,13 +98,43 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   /// toplam geçiş yaklaşık 1 saniyede tamamlanır.
   static const Duration transitionDelay = Duration(milliseconds: 1000);
 
+  /// Radyo önerisi + sanatçı fallback toplamda 10 saniyeden fazla sürmez.
+  static const Duration _radioTimeout = Duration(seconds: 10);
+  static const int _maxQueueLength = 50;
+
+  /// Yavaş ağlarda adres çözümü/akış açılışı için önceki 5/9 sn limitleri
+  /// "bazı parçalar hiç açılmıyordu" şikayetine yol açıyordu.
+  static const Duration _resolveTimeout = Duration(seconds: 20);
+  static const Duration _openTimeout = Duration(seconds: 20);
+  static const Duration _readyTimeout = Duration(seconds: 5);
+
   List<Track> get tracks => _queue;
   int get index => _index;
   bool get loading => _loading;
   String? get error => _error;
+
+  /// Kullanıcıya gösterilmeye hazır hata metni. [error] kod olarak kalır;
+  /// arayüz bu metni doğrudan gösterebilir.
+  String? get errorMessage => switch (_error) {
+        'blocked' =>
+          'YouTube bu parçayı engelliyor. Farklı bir parça deneyin.',
+        'offline' => 'Bağlantı yok. Parça indirilmediyse çevrimdışı açılamaz.',
+        'stream' => 'Ses akışına ulaşılamadı. Tekrar deneyin.',
+        _ => null,
+      };
+
   bool get radioMode => _radioMode;
   bool get shuffleMode => _shuffleMode;
   bool get shuffleModeEnabled => _shuffleMode;
+
+  /// Kalıcı shuffle tercihi. Kuyruk 2 parçadan kısaysa fiili shuffle
+  /// uygulanmaz, ancak tercih korunur ve sonraki kuyrukta uygulanır.
+  bool get shuffleEnabled => _shuffleEnabled;
+  RepeatMode get repeatMode => _repeatMode;
+
+  /// Aktif ses kalitesi (`low`/`medium`/`high`/`veryhigh`).
+  String get quality => _quality;
+
   Track? get current =>
       (_index >= 0 && _index < _queue.length) ? _queue[_index] : null;
   bool get hasNext => _index + 1 < _queue.length;
@@ -114,12 +159,16 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     bool radio = true,
   }) async {
     if (tracks.isEmpty) return;
+    await _restorePreferences();
+    final safeIndex = startIndex.clamp(0, tracks.length - 1);
     _queue = List<Track>.unmodifiable(tracks);
     _originalQueue = _queue;
+    _index = safeIndex;
     _shuffleMode = false;
     _radioMode = radio && Library.instance.radioEnabled;
+    _applyShuffle(enabled: _shuffleEnabled);
     _publishQueue();
-    await _playAt(startIndex.clamp(0, tracks.length - 1));
+    await _playAt(_index);
   }
 
   Future<void> playAt(
@@ -148,85 +197,178 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     notifyListeners();
 
     final track = _queue[index];
+    Object? resolveError;
+    Uri? uri;
     try {
-      final uri = await _resolveTrack(track);
-      if (_isStale(transition, generation)) return;
+      uri = await _resolveTrack(track);
+    } catch (error) {
+      resolveError = error;
+    }
+    if (_isStale(transition, generation)) return;
 
+    if (uri != null) {
+      final failure = await _tryOpen(
+        uri,
+        track: track,
+        resumeAt: resumeAt,
+        transition: transition,
+        generation: generation,
+      );
+      if (failure == null || _isStale(transition, generation)) return;
+      resolveError = failure;
+    }
+
+    if (resolveError is AudioBlocked) {
+      if (kDebugMode) {
+        debugPrint('CT AudioBlocked ${track.id}: ${resolveError.reason}');
+      }
+      unawaited(RepairBot.instance.reportEvent('audio_blocked', {
+        'video_id': track.id,
+        'reason': resolveError.reason,
+      }));
+    } else if (kDebugMode) {
+      debugPrint('CT _playAt ${track.id}: $resolveError');
+    }
+
+    await _failOrRecover(
+      track: track,
+      resumeAt: resumeAt,
+      retry: retry,
+      blocked: resolveError is AudioBlocked,
+      transition: transition,
+      generation: generation,
+    );
+  }
+
+  /// Kaynağı açar, hazır olana kadar bekler ve `play()`'i tam bir kez garanti
+  /// eder. Hata döner; başarı/stale durumda null döner.
+  Future<Object?> _tryOpen(
+    Uri uri, {
+    required Track track,
+    required Duration? resumeAt,
+    required int transition,
+    required int generation,
+  }) async {
+    _opening = true;
+    try {
       await _setSource(uri, resumeAt);
-      if (_isStale(transition, generation)) return;
+      if (_isStale(transition, generation)) return null;
 
       _loading = false;
       _error = null;
       _broadcast();
       notifyListeners();
 
-      await _player.play();
+      await _ensurePlaying(transition, generation);
       unawaited(Library.instance.remember(track));
       // İlk tampon tamamlanmadan prefetch başlarsa aktif akışa rakip oluyor.
       Timer(const Duration(seconds: 4), () {
         if (!_isStale(transition, generation)) unawaited(_preloadUpcoming());
       });
-    } on AudioBlocked catch (error) {
-      if (_isStale(transition, generation)) return;
-      if (kDebugMode) {
-        debugPrint('CT AudioBlocked ${track.id}: ${error.reason}');
-      }
-      unawaited(RepairBot.instance.reportEvent('audio_blocked', {
-        'video_id': track.id,
-        'reason': error.reason,
-      }));
-      if (retry) {
-        final direct = await YoutubeService.instance.forceDirect(track.id);
-        if (_isStale(transition, generation)) return;
-        if (direct != null) {
-          try {
-            await _setSource(direct, resumeAt);
-            if (_isStale(transition, generation)) return;
-            _loading = false;
-            _error = null;
-            _broadcast();
-            notifyListeners();
-            await _player.play();
-            unawaited(Library.instance.remember(track));
-            unawaited(_preloadUpcoming());
-            return;
-          } catch (_) {}
-        }
-      }
-      if (_isStale(transition, generation)) return;
-      _loading = false;
-      _error = 'stream';
-      _broadcast();
-      notifyListeners();
-      return;
+      return null;
     } catch (error) {
-      if (_isStale(transition, generation)) return;
-      if (kDebugMode) debugPrint('CT _playAt ${track.id}: $error');
-      if (retry) {
-        final direct = await YoutubeService.instance.forceDirect(track.id);
-        if (_isStale(transition, generation)) return;
-        if (direct != null) {
-          try {
-            await _setSource(direct, resumeAt);
-            if (_isStale(transition, generation)) return;
-            _loading = false;
-            _error = null;
-            _broadcast();
-            notifyListeners();
-            await _player.play();
-            unawaited(Library.instance.remember(track));
-            unawaited(_preloadUpcoming());
-            return;
-          } catch (_) {}
-        }
-      }
-      if (_isStale(transition, generation)) return;
-      _loading = false;
-      _error = 'stream';
-      _broadcast();
-      notifyListeners();
-      return;
+      if (_isStale(transition, generation)) return null;
+      return error;
+    } finally {
+      _opening = false;
     }
+  }
+
+  Future<void> _ensurePlaying(int transition, int generation) async {
+    if (_isStale(transition, generation)) return;
+    final status = _player.status;
+    if (status != PlaybackStatus.ready && status != PlaybackStatus.buffering) {
+      try {
+        await _player.statusStream
+            .firstWhere(
+              (s) => s == PlaybackStatus.ready ||
+                  s == PlaybackStatus.buffering ||
+                  s == PlaybackStatus.completed,
+              orElse: () => _player.status,
+            )
+            .timeout(_readyTimeout);
+      } catch (_) {
+        // Motor hazır sinyali göndermese de play() denenmelidir.
+      }
+    }
+    if (_isStale(transition, generation)) return;
+    try {
+      await _player.play();
+    } catch (_) {
+      // Bazı motorlar open() hemen sonrasında play()'i reddeder.
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      if (!_isStale(transition, generation)) await _player.play();
+    }
+  }
+
+  /// AudioBlocked/stream hatasında: bir kez forceDirect, sonra alternatif
+  /// kaynak, sonra kullanıcıya anlaşılır hata.
+  Future<void> _failOrRecover({
+    required Track track,
+    required Duration? resumeAt,
+    required bool retry,
+    required bool blocked,
+    required int transition,
+    required int generation,
+  }) async {
+    if (retry) {
+      Uri? direct;
+      try {
+        direct = await YoutubeService.instance
+            .forceDirect(track.id)
+            .timeout(_resolveTimeout);
+      } catch (_) {}
+      if (_isStale(transition, generation)) return;
+      if (direct != null) {
+        final failure = await _tryOpen(
+          direct,
+          track: track,
+          resumeAt: resumeAt,
+          transition: transition,
+          generation: generation,
+        );
+        if (failure == null || _isStale(transition, generation)) return;
+      }
+
+      // Alternatif kaynak: cache tamamen temizlenip servisin Invidious
+      // dahil tüm çözüm yolları sıfırdan denenir.
+      YoutubeService.instance.clearCache();
+      Uri? alternative;
+      try {
+        alternative = await YoutubeService.instance
+            .audioUri(track.id)
+            .timeout(_resolveTimeout);
+      } catch (_) {}
+      if (_isStale(transition, generation)) return;
+      if (alternative != null) {
+        final failure = await _tryOpen(
+          alternative,
+          track: track,
+          resumeAt: resumeAt,
+          transition: transition,
+          generation: generation,
+        );
+        if (failure == null || _isStale(transition, generation)) return;
+      }
+    }
+
+    if (_isStale(transition, generation)) return;
+    var code = blocked ? 'blocked' : 'stream';
+    try {
+      final connections = await Connectivity().checkConnectivity();
+      if (connections.every((r) => r == ConnectivityResult.none)) {
+        code = 'offline';
+      }
+    } catch (_) {}
+    _loading = false;
+    _error = code;
+    unawaited(RepairBot.instance.reportEvent('playback_alternative_failed', {
+      'video_id': track.id,
+      'blocked': blocked,
+      'code': code,
+    }));
+    _broadcast();
+    notifyListeners();
   }
 
   Future<Uri> _resolveTrack(Track track) async {
@@ -234,7 +376,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     if (saved != null && File(saved).existsSync()) return Uri.file(saved);
     final direct = track.sourceUrl;
     if (direct != null && direct.isNotEmpty) return Uri.parse(direct);
-    return YoutubeService.instance.audioUri(track.id);
+    return YoutubeService.instance.audioUri(track.id).timeout(_resolveTimeout);
   }
 
   Future<void> _setSource(Uri uri, Duration? resumeAt) async {
@@ -262,7 +404,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
           initialPosition: resumeAt,
           tag: mediaItem.value,
         )
-        .timeout(const Duration(seconds: 9));
+        .timeout(_openTimeout);
   }
 
   void _onPosition(Duration position) {
@@ -275,8 +417,8 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     _broadcast();
   }
 
-  /// Sesli arama mikrofona basıldığında müziği duraklatıp geri vermek için
-  /// kullanılır. `play()` bir toggle olduğu için onun yerine bunu kullan.
+  /// Zaten çalıyorsa dokunmaz, duraklatılmışsa devam ettirir. Sesli arama
+  /// sonrası ve medya `play` komutu bu yolu kullanır.
   Future<void> resume() async {
     if (_player.playing) return;
     if (_player.volume == 0) await _player.setVolume(1);
@@ -289,7 +431,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   Future<void> refreshEqualizer() => _applyEqualizer();
 
   Future<void> _applyEqualizer() async {
-    if (kIsWeb || !Platform.isAndroid) return;
+    if (kIsWeb || !(Platform.isAndroid || Platform.isLinux)) return;
     final settings = SettingsService.instance;
     if (!settings.ready) return;
     await _player.applyEqualizer(
@@ -300,32 +442,73 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   void _onPlayerState(PlaybackStatus status) {
     _broadcast();
-    if (status == PlaybackStatus.completed) {
+    if (status == PlaybackStatus.completed && !_opening && !_loading) {
       unawaited(_advance(auto: true));
     }
   }
 
   Future<void> _advance({bool auto = false}) async {
-    if (_advancing || _shuffleBusy) return;
+    if (_advancing || _shuffleBusy || _loading) return;
     _advancing = true;
     try {
+      final generation = _generation;
+      // Döngü/tek parça modu radyo ile çakışmaz.
+      final canExtendRadio = _radioUsable && _repeatMode == RepeatMode.off;
+
       if (auto) {
+        if (_repeatMode == RepeatMode.one) {
+          await Future<void>.delayed(transitionDelay);
+          if (_generation != generation) return;
+          await _playAt(_index, resumeAt: Duration.zero);
+          return;
+        }
+
         final nextIndex = _index + 1;
+        // Kuyruk bitmeden, son iki parça kala radyoyu genişlet.
+        if (canExtendRadio &&
+            nextIndex < _queue.length &&
+            nextIndex >= _queue.length - 2) {
+          await _extendRadio();
+        }
         if (nextIndex < _queue.length &&
             (_queue[nextIndex].sourceUrl ?? '').isEmpty) {
           unawaited(YoutubeService.instance.prefetch(_queue[nextIndex].id));
         }
-        final generation = _generation;
         await Future<void>.delayed(transitionDelay);
         if (_generation != generation) return;
       }
+
       if (hasNext) {
         await _playAt(_index + 1);
         return;
       }
-      if (!_radioMode || !Library.instance.radioEnabled) return;
-      await _extendRadio();
-      if (hasNext) await _playAt(_index + 1);
+
+      // Kuyruk sonu.
+      if (_repeatMode == RepeatMode.all && _queue.isNotEmpty) {
+        await _playAt(0, resumeAt: Duration.zero);
+        return;
+      }
+      if (_repeatMode == RepeatMode.one && _queue.isNotEmpty) {
+        await _playAt(_index, resumeAt: Duration.zero);
+        return;
+      }
+
+      // Manuel next() de kuyruk sonundaysa radyoyu genişletir.
+      if (canExtendRadio) {
+        await _extendRadio();
+        if (auto && _generation != generation) return;
+        if (hasNext) {
+          await _playAt(_index + 1);
+          return;
+        }
+      }
+
+      // repeat off + radyo kapalı: otomatik geçişte dur.
+      if (auto && _queue.isNotEmpty) {
+        await _player.pause();
+        await _player.seek(Duration.zero);
+        _broadcast();
+      }
     } finally {
       _advancing = false;
     }
@@ -333,16 +516,61 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   Future<void> _extendRadio() async {
     final seed = current;
-    if (seed == null || _extending) return;
+    if (seed == null || _extending || !_radioUsable) return;
     _extending = true;
+    final deadline = DateTime.now().add(_radioTimeout);
+    Duration remaining() {
+      final left = deadline.difference(DateTime.now());
+      return left.isNegative ? Duration.zero : left;
+    }
+
     try {
-      final more = await YoutubeService.instance.related(seed.id, limit: 30);
-      final fresh = more.where((track) {
-        return !_queue.any((queued) => queued.id == track.id);
-      }).toList();
+      List<Track> more = const <Track>[];
+      try {
+        more = await YoutubeService.instance
+            .related(seed.id, limit: 30)
+            .timeout(remaining());
+      } catch (_) {}
+
+      // related boşsa/en çok 10 sn içinde topArtist tohumuyla devam et.
+      if (more.isEmpty) {
+        final top = Library.instance.topArtist;
+        final name = (top != null && top.trim().isNotEmpty)
+            ? top
+            : (seed.artist.trim().isNotEmpty && seed.artist != 'Bilinmeyen'
+                ? seed.artist
+                : null);
+        final left = remaining();
+        if (name != null && left > Duration.zero) {
+          try {
+            more = await YoutubeService.instance
+                .artistTracks(name, channelId: seed.artistId, limit: 30)
+                .timeout(left);
+          } catch (_) {}
+        }
+      }
+      if (more.isEmpty) return;
+
+      final existing = _originalQueue.map((track) => track.id).toSet();
+      final fresh = <Track>[];
+      for (final track in more) {
+        if (track.id.isEmpty || track.id == seed.id) continue;
+        if (!existing.add(track.id)) continue;
+        fresh.add(track);
+        if (_originalQueue.length + fresh.length >= _maxQueueLength) break;
+      }
       if (fresh.isEmpty) return;
-      _queue = List<Track>.unmodifiable([..._queue, ...fresh]);
-      _originalQueue = _queue;
+
+      final original = [..._originalQueue, ...fresh];
+      if (_shuffleMode) {
+        _queue = List<Track>.unmodifiable([
+          ..._queue,
+          ...fresh.toList()..shuffle(),
+        ]);
+      } else {
+        _queue = List<Track>.unmodifiable(original);
+      }
+      _originalQueue = List<Track>.unmodifiable(original);
       _publishQueue();
       notifyListeners();
     } finally {
@@ -420,33 +648,156 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   Future<void> seek(Duration position) => _player.seek(position);
 
   void setRadioMode(bool value) {
+    if (_radioMode == value) return;
     _radioMode = value;
-    notifyListeners();
+    _publishModeState();
   }
 
-  void toggleShuffle() {
-    if (_queue.length < 2) return;
-    _shuffleBusy = true;
-    try {
-      if (_shuffleMode) {
-        _queue = _originalQueue;
-        _shuffleMode = false;
-      } else {
-        final active = current;
-        final rest = _queue.where((track) => track.id != active?.id).toList()
-          ..shuffle();
-        _queue = List<Track>.unmodifiable([
-          if (active != null) active,
-          ...rest,
-        ]);
-        _index = 0;
-        _shuffleMode = true;
+  /// Geriye uyumlu takma ad. Tercih kalıcı hale getirilir.
+  void toggleShuffle() => setShuffleEnabled(!_shuffleEnabled);
+
+  bool get _radioUsable => _radioMode && Library.instance.radioEnabled;
+
+  void setShuffleEnabled(bool value) {
+    _shuffleEnabled = value;
+    if (_queue.length >= 2) {
+      _shuffleBusy = true;
+      try {
+        _applyShuffle(enabled: value);
+        _publishQueue();
+      } finally {
+        _shuffleBusy = false;
       }
-      _publishQueue();
-      notifyListeners();
-    } finally {
-      _shuffleBusy = false;
     }
+    unawaited(_saveBool('ct.shuffle', value));
+    _publishModeState();
+  }
+
+  /// Kuyruğu karıştırır veya orijinal sıraya döndürür. Aktif parça korunur.
+  void _applyShuffle({required bool enabled}) {
+    if (_queue.length < 2) {
+      _shuffleMode = false;
+      return;
+    }
+    if (!enabled) {
+      if (!_shuffleMode) return;
+      final active = current;
+      _queue = _originalQueue;
+      final restored = _queue.indexWhere((track) => track.id == active?.id);
+      _index = restored >= 0 ? restored : 0;
+      _shuffleMode = false;
+      return;
+    }
+    if (_shuffleMode) return;
+    final active = current;
+    final rest = _queue.where((track) => track.id != active?.id).toList()
+      ..shuffle();
+    _queue = List<Track>.unmodifiable([
+      if (active != null) active,
+      ...rest,
+    ]);
+    if (active != null) _index = 0;
+    _shuffleMode = true;
+  }
+
+  /// off -> all -> one -> off sırasıyla döner.
+  void cycleRepeatMode() =>
+      unawaited(setRepeatMode(_nextRepeatMode(_repeatMode)));
+
+  RepeatMode _nextRepeatMode(RepeatMode mode) => switch (mode) {
+        RepeatMode.off => RepeatMode.all,
+        RepeatMode.all => RepeatMode.one,
+        RepeatMode.one => RepeatMode.off,
+      };
+
+  /// [RepeatMode] alır. `BaseAudioHandler.setRepeatMode` ile aynı isimde
+  /// olduğu için parametre `Object?` olarak genişletildi; MediaSession'dan
+  /// gelen `AudioServiceRepeatMode` da aynı yolla çevrilir.
+  @override
+  Future<void> setRepeatMode(Object? repeatMode) async {
+    final mode = _coerceRepeatMode(repeatMode);
+    if (mode == null || _repeatMode == mode) return;
+    _repeatMode = mode;
+    _publishModeState();
+    await _saveString('ct.repeatMode', mode.name);
+  }
+
+  RepeatMode? _coerceRepeatMode(Object? value) {
+    if (value is RepeatMode) return value;
+    if (value is AudioServiceRepeatMode) {
+      return switch (value) {
+        AudioServiceRepeatMode.none => RepeatMode.off,
+        AudioServiceRepeatMode.all => RepeatMode.all,
+        AudioServiceRepeatMode.one => RepeatMode.one,
+        _ => null,
+      };
+    }
+    return null;
+  }
+
+  /// Ses kalitesini değiştirir, aktif parçayı aynı pozisyondan yeni URI ile
+  /// yeniden açar ve çözülmüş adres önbelleğini temizler.
+  Future<void> setQuality(String quality) async {
+    if (quality.isEmpty) return;
+    final position = _player.position;
+    final hasTrack = current != null;
+    _preloaded.clear();
+
+    YoutubeService.instance.setQuality(quality);
+    // Ayarlar ekranı 'veryhigh' anahtarını kullanır; player 'lossless' da
+    // gösterebilir. İki ekranı aynı değerde tut.
+    final settingsQuality = quality == 'lossless' ? 'veryhigh' : quality;
+    if (SettingsService.instance.ready &&
+        SettingsService.instance.audioQuality != settingsQuality) {
+      await SettingsService.instance.setAudioQuality(settingsQuality);
+    }
+    YoutubeService.instance.clearCache();
+    _quality = YoutubeService.instance.quality;
+    unawaited(_saveString('ct.quality', _quality));
+
+    if (hasTrack) {
+      await _playAt(_index, resumeAt: position);
+    }
+    _publishModeState();
+  }
+
+  Future<void> _restorePreferences() {
+    if (_prefsReady) return Future<void>.value();
+    return _prefsFuture ??= _doRestorePreferences();
+  }
+
+  Future<void> _doRestorePreferences() async {
+    try {
+      _prefs = await SharedPreferences.getInstance();
+      final prefs = _prefs!;
+      _shuffleEnabled = prefs.getBool('ct.shuffle') ?? false;
+      _repeatMode = _decodeRepeatMode(prefs.getString('ct.repeatMode'));
+      final quality = prefs.getString('ct.quality');
+      if (quality != null && quality.isNotEmpty) _quality = quality;
+    } catch (_) {
+      // Okunamayan depolama: varsayılanlarla devam et.
+    }
+    _prefsReady = true;
+  }
+
+  RepeatMode _decodeRepeatMode(String? stored) => switch (stored) {
+        'all' => RepeatMode.all,
+        'one' => RepeatMode.one,
+        _ => RepeatMode.off,
+      };
+
+  Future<void> _saveBool(String key, bool value) async {
+    if (!_prefsReady) await _restorePreferences();
+    try {
+      await _prefs?.setBool(key, value);
+    } catch (_) {}
+  }
+
+  Future<void> _saveString(String key, String value) async {
+    if (!_prefsReady) await _restorePreferences();
+    try {
+      await _prefs?.setString(key, value);
+    } catch (_) {}
   }
 
   Future<void> _preloadUpcoming() async {
@@ -484,12 +835,34 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         album: track.artist,
         artUri: Uri.tryParse(track.thumb),
         duration: track.duration,
+        // Arayüz/Android Auto bu alanlardan mod durumunu okuyabilir.
+        extras: <String, dynamic>{
+          'ct.repeatMode': _repeatMode.name,
+          'ct.shuffle': _shuffleEnabled,
+          'ct.radio': _radioMode,
+          'ct.quality': _quality,
+        },
       );
 
   void _publishMediaItem(Track track) {
     mediaItem.add(_toMediaItem(track));
     _publishQueue();
   }
+
+  /// Mod/kalite değişince MediaItem.extras ve playbackState'i yeniler.
+  void _publishModeState() {
+    final active = current;
+    if (active != null) mediaItem.add(_toMediaItem(active));
+    _publishQueue();
+    _broadcast();
+  }
+
+  int _errorCode(String? code) => switch (code) {
+        'blocked' => 1,
+        'offline' => 2,
+        'stream' => 3,
+        _ => 0,
+      };
 
   AudioProcessingState _mapState() {
     if (_error != null) return AudioProcessingState.error;
@@ -532,12 +905,26 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         MediaAction.seekForward,
         MediaAction.seekBackward,
       },
+      repeatMode: switch (_repeatMode) {
+        RepeatMode.off => AudioServiceRepeatMode.none,
+        RepeatMode.all => AudioServiceRepeatMode.all,
+        RepeatMode.one => AudioServiceRepeatMode.one,
+      },
+      shuffleMode: _shuffleEnabled
+          ? AudioServiceShuffleMode.all
+          : AudioServiceShuffleMode.none,
+      queueIndex: _index >= 0 ? _index : null,
+      errorCode: _error == null ? null : _errorCode(_error),
+      errorMessage: errorMessage,
     ));
     notifyListeners();
   }
 
+  /// AudioService/medya tuşu `play` komutu her zaman çalmaya başlatır.
+  /// toggle yalnızca kullanıcı dokunuşunda kullanılır; aksi halde zaten
+  /// çalan parça medya tuşuyla duraklatılırdı.
   @override
-  Future<void> play() => toggle();
+  Future<void> play() => resume();
 
   @override
   Future<void> pause() async {
@@ -569,6 +956,23 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     if (name == 'like') {
       final track = current;
       if (track != null) await Library.instance.toggleLike(track);
+      return null;
+    }
+    if (name == 'repeat') {
+      cycleRepeatMode();
+      return null;
+    }
+    if (name == 'shuffle') {
+      toggleShuffle();
+      return null;
+    }
+    if (name == 'radio') {
+      setRadioMode(!_radioMode);
+      return null;
+    }
+    if (name == 'quality') {
+      final value = extras?['quality'];
+      if (value is String) await setQuality(value);
       return null;
     }
     return super.customAction(name, extras);

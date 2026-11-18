@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -7,7 +8,6 @@ import 'package:cloudtune/core/app_palette.dart';
 
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/library.dart';
@@ -18,9 +18,15 @@ import '../core/theme_state.dart';
 
 /// Odalar: internet üzerinden oda kurma/koda katılma ve kişisel kitaplık.
 class RoomPage extends StatefulWidget {
-  const RoomPage({super.key, this.initialCode, this.initialTab = 0});
+  const RoomPage({
+    super.key,
+    this.initialCode,
+    this.initialPassword,
+    this.initialTab = 0,
+  });
 
   final String? initialCode;
+  final String? initialPassword;
   final int initialTab;
 
   @override
@@ -49,7 +55,8 @@ class _RoomPageState extends State<RoomPage>
   @override
   void initState() {
     super.initState();
-    unawaited(RoomService.init());
+    // Odalar sekmesi açıkken aktif odaları dinle; şifre taşınmaz.
+    unawaited(RoomService.init().then((_) => RoomService.instance.startDiscovery()));
     SharedPreferences.getInstance().then((prefs) {
       final saved = prefs.getString(_displayNameKey) ?? '';
       if (mounted && saved.isNotEmpty) _displayName.text = saved;
@@ -58,6 +65,10 @@ class _RoomPageState extends State<RoomPage>
     if (code != null && code.isNotEmpty && !_joinedInitial) {
       _joinedInitial = true;
       _joinCode.text = code;
+      final password = widget.initialPassword;
+      if (password != null && password.isNotEmpty) {
+        _joinPassword.text = password;
+      }
       unawaited(_openJoinDialog());
     }
   }
@@ -81,8 +92,71 @@ class _RoomPageState extends State<RoomPage>
 
   ImageProvider? get _avatarImage {
     final path = Library.instance.avatarPath;
-    if (path == null || path.isEmpty || !File(path).existsSync()) return null;
+    if (path.isEmpty || !File(path).existsSync()) return null;
+    // Library avatarı versiyonlu dosya adıyla kaydeder; cache key de değişir.
     return FileImage(File(path));
+  }
+
+  /// Kitaplıktaki avatarı oda kanalına göndermek için sıkıştırılmış JPEG
+  /// dataUrl'e çevirir. Yaklaşık 100KB üstü görseller gönderilmez.
+  Future<String> _avatarDataUrl() async {
+    final path = Library.instance.avatarPath;
+    if (path.isEmpty) return '';
+    final file = File(path);
+    if (!file.existsSync()) return '';
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty || bytes.length > 100 * 1024) return '';
+    return 'data:image/jpeg;base64,${base64Encode(bytes)}';
+  }
+
+  Future<void> _publishMyAvatar() async {
+    if (!RoomService.instance.inRoom) return;
+    final url = await _avatarDataUrl();
+    if (url.isNotEmpty) await RoomService.instance.uploadAvatar(url);
+  }
+
+  /// Uzak üye avatarı yalnızca açık onay verildiyse gösterilir.
+  ImageProvider? _memberAvatar(RoomMember member) {
+    if (member.clientId == RoomService.clientId) return _avatarImage;
+    if (!RoomService.instance.remoteDataAllowed) return null;
+    final url = member.avatar;
+    if (!url.startsWith('data:image/')) return null;
+    final comma = url.indexOf(',');
+    if (comma < 0) return null;
+    try {
+      return MemoryImage(base64Decode(url.substring(comma + 1)));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Diğer cihazın oda bilgilerini görmek için uygulama içi onay.
+  Future<bool> _ensureRemoteDataConsent() async {
+    if (RoomService.instance.remoteDataAllowed) return true;
+    final granted = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Cihaz bilgisi erişimi'),
+        content: const Text(
+          'Diğer cihazın oda bilgilerini görmek için izin veriyor musun?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Hayır'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: ThemeState.accent.value,
+            ),
+            child: const Text('İzin ver'),
+          ),
+        ],
+      ),
+    );
+    if (granted == true) await RoomService.instance.grantRemoteData();
+    return granted == true;
   }
 
   Future<void> _saveDisplayName(String value) async {
@@ -92,20 +166,18 @@ class _RoomPageState extends State<RoomPage>
 
   Future<void> _pickAvatar() async {
     try {
+      // 256px/JPEG 72 kalite: dataUrl yaklaşık 100KB sınırında kalır.
       final picked = await _picker.pickImage(
         source: ImageSource.gallery,
-        maxWidth: 768,
-        maxHeight: 768,
-        imageQuality: 85,
+        maxWidth: 256,
+        maxHeight: 256,
+        imageQuality: 72,
       );
       if (picked == null) return;
-      final dir = await getApplicationDocumentsDirectory();
-      final target = File('${dir.path}/room_avatar.jpg');
-      await File(picked.path).copy(target.path);
-      await Library.instance.setAvatar(target.path);
-      if (RoomService.instance.inRoom) {
-        await RoomService.instance.uploadAvatar('local');
-      }
+      // Library seçilen dosyayı versiyonlu adla kopyalar; ayrıca kopya
+      // oluşturmayalım, oda avatarı da aynı kaynaktan yayınlansın.
+      await Library.instance.setAvatar(picked.path);
+      if (RoomService.instance.inRoom) await _publishMyAvatar();
       if (mounted) setState(() {});
     } catch (_) {}
   }
@@ -116,18 +188,53 @@ class _RoomPageState extends State<RoomPage>
     _toast('Odaya bağlanılıyor…');
     final created = await RoomService.instance.create(
       name: _roomName.text.trim(),
-      password: _password.text,
+      password: RoomService.normalizePassword(_password.text),
       displayName: name,
     );
     if (!mounted) return;
-    _toast(created ? 'Oda kuruldu · kodu paylaş' : 'Oda kurulamadı');
+    if (created) {
+      await _publishMyAvatar();
+      await _ensureRemoteDataConsent();
+      _toast('Oda kuruldu · kodu paylaş');
+    } else {
+      _toast(RoomService.instance.error.isEmpty
+          ? 'Oda kurulamadı'
+          : RoomService.instance.error);
+    }
   }
 
-  Future<void> _openJoinDialog() async {
+  /// Kod/şifre onaylandıktan sonra gerçek katılımı yapar. Sonuç tipi hata
+  /// mesajını doğrudan taşır; "Oda bulunamadı veya şifre yanlış" net görünür.
+  Future<void> _performJoin({
+    required String code,
+    required String password,
+    String? displayName,
+  }) async {
+    final name = displayName ?? _displayName.text.trim();
+    if (name.isNotEmpty) await _saveDisplayName(name);
+    final allowed = await _ensureRemoteDataConsent();
+    if (!mounted) return;
+    _toast('Odaya bağlanılıyor…');
+    final result = await RoomService.instance.joinWithResult(
+      code: code,
+      password: password,
+      displayName: name,
+    );
+    if (!mounted) return;
+    if (result.ok) {
+      await _publishMyAvatar();
+      _toast(allowed ? 'Odaya katıldın' : 'Odaya katıldın · uzak avatarlar gizli');
+    } else {
+      _toast(result.error.isEmpty ? 'Katılım başarısız' : result.error);
+    }
+  }
+
+  Future<void> _openJoinDialog({String? code}) async {
     final name = _displayName.text.trim();
     if (name.isNotEmpty) await _saveDisplayName(name);
     if (!mounted) return;
-    final codeController = TextEditingController(text: _joinCode.text.trim());
+    final codeController =
+        TextEditingController(text: RoomService.normalizeCode(code ?? _joinCode.text));
     final passController = TextEditingController(text: _joinPassword.text);
     final result = await showDialog<bool>(
       context: context,
@@ -141,7 +248,7 @@ class _RoomPageState extends State<RoomPage>
               autofocus: true,
               textCapitalization: TextCapitalization.characters,
               decoration: const InputDecoration(
-                labelText: 'Oda kodu',
+                labelText: 'Oda kodu veya davet bağlantısı',
                 prefixIcon: Icon(Icons.meeting_room_outlined),
               ),
             ),
@@ -171,22 +278,70 @@ class _RoomPageState extends State<RoomPage>
         ],
       ),
     );
-    if (result != true || !mounted) return;
+    if (result != true || !mounted) {
+      codeController.dispose();
+      passController.dispose();
+      return;
+    }
 
-    _joinCode.text = codeController.text.trim();
-    _joinPassword.text = passController.text;
-    _toast('Odaya bağlanılıyor…');
-    final joined = await RoomService.instance.join(
+    // Kodu da kopyalayıp yapıştıranlar için link içinden şifre çözülür.
+    final invite = RoomService.parseInvite(codeController.text) ??
+        RoomInvite(
+          code: RoomService.normalizeCode(codeController.text),
+          password: '',
+        );
+    final pass = RoomService.normalizePassword(passController.text);
+    codeController.dispose();
+    passController.dispose();
+
+    _joinCode.text = invite.code;
+    _joinPassword.text = pass.isEmpty ? invite.password : pass;
+    await _performJoin(
       code: _joinCode.text,
       password: _joinPassword.text,
       displayName: name,
     );
-    if (!mounted) return;
-    _toast(joined
-        ? 'Odaya katıldın'
-        : (RoomService.instance.error.isEmpty
-            ? 'Katılım başarısız'
-            : RoomService.instance.error));
+  }
+
+  /// Paylaşılan davet bağlantısını yapıştırır; `?p=` şifresi alanı doldurur.
+  Future<void> _pasteInvite() async {
+    final controller = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Davet bağlantısını yapıştır'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Bağlantı veya oda kodu',
+            hintText: 'cloudtune://room/KOD?p=sifre',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('İptal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: ThemeState.accent.value,
+            ),
+            child: const Text('Devam'),
+          ),
+        ],
+      ),
+    );
+    final invite = accepted == true ? RoomService.parseInvite(controller.text) : null;
+    controller.dispose();
+    if (invite == null) {
+      if (accepted == true) _toast('Geçersiz davet bağlantısı');
+      return;
+    }
+    _joinCode.text = invite.code;
+    _joinPassword.text = invite.password;
+    await _openJoinDialog();
   }
 
   void _toast(String message) {
@@ -199,10 +354,11 @@ class _RoomPageState extends State<RoomPage>
   Future<void> _copyInvite() async {
     final room = RoomService.instance;
     if (!room.inRoom) return;
-    final text = room.inviteLink +
-        (room.hasPassword ? '\nŞifre: ${room.roomPassword}' : '');
-    await Clipboard.setData(ClipboardData(text: text));
-    _toast('Davet bağlantısı kopyalandı');
+    // inviteLink şifreyi `?p=` olarak taşır; ayrı satıra gerek yok.
+    await Clipboard.setData(ClipboardData(text: room.inviteLink));
+    _toast(room.hasPassword
+        ? 'Davet bağlantısı kopyalandı (şifre dahil)'
+        : 'Davet bağlantısı kopyalandı');
   }
 
   @override
@@ -259,6 +415,8 @@ class _RoomPageState extends State<RoomPage>
   }
 
   Widget _entry(Color accent) {
+    final room = RoomService.instance;
+    final found = room.discoveredRooms;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
       children: [
@@ -296,7 +454,32 @@ class _RoomPageState extends State<RoomPage>
             prefixIcon: Icon(Icons.person_outline),
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 24),
+        Row(
+          children: [
+            Expanded(child: Text('Aktif odalar', style: _sectionTitle)),
+            IconButton(
+              tooltip: 'Listeyi yenile',
+              icon: const Icon(Icons.refresh),
+              onPressed: () => unawaited(room.startDiscovery()),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (room.discoveryError.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(room.discoveryError,
+                style: TextStyle(color: AppPalette.textFaint, fontSize: 12)),
+          ),
+        if (found.isEmpty)
+          Text('Şu anda görünen oda yok. Kodla katılabilirsin.',
+              style: TextStyle(color: AppPalette.textFaint, fontSize: 13))
+        else
+          Column(
+            children: [for (final item in found) _discoveryTile(item, accent)],
+          ),
+        const SizedBox(height: 24),
         Text('Yeni oda kur', style: _sectionTitle),
         const SizedBox(height: 8),
         TextField(
@@ -329,7 +512,7 @@ class _RoomPageState extends State<RoomPage>
         Text('Kodla katıl', style: _sectionTitle),
         const SizedBox(height: 8),
         OutlinedButton.icon(
-          onPressed: _openJoinDialog,
+          onPressed: () => _openJoinDialog(),
           icon: const Icon(Icons.login),
           label: const Text('Oda kodunu gir'),
           style: OutlinedButton.styleFrom(
@@ -338,7 +521,57 @@ class _RoomPageState extends State<RoomPage>
             minimumSize: const Size.fromHeight(48),
           ),
         ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: _pasteInvite,
+          icon: const Icon(Icons.content_paste_go),
+          label: const Text('Davet yapıştır'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: accent,
+            side: BorderSide(color: accent.withValues(alpha: 0.6)),
+            minimumSize: const Size.fromHeight(48),
+          ),
+        ),
       ],
+    );
+  }
+
+  /// Şifresiz odaya tek dokunuşla katılır; şifreli oda parola dialogu açar.
+  Widget _discoveryTile(RoomDiscovery item, Color accent) {
+    return Card(
+      color: AppPalette.cardAlt,
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: accent.withValues(alpha: 0.18),
+          child: Icon(
+            item.hasPassword ? Icons.lock_outline : Icons.meeting_room_outlined,
+            color: accent,
+            size: 20,
+          ),
+        ),
+        title: Text(item.name.isEmpty ? 'Oda ${item.code}' : item.name,
+            maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(
+          '${item.code} · ${item.memberCount} dinleyici'
+          '${item.hostName.isEmpty ? '' : ' · ${item.hostName}'}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: Icon(
+          item.hasPassword ? Icons.lock : Icons.login,
+          color: accent,
+          size: 18,
+        ),
+        onTap: () {
+          if (item.hasPassword) {
+            _joinCode.text = item.code;
+            _joinPassword.clear();
+            unawaited(_openJoinDialog());
+          } else {
+            unawaited(_performJoin(code: item.code, password: ''));
+          }
+        },
+      ),
     );
   }
 
@@ -452,7 +685,6 @@ class _RoomPageState extends State<RoomPage>
 
   Widget _members(Color accent) {
     final members = RoomService.instance.members;
-    final image = _avatarImage;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -467,39 +699,69 @@ class _RoomPageState extends State<RoomPage>
             separatorBuilder: (_, __) => const SizedBox(width: 12),
             itemBuilder: (context, i) {
               final member = members[i];
+              final avatar = _memberAvatar(member);
               return SizedBox(
                 width: 76,
-                child: Column(
-                  children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor: accent.withValues(alpha: 0.2),
-                      backgroundImage: member.clientId == RoomService.clientId
-                          ? image
-                          : null,
-                      child: member.clientId == RoomService.clientId &&
-                              image != null
-                          ? null
-                          : Icon(Icons.person, color: accent, size: 24),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      member.isHost
-                          ? '${member.name} (Ev sahibi)'
-                          : member.name,
-                      style: const TextStyle(
-                          fontSize: 10, fontWeight: FontWeight.w600),
-                      maxLines: 2,
-                      textAlign: TextAlign.center,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: member.clientId == RoomService.clientId
+                      ? null
+                      : () => unawaited(_memberDetail(member)),
+                  child: Column(
+                    children: [
+                      CircleAvatar(
+                        radius: 24,
+                        backgroundColor: accent.withValues(alpha: 0.2),
+                        backgroundImage: avatar,
+                        child: avatar == null
+                            ? Icon(Icons.person, color: accent, size: 24)
+                            : null,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        member.isHost
+                            ? '${member.name} (Ev sahibi)'
+                            : member.name,
+                        style: const TextStyle(
+                            fontSize: 10, fontWeight: FontWeight.w600),
+                        maxLines: 2,
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
               );
             },
           ),
         ),
       ],
+    );
+  }
+
+  /// Katılımcı detayını açmadan önce onay ister; onay yoksa veri gösterilmez.
+  Future<void> _memberDetail(RoomMember member) async {
+    final allowed = await _ensureRemoteDataConsent();
+    if (!allowed || !mounted) return;
+    final avatar = _memberAvatar(member);
+    final shortId = member.clientId.length > 8
+        ? member.clientId.substring(0, 8)
+        : member.clientId;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: ListTile(
+          leading: CircleAvatar(
+            radius: 28,
+            backgroundImage: avatar,
+            child: avatar == null ? const Icon(Icons.person) : null,
+          ),
+          title: Text(member.name),
+          subtitle: Text(
+            '${member.isHost ? 'Ev sahibi' : 'Dinleyici'} · $shortId',
+          ),
+        ),
+      ),
     );
   }
 

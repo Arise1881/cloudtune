@@ -9,6 +9,7 @@ import '../core/repair_bot.dart';
 import '../core/settings_service.dart';
 import '../core/theme_state.dart';
 import '../core/update_service.dart';
+import '../l10n/app_strings.dart';
 
 /// Uygulama tercihleri: görünüm, çalma, dil ve sistem.
 /// Proxy, SponsorBlock, yerel eşitleme ve "diğerleri" araçları yoktur.
@@ -36,23 +37,17 @@ class SettingsScreen extends StatelessWidget {
     Color(0xFFE0E0E0),
   ];
 
-  static const Map<String, String> _qualityLabels = {
-    'low': 'Düşük',
-    'medium': 'Orta',
-    'high': 'Yüksek',
-    'veryhigh': 'Çok yüksek',
-  };
-
   @override
   Widget build(BuildContext context) {
     final accent = ThemeState.accent.value;
+    final s = AppStrings.of(context);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Ayarlar'),
+        title: Text(s.settings),
         actions: [
           IconButton(
-            tooltip: 'Ana sayfa',
+            tooltip: s.home,
             icon: const Icon(Icons.home_outlined),
             onPressed: () =>
                 Navigator.of(context).popUntil((route) => route.isFirst),
@@ -73,16 +68,16 @@ class SettingsScreen extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
             children: [
-              _ProfileCard(accent: accent),
+              _ProfileCard(accent: accent, s: s),
               const SizedBox(height: 20),
               _SectionCard(
                 icon: Icons.palette_outlined,
-                title: 'Görünüm',
+                title: s.appearance,
                 children: [
                   Padding(
                     padding: EdgeInsets.fromLTRB(16, 4, 16, 10),
                     child: Text(
-                      'Vurgu rengi uygulamanın tamamına uygulanır.',
+                      s.accentHint,
                       style:
                           TextStyle(color: AppPalette.textSubtle, fontSize: 12),
                     ),
@@ -105,23 +100,23 @@ class SettingsScreen extends StatelessWidget {
                   const SizedBox(height: 12),
                   _DropdownRow<ThemeMode>(
                     icon: Icons.brightness_6_outlined,
-                    title: 'Tema',
+                    title: s.theme,
                     value: settings.themeMode,
-                    items: const [
+                    items: [
                       DropdownMenuItem(
-                          value: ThemeMode.dark, child: Text('Koyu')),
+                          value: ThemeMode.dark, child: Text(s.themeDark)),
                       DropdownMenuItem(
-                          value: ThemeMode.light, child: Text('Açık')),
+                          value: ThemeMode.light, child: Text(s.themeLight)),
                       DropdownMenuItem(
-                          value: ThemeMode.system, child: Text('Sistem')),
+                          value: ThemeMode.system, child: Text(s.themeSystem)),
                     ],
                     onChanged: (value) =>
                         settings.setThemeMode(value ?? ThemeMode.dark),
                   ),
                   SwitchListTile(
                     secondary: const Icon(Icons.nightlight),
-                    title: const Text('OLED siyah arka plan'),
-                    subtitle: const Text('Koyu temada saf siyah zemin.'),
+                    title: Text(s.oledBlack),
+                    subtitle: Text(s.oledHint),
                     value: settings.oledBlack,
                     onChanged: settings.setOledBlack,
                   ),
@@ -130,13 +125,12 @@ class SettingsScreen extends StatelessWidget {
               const SizedBox(height: 16),
               _SectionCard(
                 icon: Icons.audiotrack,
-                title: 'Çalma',
+                title: s.playback,
                 children: [
                   SwitchListTile(
                     secondary: const Icon(Icons.radio),
-                    title: const Text('Sonsuz radyo'),
-                    subtitle: const Text(
-                        'Şarkı bitince benzer parçalarla devam eder.'),
+                    title: Text(s.endlessRadio),
+                    subtitle: Text(s.endlessRadioHint),
                     value: Library.instance.radioEnabled,
                     onChanged: (value) {
                       Library.instance.setRadioEnabled(value);
@@ -145,30 +139,33 @@ class SettingsScreen extends StatelessWidget {
                   ),
                   SwitchListTile(
                     secondary: const Icon(Icons.download_outlined),
-                    title: const Text('Cihaza doğrudan indir'),
-                    subtitle: const Text(
-                        'İndirilenler Download/CloudTune klasörüne kaydedilir.'),
+                    title: Text(s.downloadToDevice),
+                    subtitle: Text(s.downloadToDeviceHint),
                     value: Library.instance.downloadToDevice,
                     onChanged: Library.instance.setDownloadToDevice,
                   ),
                   _DropdownRow<String>(
                     icon: Icons.high_quality_outlined,
-                    title: 'Ses kalitesi',
+                    title: s.audioQuality,
                     value: settings.audioQuality,
                     items: [
                       for (final quality in SettingsService.audioQualities)
                         DropdownMenuItem(
                           value: quality,
-                          child: Text(_qualityLabels[quality] ?? quality),
+                          child: Text(_qualityLabel(quality, s)),
                         ),
                     ],
-                    onChanged: (value) =>
-                        settings.setAudioQuality(value ?? 'high'),
+                    onChanged: (value) async {
+                      final quality = value ?? 'high';
+                      await settings.setAudioQuality(quality);
+                      // Motorun aktif URI'si ve medya oturumu bayat kalmasın.
+                      await PlayerController.instance.setQuality(quality);
+                    },
                   ),
                   SwitchListTile(
                     secondary: const Icon(Icons.graphic_eq),
-                    title: const Text('Ekolayzer'),
-                    subtitle: const Text('Sesi artır / azalt.'),
+                    title: Text(s.equalizer),
+                    subtitle: Text(s.equalizerHint),
                     value: settings.equalizerEnabled,
                     onChanged: (value) async {
                       await settings.setEqualizerEnabled(value);
@@ -183,7 +180,7 @@ class SettingsScreen extends StatelessWidget {
                         children: [
                           for (final preset in SettingsService.equalizerPresets)
                             ChoiceChip(
-                              label: Text(_eqLabel(preset)),
+                              label: Text(_eqLabel(preset, s)),
                               selected: settings.equalizerPreset == preset,
                               onSelected: (selected) async {
                                 await settings.setEqualizerPreset(
@@ -202,11 +199,11 @@ class SettingsScreen extends StatelessWidget {
               const SizedBox(height: 16),
               _SectionCard(
                 icon: Icons.language,
-                title: 'Dil',
+                title: s.language,
                 children: [
                   _DropdownRow<String>(
                     icon: Icons.translate,
-                    title: 'Uygulama dili',
+                    title: s.appLanguage,
                     value: settings.languageCode,
                     items: [
                       for (final entry
@@ -223,36 +220,61 @@ class SettingsScreen extends StatelessWidget {
               const SizedBox(height: 16),
               _SectionCard(
                 icon: Icons.build_outlined,
-                title: 'Sistem',
+                title: s.system,
                 children: [
                   ListTile(
                     leading: _RepairDot(active: RepairBot.instance.active),
-                    title: const Text('Onarım botu'),
-                    subtitle: Text(_repairStatus()),
+                    title: Text(s.repairBot),
+                    subtitle: Text(_repairStatus(s)),
                     trailing: TextButton(
                       onPressed: () async {
                         await RepairBot.instance.forceScan();
                         if (context.mounted) {
                           ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                            const SnackBar(
-                                content: Text('Onarım taraması tamamlandı.')),
+                            SnackBar(content: Text(s.scanDone)),
                           );
                         }
                       },
-                      child: const Text('Şimdi tara'),
+                      child: Text(s.scanNow),
                     ),
                   ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: RepairBot.instance.fullRepairRunning
+                            ? null
+                            : () => unawaited(_runFullRepair(context)),
+                        icon: const Icon(Icons.healing_outlined),
+                        label: Text(s.fullRepair),
+                      ),
+                    ),
+                  ),
+                  if (RepairBot.instance.fullRepairRunning)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(s.fullRepairRunning,
+                              style: const TextStyle(fontSize: 12)),
+                          const SizedBox(height: 6),
+                          const LinearProgressIndicator(),
+                        ],
+                      ),
+                    ),
                   ListTile(
                     leading: const Icon(Icons.description_outlined),
-                    title: const Text('Onarım kayıtları'),
-                    subtitle: const Text('Son onarım olaylarını görüntüle.'),
+                    title: Text(s.repairLogs),
+                    subtitle: Text(s.repairLogsHint),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () => _showRepairLogs(context),
+                    onTap: () => _showRepairLogs(context, s),
                   ),
                   ListTile(
                     leading: const Icon(Icons.system_update_alt),
-                    title: const Text('Güncellemeler'),
-                    subtitle: Text(_updateStatus()),
+                    title: Text(s.updates),
+                    subtitle: Text(_updateStatus(s)),
                     trailing: UpdateService.instance.checking
                         ? const SizedBox(
                             width: 18,
@@ -260,24 +282,24 @@ class SettingsScreen extends StatelessWidget {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.chevron_right),
-                    onTap: () => _checkUpdates(context),
+                    onTap: () => _checkUpdates(context, s),
                   ),
                   if (UpdateService.instance.updateAvailable)
                     ListTile(
                       leading: Icon(Icons.download_for_offline_outlined,
                           color: accent),
-                      title: const Text('Güncellemeyi indir ve kur'),
+                      title: Text(s.updateInstall),
                       subtitle: UpdateService.instance.downloading
                           ? LinearProgressIndicator(
                               value: UpdateService.instance.downloadProgress,
                             )
-                          : const Text('Yeni sürümü şimdi yükle'),
+                          : Text(s.updateInstallHint),
                       onTap: () => _installUpdate(context),
                     ),
-                  const ListTile(
-                    leading: Icon(Icons.music_note),
-                    title: Text('CloudTune'),
-                    subtitle: Text('YouTube akışlı müzik çalar · reklamsız'),
+                  ListTile(
+                    leading: const Icon(Icons.music_note),
+                    title: const Text('CloudTune'),
+                    subtitle: Text(s.appTagline),
                   ),
                 ],
               ),
@@ -288,22 +310,82 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  String _repairStatus() {
+  String _repairStatus(AppStrings s) {
     final bot = RepairBot.instance;
-    if (!bot.active) return 'Beklemede';
-    if (bot.scanning) return 'Denetleniyor…';
-    final status = 'Arka planda etkin · ${bot.fixCount} onarım';
+    if (!bot.active) return s.repairIdle;
+    if (bot.scanning) return s.repairScanning;
+    final status = s.repairBackground(bot.fixCount);
     return bot.pendingCount > 0
-        ? '$status · ${bot.pendingCount} bekliyor'
+        ? '$status · ${s.repairPending(bot.pendingCount)}'
         : status;
   }
 
-  Future<void> _showRepairLogs(BuildContext context) async {
+  /// Tam onarım bitince aşama aşama sonucu gösterir.
+  Future<void> _runFullRepair(BuildContext context) async {
+    final report = await RepairBot.instance.runFullRepair();
+    if (!context.mounted) return;
+    await _showFullRepairResult(context, report);
+  }
+
+  Future<void> _showFullRepairResult(
+      BuildContext context, RepairReport report) async {
+    final s = AppStrings.of(context);
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('Onarım kayıtları'),
+          title: Text(s.fullRepairTitle),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(report.hasRemaining
+                    ? s.resultRemaining(report.remainingCount)
+                    : s.resultClean),
+                const SizedBox(height: 4),
+                Text(s.resultFixed(report.fixedCount)),
+                const SizedBox(height: 12),
+                for (final stage in report.stages)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(_stageSummary(s, stage)),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(s.close),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _stageSummary(AppStrings s, RepairStageResult stage) {
+    final name = switch (stage.name) {
+      'playback' => s.stagePlayback,
+      'downloads' => s.stageDownloads,
+      'pending' => s.stagePending,
+      _ => stage.name,
+    };
+    final status = switch (stage.status) {
+      RepairStageStatus.success => s.statusSuccess,
+      RepairStageStatus.problem => s.statusProblem,
+      RepairStageStatus.skipped => s.statusSkipped,
+    };
+    return s.stageSummary(name, status, stage.fixed, stage.remaining);
+  }
+
+  Future<void> _showRepairLogs(BuildContext context, AppStrings s) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(s.repairLogs),
           content: SizedBox(
             width: double.maxFinite,
             child: FutureBuilder<String>(
@@ -313,7 +395,7 @@ class SettingsScreen extends StatelessWidget {
                   return const Center(child: CircularProgressIndicator());
                 }
                 final text = snapshot.data ?? '';
-                if (text.isEmpty) return const Text('Kayıt yok.');
+                if (text.isEmpty) return Text(s.noLogs);
                 return SingleChildScrollView(child: Text(text));
               },
             ),
@@ -324,11 +406,11 @@ class SettingsScreen extends StatelessWidget {
                 await RepairBot.clearLogs();
                 if (dialogContext.mounted) Navigator.of(dialogContext).pop();
               },
-              child: const Text('Temizle'),
+              child: Text(s.clear),
             ),
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Kapat'),
+              child: Text(s.close),
             ),
           ],
         );
@@ -336,22 +418,22 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  String _updateStatus() {
+  String _updateStatus(AppStrings s) {
     final update = UpdateService.instance;
-    if (update.updateAvailable) return 'Yeni sürüm: ${update.latestVersion}';
-    if (update.error != null) return 'Kontrol edilemedi';
-    return 'Kurulu sürüm: ${update.installedVersion}';
+    if (update.updateAvailable) return s.updateNewVersion(update.latestVersion);
+    if (update.error != null) return s.updateCheckFailed;
+    return s.updateInstalled(update.installedVersion);
   }
 
-  Future<void> _checkUpdates(BuildContext context) async {
+  Future<void> _checkUpdates(BuildContext context, AppStrings s) async {
     await UpdateService.instance.checkForUpdate(force: true);
     if (!context.mounted) return;
     final update = UpdateService.instance;
     final message = update.updateAvailable
-        ? 'Yeni sürüm hazır: ${update.latestVersion}'
+        ? s.updateReady(update.latestVersion)
         : update.error != null
-            ? 'Güncelleme kontrolü başarısız.'
-            : 'Uygulama güncel.';
+            ? s.updateCheckError
+            : s.updateCurrent;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
       SnackBar(content: Text(message)),
     );
@@ -369,18 +451,27 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
-String _eqLabel(String preset) => switch (preset) {
-      'bass' => 'Bas',
-      'treble' => 'Tiz',
-      'vocal' => 'Vokal',
-      'flat' => 'Düz',
-      _ => 'Normal',
+String _qualityLabel(String quality, AppStrings s) => switch (quality) {
+      'low' => s.qualityLow,
+      'medium' => s.qualityMedium,
+      'high' => s.qualityHigh,
+      'veryhigh' => s.qualityVeryHigh,
+      _ => quality,
+    };
+
+String _eqLabel(String preset, AppStrings s) => switch (preset) {
+      'bass' => s.eqBass,
+      'treble' => s.eqTreble,
+      'vocal' => s.eqVocal,
+      'flat' => s.eqFlat,
+      _ => s.eqNormal,
     };
 
 class _ProfileCard extends StatelessWidget {
-  const _ProfileCard({required this.accent});
+  const _ProfileCard({required this.accent, required this.s});
 
   final Color accent;
+  final AppStrings s;
 
   @override
   Widget build(BuildContext context) {
@@ -410,7 +501,7 @@ class _ProfileCard extends StatelessWidget {
                     style:
                         TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
                 SizedBox(height: 4),
-                Text('Müziğini sen yönet · reklamsız, odaklı, hızlı',
+                Text(s.profileTagline,
                     style:
                         TextStyle(color: AppPalette.textMuted, fontSize: 12)),
               ],

@@ -1,3 +1,6 @@
+// ignore_for_file: avoid_dynamic_calls
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:cloudtune/core/app_palette.dart';
@@ -8,6 +11,7 @@ import '../core/theme_state.dart';
 import '../core/youtube_service.dart';
 import '../ui/track_tile.dart';
 import 'artist_page.dart';
+import 'playlist_editor_page.dart';
 
 /// Playlist detail: a header followed by one continuous, scrollable list.
 class PlaylistPage extends StatefulWidget {
@@ -29,6 +33,7 @@ class _PlaylistResults {
 
 class _PlaylistPageState extends State<PlaylistPage> {
   late Future<_PlaylistResults> _future;
+  ArtistPlaylistView? _artist;
 
   @override
   void initState() {
@@ -41,11 +46,29 @@ class _PlaylistPageState extends State<PlaylistPage> {
       YoutubeService.instance.playlistInfo(widget.id),
       YoutubeService.instance.playlist(widget.id, limit: 300),
     ]);
-    return _PlaylistResults(
-      results[0] as PlaylistInfo?,
-      results[1] as List<Track>,
-    );
+    final info = results[0] as PlaylistInfo?;
+    final tracks = results[1] as List<Track>;
+
+    // Sanatçı listesi ikinci planda yüklenir; ana liste bloke olmaz.
+    final artistId = tracks.isEmpty ? null : tracks.first.artistId;
+    if (artistId != null && artistId.isNotEmpty) {
+      unawaited(
+        fetchArtistPlaylist(
+          channelId: artistId,
+          name: info?.author.isNotEmpty == true
+              ? info!.author
+              : (tracks.isEmpty ? widgetName : tracks.first.artist),
+        ).then((view) {
+          if (!mounted || view.tracks.isEmpty) return;
+          setState(() => _artist = view);
+        }).catchError((_) {}),
+      );
+    }
+
+    return _PlaylistResults(info, tracks);
   }
+
+  String get widgetName => widget.initialTitle ?? 'Çalma listesi';
 
   void _openArtist(Track track) {
     Navigator.of(context).push(
@@ -56,6 +79,25 @@ class _PlaylistPageState extends State<PlaylistPage> {
           seedTrack: track,
         ),
       ),
+    );
+  }
+
+  Future<void> _downloadAll(String title, List<Track> tracks) async {
+    if (tracks.isEmpty) return;
+    final savedWithGroup = await recordSearchDownloadGroup(title, tracks);
+    if (!savedWithGroup) await downloadTracks(tracks);
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text('${tracks.length} parça indirmeye alındı.')),
+    );
+  }
+
+  Future<void> _saveToLibrary(String title, List<Track> tracks) async {
+    if (tracks.isEmpty) return;
+    await saveSearchPlaylistToLibrary(title, tracks);
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text('$title kitaplığına kaydedildi.')),
     );
   }
 
@@ -74,11 +116,14 @@ class _PlaylistPageState extends State<PlaylistPage> {
           final tracks = data?.tracks ?? const <Track>[];
           final title = data?.info?.title.isNotEmpty == true
               ? data!.info!.title
-              : (widget.initialTitle ?? 'Çalma listesi');
+              : widgetName;
+          final hasArtist = _artist != null && _artist!.tracks.isNotEmpty;
+          final artistTracks = hasArtist ? _artist!.tracks : <Track>[];
+          final baseCount = tracks.isEmpty ? 2 : tracks.length + 1;
 
           return ListView.builder(
             padding: const EdgeInsets.only(bottom: 24),
-            itemCount: tracks.isEmpty ? 2 : tracks.length + 1,
+            itemCount: baseCount + (hasArtist ? 1 + artistTracks.length : 0),
             itemBuilder: (context, i) {
               if (i == 0) {
                 return _Header(
@@ -91,6 +136,11 @@ class _PlaylistPageState extends State<PlaylistPage> {
                   onPlay: tracks.isEmpty
                       ? null
                       : () => PlayerController.instance.playQueue(tracks, 0),
+                  onDownload:
+                      tracks.isEmpty ? null : () => _downloadAll(title, tracks),
+                  onSave: tracks.isEmpty
+                      ? null
+                      : () => _saveToLibrary(title, tracks),
                 );
               }
               if (tracks.isEmpty) {
@@ -99,12 +149,39 @@ class _PlaylistPageState extends State<PlaylistPage> {
                   child: Text('Liste boş veya erişilemiyor.'),
                 );
               }
-
-              final track = tracks[i - 1];
+              if (i < baseCount) {
+                final track = tracks[i - 1];
+                return TrackTile(
+                  track: track,
+                  queue: tracks,
+                  index: i - 1,
+                  onArtistTap: () => _openArtist(track),
+                );
+              }
+              if (i == baseCount) {
+                return _ArtistSectionHeader(
+                  title: _artist?.title ?? title,
+                  count: artistTracks.length,
+                  onPlay: () => PlayerController.instance.playQueue(
+                    artistTracks,
+                    0,
+                    radio: false,
+                  ),
+                  onDownload: () => _downloadAll(
+                    _artist?.title ?? title,
+                    artistTracks,
+                  ),
+                  onSave: () => _saveToLibrary(
+                    '${_artist?.title ?? title} - Sanatçı',
+                    artistTracks,
+                  ),
+                );
+              }
+              final track = artistTracks[i - baseCount - 1];
               return TrackTile(
                 track: track,
-                queue: tracks,
-                index: i - 1,
+                queue: artistTracks,
+                index: i - baseCount - 1,
                 onArtistTap: () => _openArtist(track),
               );
             },
@@ -122,6 +199,8 @@ class _Header extends StatelessWidget {
     required this.cover,
     required this.count,
     required this.onPlay,
+    this.onDownload,
+    this.onSave,
   });
 
   final String title;
@@ -129,6 +208,8 @@ class _Header extends StatelessWidget {
   final String? cover;
   final int count;
   final VoidCallback? onPlay;
+  final VoidCallback? onDownload;
+  final VoidCallback? onSave;
 
   @override
   Widget build(BuildContext context) {
@@ -186,7 +267,108 @@ class _Header extends StatelessWidget {
             label: const Text('Tümünü çal'),
             style: FilledButton.styleFrom(backgroundColor: accent),
           ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              OutlinedButton.icon(
+                onPressed: onDownload,
+                icon: const Icon(Icons.download_outlined, size: 18),
+                label: const Text('Tümünü indir'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: accent,
+                  side: BorderSide(color: accent.withValues(alpha: 0.5)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: onSave,
+                icon: const Icon(Icons.save_alt_outlined, size: 18),
+                label: const Text('Kitaplığıma kaydet'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: accent,
+                  side: BorderSide(color: accent.withValues(alpha: 0.5)),
+                ),
+              ),
+            ],
+          ),
           const Divider(height: 28),
+        ],
+      ),
+    );
+  }
+}
+
+class _ArtistSectionHeader extends StatelessWidget {
+  const _ArtistSectionHeader({
+    required this.title,
+    required this.count,
+    required this.onPlay,
+    required this.onDownload,
+    required this.onSave,
+  });
+
+  final String title;
+  final int count;
+  final VoidCallback onPlay;
+  final VoidCallback onDownload;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = ThemeState.value;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.person_outline, size: 18, color: accent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Sanatçı Çalma Listesi · $title',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Text(
+                '$count parça',
+                style: TextStyle(color: AppPalette.textSubtle, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: onPlay,
+                icon: const Icon(Icons.play_arrow, size: 18),
+                label: const Text('Ayrı çalma listesi olarak çal'),
+                style: OutlinedButton.styleFrom(foregroundColor: accent),
+              ),
+              OutlinedButton.icon(
+                onPressed: onDownload,
+                icon: const Icon(Icons.download_outlined, size: 18),
+                label: const Text('Tümünü indir'),
+                style: OutlinedButton.styleFrom(foregroundColor: accent),
+              ),
+              OutlinedButton.icon(
+                onPressed: onSave,
+                icon: const Icon(Icons.save_alt_outlined, size: 18),
+                label: const Text('Kitaplığıma kaydet'),
+                style: OutlinedButton.styleFrom(foregroundColor: accent),
+              ),
+            ],
+          ),
+          const Divider(height: 24),
         ],
       ),
     );

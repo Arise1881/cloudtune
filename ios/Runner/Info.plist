@@ -70,6 +70,21 @@
 		<array>
 			<string>audio</string>
 		</array>
+		<key>CFBundleURLTypes</key>
+		<array>
+			<dict>
+				<key>CFBundleTypeRole</key>
+				<string>Editor</string>
+				<key>CFBundleURLName</key>
+				<string>com.cloudtune.app</string>
+				<key>CFBundleURLSchemes</key>
+				<array>
+					<string>cloudtune</string>
+				</array>
+			</dict>
+		</array>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>Yerel sesli arama için mikrofonunuzdan kısa bir kayıt alınır; ses cihazınızda metne çevrilir.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>Oda avatarınız için galerinizden bir görsel seçmenize izin verir.</string>
 		<key>NSPhotoLibraryAddUsageDescription</key>

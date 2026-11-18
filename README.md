@@ -27,7 +27,7 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 3. APK'yı kurun ve uygulamayı açın.
 4. İlk açılışta izinler:
    - **Bildirimler** — arka plan çalma ve kilit ekranı kontrolleri için,
-   - **Mikrofon** — yalnızca sesli arama düğmesine bastığınızda kullanılır; uygulama sürekli dinlemez,
+   - **Mikrofon** — uygulama açılışta **istemez**; sesli arama düğmesine bastığınızda ister ve yalnızca kayıt süresince aktif kalır,
    - **Depolama** (Android 9 ve altı) — şarkıları `Download/CloudTune` klasörüne kaydetmek için.
 5. Ayarlar → **Tema** seçeneğinden *Koyu / Açık / Sistem* modunu seçin. Vurgu rengi ve OLED siyah zemin de buradan ayarlanır.
 6. Arama kutusuna şarkı/sanatçı yazın veya bir YouTube bağlantısı yapıştırın. İlk parçayı çaldıktan sonra **yukarıdan aşağıya kaydırarak** ana sayfa ve arama sonuçlarını yenileyebilirsiniz.
@@ -40,36 +40,46 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 ### Çalma
 - **Doğrudan YouTube** — arama, video/çalma listesi çözümlemesi ve akış cihazda yapılır
-- **Sonsuz radyo** — kuyruk bitince ilgili parçalarla devam eder; tek ileri atlamada otomatik atlama yoktur
+- **Sonsuz radyo** — kuyruk bitmeden ilgili parçalarla genişletilir; tek kaynak düşse de alternatifler denenir
+- **Tekrar modu** — kapalı / tüm listeyi tekrarla / tek parçayı tekrarla; oynatıcıda döngü ikonuyla değişir
+- **Karışık çal** — kuyruğu karıştırır, ikon anında durumu gösterir
+- **Ses kalitesi** — düşük / orta / yüksek / lossless itag kısıtı; değişimde aktif parça pozisyonu korunarak yeniden açılır
 - **Arka plan çalma** — ekran kilitliyken devam eder; foreground servis duraklatmada kapanmaz, böylece ilk ses/çizirti sorunu oluşmaz
 - **Kilit ekranı / bildirim kontrolleri** — şarkı bilgisi, ileri–geri, beğeni, medya tuşları
 - **Ekolayzer** — açılışta ve ayar değişiminde uygulanır; parça başına uygulanmadığı için kesilme yapmaz
 - **Çizirti önleme** — kaynak değişiminden önce ses kazancı sabitlenir
 
 ### Arama ve keşif
-- **Metin arama** — şarkı, sanatçı ve YouTube bağlantıları
-- **Sesli arama** — mikrofona kısa dokunuşta dinleme açılır ve konuşma bitince arama yapılır; basılı tutup bırakınca söylenen metin aranır. Hata sonrası otomatik yeniden dinleme yoktur. Mikrofon yalnızca kullanıcı dokunduğunda aktiftir.
-- **Sanatçı parçaları** — arama sonuçlarında “Çalma Listeleri ve Şarkılar” başlığı altında sanatçının tüm parçaları listelenir
-- **Kişisel ana sayfa** — dinleme geçmişine göre bölümler; içerik kendiliğinden değişmez, `RefreshIndicator` ile yenilenir
-- **Pull-to-refresh** — ana sayfa ve arama sonuçları yukarıdan aşağıya kaydırıldığında güncellenir
+- **Metin arama** — şarkı, sanatçı ve YouTube bağlantıları; sonuçlar TTL önbellekte tutulur, gereksiz tekrar araması yapılmaz
+- **Yerel Whisper sesli arama** — Google/sistem tanıma servisi kullanılmaz. Mikrofona basıldığında kayıt yapılır, çok dilli Whisper modeli cihazda transkript üretir; ilk kullanımda model indirilir. Mikrofon **yalnızca** bu akışta açılır; uygulama açılışında izin istenmez, kullanıcı dokununca istenir.
+- **Sanatçı parçaları** — arama sonuçlarında “Çalma Listeleri ve Şarkılar” başlığı altında sanatçının tüm parçaları ayrı bir çalma listesi olarak listelenir; “Tümünü indir” ve “Kitaplığıma kaydet” aksiyonları vardır
+- **Kişisel ana sayfa** — dinleme geçmişine göre bölümler; içerik kendiliğinden değişmez, zamanlayıcı veya Library bildirimiyle yeniden arama yapılmaz
+- **Pull-to-refresh** — ana sayfa ve arama sonuçları **yalnızca** yukarıdan aşağıya kaydırıldığında yenilenir
+- **Cihaz bilgisi onayı** — oda katılımı ve başka cihazın bilgilerini görüntüleme kullanıcı onayına bağlıdır
 
 ### Kütüphane ve sosyal
-- **Çalma listeleri** — tek kaydırmalı liste, “Tümünü çal”
-- **Sanatçı profilleri** — sanatçının tüm parçaları tek listede
-- **İndirilenler** — Android `Download/CloudTune`, masaüstü Belgeler klasörü; internet olmadan çalınabilir
-- **Oda** — oda koduyla paylaşım, avatar, beğeniler (MQTT üzerinden eşzamanlı)
+- **Çalma listeleri** — oluşturma, adlandırma, silme; liste içi parça sıralaması `ReorderableListView` ile düzenlenir, sıra kalıcıdır
+- **Sanatçı profilleri** — sanatçının parçaları ayrı çalma listesi olarak kaydedilir, indirilir ve tek listede çalınır
+- **İndirilenler** — Android `Download/CloudTune`, masaüstü Belgeler klasörü; MIME/itag'e göre doğru uzantı (`.webm`/`.m4a`/`.mp3`), sanatçı ve arama grupları ayrı kartlarda, internet olmadan çalınabilir
+- **Odalar** — oda listesi (ad, kod, kişi sayısı, kilit durumu), şifresiz odaya tek dokunuşla katılım, davet linkinde şifre, uzaktan katılımcı avatarları
+- **Kararlı avatar** — sürümlü dosya adı ve cache key'i; kitaplık/oda avatarı her yeniden çizimde değişmez
+- **Dil** — Ayarlar'dan seçilen dil `MaterialApp.locale` olarak uygulanır; TR/EN tam çeviri, diğer diller EN'ye düşer
 - **18 vurgu rengi**, açık/koyu/sistem teması, OLED siyah zemin
 
 ### Bakım ve güncelleme
 - **Uygulama içi güncelleme** — `update.json` manifestini okur, ABI'ye uygun APK'yı indirir
-- **Gizli onarım botu** — akış hatalarını sessizce onarır, düşük pil/CPU kullanır
+- **Onarım botu** — akış/indirme/bağlantı hatalarını arka planda sessizce onarır; Ayarlar → **Tam onarımı çalıştır** ile tüm aşamalar zorla koşulur ve sonuç diyaloğu gösterilir
 - **Bağlantı desteği** — `youtu.be`, `m.youtube.com`, `music.youtube.com`, `youtube.com`, `www.youtube.com`; Ayarlar'dan açılıp kapatılabilir
 
-Kullanıcıya bağlantı bilgisi veya ham hata mesajı gösterilmez; hatalar Türkçe açıklamalarla eşlenir.
+Kullanıcıya ham hata mesajı gösterilmez; hatalar Türkçe açıklamalarla eşlenir.
 
-### Onarım zinciri
-1. Doğrudan YouTube akışını yeniden dene
-2. Cihaz raporunu `CloudTune@hotmail.com` adresine ilet (anonym; platform, sürüm, video kimliği)
+### Onarım zinciri (yerel, ağ trafiği yok)
+1. **Oynatma** — akış hatasında parçayı yeniden dene (gerekirse doğrudan akışa geç)
+2. **İndirmeler** — başarısız indirmeleri geri çekilmeli yeniden dene
+3. **Bekleyen işler** — başarısız bağlantı/arama olaylarını yeniden çalıştır
+4. **Tam onarım** — yukarıdaki üç aşamayı tek seferde zorla çalıştır, sayısal sonucu göster
+
+Loglar yalnızca cihazda `repair_bot_logs.json` dosyasına yazılır; e-posta veya uzak servise gönderim yapılmaz.
 
 ---
 
@@ -99,7 +109,7 @@ Kullanıcıya bağlantı bilgisi veya ham hata mesajı gösterilmez; hatalar Tü
 ```
 README.md                  Bu dosya: özellikler, kurulum, uyum, güncelleme, gizlilik
 LICENSE                    MIT lisans
-pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.37+238)
+pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.38+239)
 analysis_options.yaml      Dart/Flutter linter kuralları
 .metadata                  Flutter proje metadata
 release.sh                 Build → analyze/test → artifact → GitHub release → push
@@ -112,15 +122,17 @@ lib/
     app_palette.dart       Tema duyarlı renk paleti (yüzey, metin, ayırıcı, ikon)
     theme_state.dart       Vurgu rengi + çözümlenmiş Brightness (system dahil)
     settings_service.dart  Cihaz içi tercihler (tema, ekolayzer, dil, radyo, indirme)
+    speech_service.dart    Yerel Whisper kayıt + transkripsiyon (Google STT yok)
     audio_backend.dart     Platform ses motoru: just_audio (Android/iOS), media_kit+libmpv (Linux)
-    player_controller.dart Kuyruk, geçiş koruması, ses, ekolayzer, prefetch
-    youtube_service.dart   InnerTube arama, sanatçı parçaları, akış çözümleme
-    library.dart           Geçmiş, beğeniler, çalma listeleri
+    player_controller.dart Kuyruk, shuffle/repeat, radyo, ses kalitesi, prefetch
+    youtube_service.dart   InnerTube arama önbelleği, sanatçı listesi, akış çözümleme
+    library.dart           Geçmiş, beğeniler, sıralı çalma listeleri, sürümlü avatar
     models.dart            Track ve veri modelleri
-    download_service.dart  Cihaza indirme, çevrimdışı çalma
+    download_service.dart  Toplu/grup indirme, doğru MIME uzantısı, çevrimdışı çalma
     update_service.dart    OTA manifest, ABI seçimi, APK indirme/kurulum
-    room_service.dart      MQTT oda durumu
-    repair_bot.dart        Sessiz akış onarımı
+    room_service.dart      MQTT oda keşfi, katılım doğrulama, avatar yayını
+    repair_bot.dart        Sessiz onarım + uygulama içi tam onarım
+    l10n/app_strings.dart  TR/EN çeviri haritası ve LocalizationsDelegate
     link_resolver.dart     YouTube bağlantı çözümleme (5 host)
     link_handler.dart      Uygulama içi bağlantı yönlendirme
     test_tracks.dart       Debug/emülatör test parçaları
@@ -133,13 +145,15 @@ lib/
     settings_screen.dart   Tema, ekolayzer, bağlantılar, indirme ayarları
     artist_page.dart       Sanatçı parçaları
     playlist_page.dart     Çalma listesi detayı
-    my_playlists_page.dart Çalma listelerim
-    downloads_page.dart    İndirilenler
-    room_page.dart         Oda ekranı
+    my_playlists_page.dart Çalma listelerim (sıralama, oluşturma)
+    playlist_editor_page.dart Liste içi parça sıralama/düzenleme
+    downloads_page.dart    İndirilenler + sanatçı/arama grupları
+    room_page.dart         Oda listesi, katılım, avatar onayı
 
-test/link_resolver_test.dart  Bağlantı çözümleme birim testleri (11 test)
-tool/bootstrap.sh             flutter create sonrası Android dosyalarını üret/yamala
-tool/patch_android.py         Manifest izinleri, intent-filter, servisler, minSdk yaması
+test/                     Bağlantı, dil, playlist, repeat ve Whisper sözleşmesi testleri
+tool/bootstrap.sh          flutter create sonrası Android dosyalarını üret/yamala
+tool/patch_android.py      Manifest izinleri, intent-filter, servisler, minSdk yaması
+tool/ct_full_test.py       Emülatör kurulum→etkileşim→logcat→ses→ekran raporu
 .github/workflows/build.yml   Android + Linux CI
 .github/workflows/ios-build.yml   iOS IPA derleme (CI)
 .github/workflows/windows-build.yml Windows zip derleme (CI)
@@ -186,17 +200,20 @@ tunnel.txt      Altyapı notu (Cloudflare tüneli)
 
 ```bash
 flutter analyze                       # 0 hata
-flutter test                          # 11/11
-ADB_SERIAL=emulator-xxxx python3 ct_full_test.py   # 20/20 (debug APK)
-# Gerçek kullanıcı akışı:
-#   uninstall → release APK install → ilk açılış → izinler → tema → arama
+flutter test                          # tüm birim testleri
+ADB_SERIAL=emulator-5554 python3 tool/ct_full_test.py \
+    --apk build/app/outputs/flutter-apk/app-debug.apk
+# Akış: uninstall → install → deep link (15 test parçası) → arama → mikrofon →
+#       shuffle/repeat → oda → logcat crash → media session → ekran görüntüsü
+# Rapor: /tmp/opencode/cloudtune-emulator-test/report.json
 ```
 
-Gerçek kullanıcı simülasyonunda kontrol edilenler: sürüm `3.0.37 / 238`,
-`minSdk=24`, uygulama foreground, mikrofon ilk dokunuşta açılıyor, açık temada
-zemin açık/metin koyu, arama sonuçlarında “Çalma Listeleri ve Şarkılar” ve
-“Arama Sonuçları” başlıkları, logcat'te crash yok. Linux'ta oynat/duraklat
-ikonu `PlayerController.playing` üzerinden anında güncelleniyor.
+Gerçek kullanıcı simülasyonunda kontrol edilenler: uygulama foreground,
+mikrofon **yalnızca** sesli arama dokunuşunda açılıyor, açık temada zemin
+açık/metin koyu, arama sonuçlarında “Çalma Listeleri ve Şarkılar” ve
+“Arama Sonuçları” başlıkları, shuffle/repeat ikonlarının anında değişimi,
+logcat'te crash yok. Linux'ta oynat/duraklat ikonu `PlayerController.playing`
+üzerinden anında güncelleniyor.
 
 ---
 
@@ -250,7 +267,7 @@ Aynı manifest GitHub Pages üzerinden de yayınlanır:
 
 ## Gizlilik
 
-Dinleme geçmişi, beğeniler, çalma listeleri, avatar ve dil/tercüme tercihleri **yalnızca cihazda** saklanır. Uygulamanın çalışması için PC veya özel sunucu gerekmez; YouTube/Invidious ve MQTT dış servisleri doğrudan cihazdan erişilir. Sunucuya gönderilen tek veri, çözülemeyen bir akış hatasında gönderilen anonim cihaz raporudur.
+Dinleme geçmişi, beğeniler, çalma listeleri, avatar, indirilenler, Whisper transkriptleri ve dil tercihi **yalnızca cihazda** saklanır. Uygulamanın çalışması için PC veya özel sunucu gerekmez; YouTube/Invidious ve MQTT dış servisleri doğrudan cihazdan erişilir. Mikrofon yalnızca siz sesli arama düğmesine bastığınızda açılır; kayıt cihazda transkribe edilir, ses/sunucuya gönderilmez. Onarım botu logları da cihazda kalır; e-posta veya uzak servise veri gönderilmez. Başka cihazın oda bilgilerini görmek kullanıcı onayına bağlıdır.
 
 ## Altyapı
 

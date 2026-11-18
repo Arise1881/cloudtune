@@ -17,6 +17,7 @@ import 'core/settings_service.dart';
 import 'core/test_tracks.dart';
 import 'core/theme_state.dart';
 import 'core/update_service.dart';
+import 'l10n/app_strings.dart';
 import 'screens/room_page.dart';
 import 'ui/home_page.dart';
 
@@ -128,9 +129,14 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
           ? (segments.isNotEmpty ? segments.first : '')
           : (segments.length > 1 ? segments[1] : '');
       if (code.isNotEmpty && context.mounted) {
+        // Davet linkindeki ?p= parolası, şifreli odaya katılım için gerekli.
+        final password = uri.queryParameters['p'] ?? '';
         unawaited(Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => RoomPage(initialCode: code.toUpperCase()),
+            builder: (_) => RoomPage(
+              initialCode: code.toUpperCase(),
+              initialPassword: password,
+            ),
           ),
         ));
       }
@@ -159,6 +165,8 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
               builder: (context, _) {
                 final accent = ThemeState.accent.value;
                 final themeMode = SettingsService.instance.themeMode;
+                // SettingsService değişince bu builder yeniden kurulur; dil
+                // değişimi MaterialApp.locale üzerinden anında yansır.
                 return MaterialApp(
                   title: 'CloudTune',
                   debugShowCheckedModeBanner: false,
@@ -166,6 +174,13 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
                   darkTheme: _theme(accent, Brightness.dark,
                       oled: SettingsService.instance.oledBlack),
                   themeMode: themeMode,
+                  localizationsDelegates: const [
+                    AppStringsDelegate(),
+                    AppMaterialLocalizationsDelegate(),
+                    AppCupertinoLocalizationsDelegate(),
+                  ],
+                  supportedLocales: AppStrings.supportedLocales,
+                  locale: SettingsService.instance.locale,
                   home: const HomePage(),
                 );
               },

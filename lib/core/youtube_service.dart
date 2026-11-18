@@ -14,12 +14,44 @@ class AudioBlocked implements Exception {
   final String reason;
 
   @override
-  String toString() => 'AudioBlocked($id, $reason)';
+  String toString() {
+    final detail = reason.isEmpty ? '' : ' ($reason)';
+    return 'Bu ses akışı şu anda oynatılamıyor$detail. Lütfen tekrar deneyin.';
+  }
+}
+
+/// Tek bir arama sorgusunun sonuçları ve alınma zamanı.
+class _CachedSearch {
+  const _CachedSearch(this.results, this.at);
+
+  final List<Track> results;
+  final DateTime at;
+}
+
+/// Kalite seçiminin gerçek itag kısıtı ve bitrate eğilimi.
+class _QualitySpec {
+  const _QualitySpec(this.itags, this.preferHighestBitrate);
+
+  final List<int> itags;
+  final bool preferHighestBitrate;
+}
+
+/// Sanatçı şarkılarının ayrı bir çalma listesi olarak sunulması için model.
+/// UI bu değeri doğrudan çalma listesi detayına bağlayabilir.
+class ArtistPlaylist {
+  const ArtistPlaylist({
+    this.info,
+    this.tracks = const <Track>[],
+  });
+
+  final PlaylistInfo? info;
+  final List<Track> tracks;
 }
 
 /// Arama, liste, sanatçı ve ses akışı çözümlemesi.
 /// Önce doğrudan YouTube'a bakılır; robot doğrulaması/engel durumunda
-/// herkese açık bir Invidious API'sine yedeklenir. Arayüzde aracı ayarı yoktur.
+/// birden fazla herkese açık Invidious örneğine yedeklenir. Arayüzde aracı
+/// ayarı yoktur.
 class YoutubeService {
   YoutubeService._();
 
@@ -27,25 +59,107 @@ class YoutubeService {
 
   final YoutubeExplode _yt = YoutubeExplode();
 
-  static const Duration _requestTimeout = Duration(seconds: 5);
-  static const Duration _invTimeout = Duration(seconds: 8);
-  static const Duration _cacheTtl = Duration(minutes: 60);
-  static const String _invBase = 'https://yt.chocolatemoo53.com';
+  static const Duration _requestTimeout = Duration(seconds: 6);
+  static const Duration _invTimeout = Duration(seconds: 6);
+  static const Duration _playlistTimeout = Duration(seconds: 15);
+  static const Duration _resolveTimeout = Duration(seconds: 20);
+  static const Duration _cacheTtl = Duration(minutes: 15);
+  static const Duration _searchTtl = Duration(minutes: 10);
+  static const Duration _uriValidationTtl = Duration(seconds: 30);
+
+  static const int _maxSearchResults = 50;
+  static const int _maxSearchEntries = 40;
+  static const int _maxRadioTracks = 50;
+
+  /// Sırayla denen herkese açık Invidious örnekleri.
+  static const List<String> _invBases = [
+    'https://yt.chocolatemoo53.com',
+    'https://yewtu.be',
+    'https://inv.nadeko.net',
+    'https://invidious.privacyredirect.com',
+  ];
 
   final Map<String, Uri> _cache = {};
   final Map<String, DateTime> _cachedAt = {};
+  final Map<String, DateTime> _uriCheckedAt = {};
   final Map<String, String> _playability = {};
+  final Map<String, _CachedSearch> _searchCache = {};
+  final Map<String, List<Track>> _relatedCache = {};
+  final Set<String> _issuedRelatedIds = <String>{};
 
-  /// Herkese açık Invidious örneğine JSON isteği. Hata durumunda null döner.
-  Future<dynamic> _invGet(String path) async {
-    try {
-      final response =
-          await http.get(Uri.parse('$_invBase$path')).timeout(_invTimeout);
-      if (response.statusCode != 200) return null;
-      return jsonDecode(response.body);
-    } catch (_) {
-      return null;
+  /// Null ise SettingsService değeri kullanılır; aksi halde kullanıcı
+  /// [setQuality] ile servis seviyesinde kaliteyi değiştirmiştir.
+  String? _qualityOverride;
+  String? _lastQuality;
+
+  /// 403/410/404 gibi durumlarda imzalı URI bayattır.
+  static const Set<int> _staleUriStatuses = {403, 404, 410};
+
+  /// Aktif ses kalitesi. `veryhigh` ayarı `lossless` olarak normalleştirilir.
+  /// Ayar ekranından değişen kalite de burada yakalanıp URI önbelleğini
+  /// geçersiz kılar.
+  String get quality {
+    final raw = _qualityOverride ??
+        (SettingsService.instance.ready
+            ? SettingsService.instance.audioQuality
+            : 'high');
+    final normalized = _normalizeQuality(raw);
+    final previous = _lastQuality;
+    if (previous != null && previous != normalized) {
+      clearCache();
     }
+    _lastQuality = normalized;
+    return normalized;
+  }
+
+  /// Kaliteyi değiştirir ve çözülmüş URI önbelleğini geçersiz kılar.
+  void setQuality(String value) {
+    final next = _normalizeQuality(value);
+    if (_qualityOverride == next) return;
+    _qualityOverride = next;
+    _lastQuality = next;
+    clearCache();
+  }
+
+  static String _normalizeQuality(String value) {
+    switch (value.toLowerCase().trim()) {
+      case 'low':
+        return 'low';
+      case 'medium':
+        return 'medium';
+      case 'lossless':
+      case 'veryhigh':
+        return 'lossless';
+      case 'high':
+      default:
+        return 'high';
+    }
+  }
+
+  static const Map<String, _QualitySpec> _qualitySpec = {
+    // Opus 48/64k veya m4a 128k.
+    'low': _QualitySpec([249, 250, 140], false),
+    // Opus ~160k (251) veya AAC 256k (141).
+    'medium': _QualitySpec([251, 141], true),
+    // 251 ve varsa en yüksek bitrate'li saf ses akışı.
+    'high': _QualitySpec([251], true),
+    // 141/251 öncelikli; yoksa en yüksek bitrate (hi-res/HDR) akışı.
+    'lossless': _QualitySpec([141, 251], true),
+  };
+
+  /// Invidious örneklerini sırayla dener; ilk başarılı JSON döner.
+  Future<dynamic> _invGet(String path) async {
+    for (final base in _invBases) {
+      try {
+        final response =
+            await http.get(Uri.parse('$base$path')).timeout(_invTimeout);
+        if (response.statusCode != 200) continue;
+        return jsonDecode(response.body);
+      } catch (_) {
+        continue;
+      }
+    }
+    return null;
   }
 
   /// Invidious video/search kaydını [Track]'a çevirir. Geçersizse null.
@@ -106,15 +220,43 @@ class YoutubeService {
         artistId: video.channelId.value.isEmpty ? null : video.channelId.value,
       );
 
-  Future<List<Track>> search(String query, {int limit = 24}) async {
+  /// Arama sonuçları 10 dakika önbellekte tutulur. [refresh] yalnızca
+  /// pull-to-refresh gibi kullanıcı kaynaklı yenilemelerde true geçilir.
+  Future<List<Track>> search(
+    String query, {
+    int limit = 24,
+    bool refresh = false,
+  }) async {
     final q = query.trim();
     if (q.isEmpty) return const <Track>[];
+
+    final key = q.toLowerCase();
+    if (!refresh) {
+      final cached = _searchCache[key];
+      if (cached != null &&
+          DateTime.now().difference(cached.at) <= _searchTtl) {
+        return cached.results.take(limit).toList();
+      }
+    }
+
+    final results = await _fetchSearch(q);
+    _searchCache[key] = _CachedSearch(
+      List<Track>.unmodifiable(results),
+      DateTime.now(),
+    );
+    if (_searchCache.length > _maxSearchEntries) {
+      _searchCache.remove(_searchCache.keys.first);
+    }
+    return results.take(limit).toList();
+  }
+
+  Future<List<Track>> _fetchSearch(String q) async {
     try {
-      final videos = await _yt.search.search(q);
+      final videos = await _yt.search.search(q).timeout(_requestTimeout);
       final found = videos
           .map(_fromVideo)
           .where((track) => track.id.isNotEmpty && track.title.isNotEmpty)
-          .take(limit)
+          .take(_maxSearchResults)
           .toList();
       if (found.isNotEmpty) return found;
     } catch (_) {
@@ -130,15 +272,21 @@ class YoutubeService {
           .map(_trackFromInv)
           .whereType<Track>()
           .where((track) => track.id.isNotEmpty && track.title.isNotEmpty)
-          .take(limit)
+          .take(_maxSearchResults)
           .toList();
     }
     return const <Track>[];
   }
 
+  /// Arama önbelleğini tamamen temizler (pull-to-refresh için kullanılabilir).
+  void clearSearchCache() {
+    _searchCache.clear();
+    _relatedCache.clear();
+  }
+
   Future<Track> trackById(String id) async {
     try {
-      final video = await _yt.videos.get(id);
+      final video = await _yt.videos.get(id).timeout(_requestTimeout);
       return _fromVideo(video);
     } catch (_) {
       // Invidious video detayını dene.
@@ -179,7 +327,21 @@ class YoutubeService {
       }
     } catch (_) {}
 
-    throw StateError('track-unavailable: $id');
+    throw StateError(
+        'Video bilgisine ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.');
+  }
+
+  Future<void> _collectPlaylistVideos(
+    String id,
+    List<Track> tracks,
+    int limit,
+  ) async {
+    await for (final video in _yt.playlists.getVideos(id)) {
+      final track = _fromVideo(video);
+      if (track.id.isEmpty || track.title.trim().isEmpty) continue;
+      tracks.add(track);
+      if (tracks.length >= limit) break;
+    }
   }
 
   Future<List<Track>> playlist(
@@ -189,12 +351,7 @@ class YoutubeService {
   }) async {
     final tracks = <Track>[];
     try {
-      await for (final video in _yt.playlists.getVideos(id)) {
-        final track = _fromVideo(video);
-        if (track.id.isEmpty || track.title.trim().isEmpty) continue;
-        tracks.add(track);
-        if (tracks.length >= limit) break;
-      }
+      await _collectPlaylistVideos(id, tracks, limit).timeout(_playlistTimeout);
     } catch (_) {
       // Mix/Radyo listelerinde video kimliği yedek kaynak olur.
     }
@@ -224,7 +381,7 @@ class YoutubeService {
 
   Future<PlaylistInfo?> playlistInfo(String id) async {
     try {
-      final info = await _yt.playlists.get(id);
+      final info = await _yt.playlists.get(id).timeout(_requestTimeout);
       return PlaylistInfo(
         id: info.id.value,
         title: info.title,
@@ -251,49 +408,247 @@ class YoutubeService {
     return null;
   }
 
+  /// İlgili videolar: youtube_explode, InnerTube `next`, birden fazla
+  /// Invidious örneği ve son başarılı sonuçlar sırasıyla denenir.
+  /// Hiçbir kaynak yanıt vermezse istisna fırlatmaz, boş liste döner.
   Future<List<Track>> related(String videoId, {int limit = 30}) async {
-    try {
-      final video = await _yt.videos.get(videoId);
-      final related = await _yt.videos.getRelatedVideos(video);
-      if (related != null && related.isNotEmpty) {
-        return related.take(limit).map(_fromVideo).toList();
-      }
-    } catch (_) {
-      // Invidious önerilerine geç.
-    }
+    if (videoId.isEmpty || limit <= 0) return const <Track>[];
 
-    final data = await _invGet(
-      '/api/v1/videos/${Uri.encodeComponent(videoId)}',
-    );
-    if (data is Map && data['recommendedVideos'] is List) {
-      return (data['recommendedVideos'] as List)
-          .whereType<Map>()
-          .map(_trackFromInv)
-          .whereType<Track>()
-          .where((track) => track.id.isNotEmpty && track.title.isNotEmpty)
-          .take(limit)
+    try {
+      final collected = <Track>[];
+      final seen = <String>{};
+
+      void addAll(Iterable<Track> items) {
+        for (final track in items) {
+          if (track.id.isEmpty || track.title.isEmpty) continue;
+          if (seen.add(track.id)) collected.add(track);
+        }
+      }
+
+      // 1) youtube_explode önerileri.
+      try {
+        final video = await _yt.videos.get(videoId).timeout(_requestTimeout);
+        final related =
+            await _yt.videos.getRelatedVideos(video).timeout(_requestTimeout);
+        if (related != null) addAll(related.map(_fromVideo));
+      } catch (_) {}
+
+      // 2) InnerTube `next` yanıtı.
+      addAll(await _relatedFromInnerTube(videoId, limit: limit));
+
+      // 3) Her Invidious örneği ayrı ayrı denenir.
+      addAll(await _invRecommended(videoId, limit));
+
+      // 4) Önceki sonuçlar yalnızca tüm canlı kaynaklar boşsa kullanılır.
+      if (collected.isEmpty) {
+        addAll(_relatedCache[videoId] ?? const <Track>[]);
+      }
+      if (collected.isEmpty) return const <Track>[];
+
+      _relatedCache[videoId] =
+          List<Track>.unmodifiable(collected.take(_maxSearchResults));
+      if (_relatedCache.length > _maxSearchEntries) {
+        _relatedCache.remove(_relatedCache.keys.first);
+      }
+
+      // Radyo kuyruğu büyümesini sınırla: oturum başına en fazla 50 yeni
+      // ilgili parça. Sonrasında yalnızca daha önce verilmiş parçalar döner;
+      // çalar bunları kendi kuyruğunda zaten bulunduğu için eklemez.
+      final room = _maxRadioTracks - _issuedRelatedIds.length;
+      if (room <= 0) {
+        return collected
+            .where((track) => _issuedRelatedIds.contains(track.id))
+            .take(limit)
+            .toList();
+      }
+      final fresh = collected
+          .where((track) => !_issuedRelatedIds.contains(track.id))
+          .take(limit < room ? limit : room)
           .toList();
+      if (fresh.isEmpty) return collected.take(limit).toList();
+      _issuedRelatedIds.addAll(fresh.map((track) => track.id));
+      return fresh;
+    } catch (_) {
+      return const <Track>[];
+    }
+  }
+
+  Future<List<Track>> _relatedFromInnerTube(
+    String videoId, {
+    required int limit,
+  }) async {
+    for (final spec in _clients) {
+      try {
+        final response = await _innerTubePost(
+          Uri.parse(
+            'https://www.youtube.com/youtubei/v1/next'
+            '?key=${spec['key']}&prettyPrint=false',
+          ),
+          headers: {
+            'content-type': 'application/json',
+            'accept-language': 'en-US,en;q=0.9',
+            'x-youtube-client-name': spec['name'],
+            'x-youtube-client-version': spec['version'],
+            'user-agent': spec['ua'],
+          },
+          body: jsonEncode({
+            'context': {'client': spec['client']},
+            'videoId': videoId,
+          }),
+        );
+        if (response.statusCode != 200) continue;
+        final data = jsonDecode(response.body);
+        if (data is! Map) continue;
+        final found = <Track>[];
+        _collectVideoRenderers(data, found, limit);
+        if (found.isNotEmpty) return found;
+      } catch (_) {
+        continue;
+      }
     }
     return const <Track>[];
   }
 
+  /// InnerTube `next` ağacındaki video/compactVideo/gridVideo renderer'larını
+  /// derinlemesine toplar.
+  void _collectVideoRenderers(
+    Object? node,
+    List<Track> out,
+    int limit,
+  ) {
+    if (out.length >= limit) return;
+    if (node is List) {
+      for (final item in node) {
+        if (out.length >= limit) return;
+        _collectVideoRenderers(item, out, limit);
+      }
+      return;
+    }
+    if (node is! Map) return;
+
+    final renderer = node['videoRenderer'] ??
+        node['compactVideoRenderer'] ??
+        node['gridVideoRenderer'];
+    if (renderer is Map) {
+      final id = renderer['videoId']?.toString() ?? '';
+      final title = _textOf(renderer['title']);
+      if (id.isNotEmpty && title.isNotEmpty) {
+        final author = _textOf(renderer['ownerText']);
+        out.add(Track(
+          id: id,
+          title: title,
+          artist: author.isEmpty ? 'Bilinmeyen' : author,
+        ));
+      }
+    }
+
+    for (final value in node.values) {
+      if (out.length >= limit) return;
+      _collectVideoRenderers(value, out, limit);
+    }
+  }
+
+  static String _textOf(Object? node) {
+    if (node is String) return node.trim();
+    if (node is! Map) return '';
+    final simple = node['simpleText']?.toString().trim() ?? '';
+    if (simple.isNotEmpty) return simple;
+    final runs = node['runs'];
+    if (runs is List) {
+      return runs
+          .map((run) => run is Map ? (run['text']?.toString() ?? '') : '')
+          .join()
+          .trim();
+    }
+    return '';
+  }
+
+  Future<List<Track>> _invRecommended(String videoId, int limit) async {
+    final out = <Track>[];
+    final seen = <String>{};
+    final path = '/api/v1/videos/${Uri.encodeComponent(videoId)}';
+    for (final base in _invBases) {
+      if (out.length >= limit) break;
+      try {
+        final response =
+            await http.get(Uri.parse('$base$path')).timeout(_invTimeout);
+        if (response.statusCode != 200) continue;
+        final data = jsonDecode(response.body);
+        if (data is! Map) continue;
+        final recommendations = data['recommendedVideos'];
+        if (recommendations is! List) continue;
+        for (final item in recommendations.whereType<Map>()) {
+          final track = _trackFromInv(item);
+          if (track == null || track.id.isEmpty) continue;
+          if (seen.add(track.id)) out.add(track);
+          if (out.length >= limit) break;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+    return out;
+  }
+
+  Future<void> _collectUploads(
+    String channelId,
+    List<Track> tracks,
+    int limit,
+  ) async {
+    await for (final video in _yt.channels.getUploads(ChannelId(channelId))) {
+      tracks.add(_fromVideo(video));
+      if (tracks.length >= limit) break;
+    }
+  }
+
+  /// Eski imza korunur; metadata'lı yeni API [artistPlaylist].
   Future<List<Track>> artistTracks(
     String name, {
     String? channelId,
     int limit = 60,
+    bool refresh = false,
   }) async {
     if (channelId != null && channelId.isNotEmpty) {
       try {
         final tracks = <Track>[];
-        await for (final video
-            in _yt.channels.getUploads(ChannelId(channelId))) {
-          tracks.add(_fromVideo(video));
-          if (tracks.length >= limit) break;
-        }
+        await _collectUploads(channelId, tracks, limit)
+            .timeout(_playlistTimeout);
         if (tracks.isNotEmpty) return tracks;
       } catch (_) {}
     }
-    return search('$name en iyi şarkılar', limit: limit);
+    return search('$name en iyi şarkılar', limit: limit, refresh: refresh);
+  }
+
+  /// Sanatçı şarkılarını, UI'da ayrı çalma listesi olarak gösterilebilecek
+  /// [PlaylistInfo] metadata'sıyla birlikte döner.
+  Future<ArtistPlaylist> artistPlaylist(
+    String channelId, {
+    String? name,
+    String? query,
+  }) async {
+    final id = channelId.trim();
+    final cleanName = name?.trim() ?? '';
+    final cleanQuery = query?.trim() ?? '';
+    final title = cleanName.isNotEmpty
+        ? cleanName
+        : (cleanQuery.isNotEmpty ? cleanQuery : 'Sanatçı çalma listesi');
+    final info = PlaylistInfo(
+      id: id.isEmpty ? (cleanQuery.isNotEmpty ? cleanQuery : title) : id,
+      title: title,
+      author: title,
+    );
+
+    List<Track> tracks = const <Track>[];
+    if (id.isNotEmpty) {
+      tracks = await artistTracks(title, channelId: id, limit: 60);
+    }
+    if (tracks.isEmpty && cleanQuery.isNotEmpty) {
+      tracks = await search(cleanQuery, limit: 60);
+    }
+    return ArtistPlaylist(
+      info: info,
+      tracks: List<Track>.unmodifiable(tracks),
+    );
   }
 
   Uri? _cached(String id) {
@@ -301,23 +656,44 @@ class YoutubeService {
     final at = _cachedAt[id];
     if (uri == null || at == null) return null;
     if (DateTime.now().difference(at) > _cacheTtl) {
-      _cache.remove(id);
-      _cachedAt.remove(id);
+      _dropUri(id);
       return null;
     }
     return uri;
   }
 
+  void _dropUri(String id) {
+    _cache.remove(id);
+    _cachedAt.remove(id);
+    _uriCheckedAt.remove(id);
+  }
+
   void _remember(String id, Uri uri) {
     _cache[id] = uri;
     _cachedAt[id] = DateTime.now();
+    _uriCheckedAt[id] = DateTime.now();
   }
 
-  /// Çözülmüş ses adresi önbelleğini tamamen temizler.
+  /// İmzalı URI'nin hâlâ geçerli olup olmadığını HEAD ile kontrol eder.
+  /// Ağ hatası gibi belirsiz durumlarda mevcut URI korunur.
+  Future<bool> _isUriUsable(Uri uri) async {
+    try {
+      final response = await http.head(uri).timeout(_requestTimeout);
+      return !_staleUriStatuses.contains(response.statusCode);
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// Tüm önbelleği temizler: çözülmüş ses adresleri, arama ve ilgili-parça
+  /// sonuçları. Kullanıcı "önbelleği temizle" ya da kalite değiştirince
+  /// bayat sonuçlar kalmaması için hepsi sıfırlanır.
   void clearCache() {
     _cache.clear();
     _cachedAt.clear();
+    _uriCheckedAt.clear();
     _playability.clear();
+    clearSearchCache();
   }
 
   /// Sonraki parçanın adresini arka planda ısıtır.
@@ -330,26 +706,80 @@ class YoutubeService {
     }
   }
 
-  /// Çözülmüş akış adresi. Önbellekte varsa onu kullanır, yoksa çözer.
-  Future<Uri> audioUri(String id) {
+  /// Çözülmüş akış adresi. Önbellekte varsa doğrulayıp kullanır,
+  /// bayatsa (403/410/404) anında invalide edip yeniden çözer.
+  Future<Uri> audioUri(String id) async {
     final cached = _cached(id);
-    if (cached != null) return Future<Uri>.value(cached);
+    if (cached != null) {
+      final checked = _uriCheckedAt[id];
+      final needsCheck = checked == null ||
+          DateTime.now().difference(checked) > _uriValidationTtl;
+      if (!needsCheck || await _isUriUsable(cached)) {
+        _uriCheckedAt[id] = DateTime.now();
+        return cached;
+      }
+      _dropUri(id);
+    }
     return _resolve(id);
   }
 
   /// Eski çağrılar için uyumluluk takma adı.
   Future<Uri> fastUri(String id) => audioUri(id);
 
-  /// Önbelleği atlayıp doğrudan çözümü yeniden dener.
+  /// Önbelleği atlayıp doğrudan çözümü farklı yollarla yeniden dener.
   Future<Uri?> forceDirect(String id) async {
-    _cache.remove(id);
-    _cachedAt.remove(id);
+    if (id.isEmpty) return null;
+    _dropUri(id);
+    _playability.remove(id);
+
+    // 1) Tüm InnerTube istemcileri + Invidious ile taze çözüm.
     try {
-      final uri = await audioUri(id);
-      return uri;
-    } catch (_) {
-      return null;
-    }
+      final uri = await _resolve(id).timeout(_resolveTimeout);
+      if (await _isUriUsable(uri)) {
+        _remember(id, uri);
+        return uri;
+      }
+      _dropUri(id);
+    } catch (_) {}
+
+    // 2) Playability durumu sıfırlanmış ikinci geçiş.
+    _playability.remove(id);
+    try {
+      final uri = await innerTube(id).timeout(_resolveTimeout);
+      if (uri != null && await _isUriUsable(uri)) {
+        _remember(id, uri);
+        return uri;
+      }
+    } catch (_) {}
+
+    // 3) youtube_explode manifest yedeği (kaliteye göre itag seçimi).
+    try {
+      final manifest = await _yt.videos.streamsClient
+          .getManifest(id)
+          .timeout(_resolveTimeout);
+      final streams = manifest.audioOnly.toList();
+      final itags = _qualitySpec[quality]!.itags;
+      for (final itag in itags) {
+        for (final stream in streams) {
+          if (stream.tag != itag) continue;
+          if (await _isUriUsable(stream.url)) {
+            _remember(id, stream.url);
+            return stream.url;
+          }
+        }
+      }
+      streams.sort((a, b) => quality == 'low'
+          ? a.bitrate.compareTo(b.bitrate)
+          : b.bitrate.compareTo(a.bitrate));
+      for (final stream in streams) {
+        if (await _isUriUsable(stream.url)) {
+          _remember(id, stream.url);
+          return stream.url;
+        }
+      }
+    } catch (_) {}
+
+    return null;
   }
 
   Future<Uri> _resolve(String id) async {
@@ -362,7 +792,8 @@ class YoutubeService {
     if (status != null && status.isNotEmpty && status != 'OK') {
       throw AudioBlocked(id, status);
     }
-    throw StateError('audio-unavailable: $id');
+    throw StateError(
+        'Ses akışına ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.');
   }
 
   Future<http.Response> _innerTubePost(
@@ -375,28 +806,27 @@ class YoutubeService {
   /// Doğrudan InnerTube isteğiyle oynatılabilir ses adresini bulur.
   /// İstemci sırası, cihazda doğrulanmış olanlardan başlar.
   Future<Uri?> innerTube(String id) async {
-    final settings = SettingsService.instance;
-    final quality = settings.ready ? settings.audioQuality : 'high';
-    final itags = _qualityItags[quality] ?? _qualityItags['high']!;
+    final quality = this.quality;
+    final spec = _qualitySpec[quality] ?? _qualitySpec['high']!;
 
     _playability.remove(id);
-    for (final spec in _clients) {
+    for (final client in _clients) {
       try {
         final response = await _innerTubePost(
           Uri.parse(
             'https://www.youtube.com/youtubei/v1/player'
-            '?key=${spec['key']}&prettyPrint=false',
+            '?key=${client['key']}&prettyPrint=false',
           ),
           headers: {
             'content-type': 'application/json',
             'accept-language': 'en-US,en;q=0.9',
-            'x-youtube-client-name': spec['name'],
-            'x-youtube-client-version': spec['version'],
-            'user-agent': spec['ua'],
+            'x-youtube-client-name': client['name'],
+            'x-youtube-client-version': client['version'],
+            'user-agent': client['ua'],
           },
           body: jsonEncode({
             'context': {
-              'client': spec['client'],
+              'client': client['client'],
               'thirdParty': {'embedUrl': 'https://www.youtube.com'},
             },
             'videoId': id,
@@ -428,33 +858,14 @@ class YoutubeService {
           ...(streaming['formats'] as List? ?? const []).whereType<Map>(),
         ];
 
-        final playable = formats.where((format) {
-          final url = format['url'];
-          return url is String && url.isNotEmpty;
-        }).toList();
-        if (playable.isEmpty) continue;
-
-        for (final itag in itags) {
-          for (final format in playable) {
-            if (format['itag'] != itag) continue;
-            final uri = Uri.tryParse(format['url'] as String);
-            if (uri != null) return uri;
-          }
-        }
-
-        // itag eşleşmezse ilk saf ses akışını kullan.
-        for (final format in playable) {
-          final mime = format['mimeType']?.toString() ?? '';
-          if (!mime.startsWith('audio/')) continue;
-          final uri = Uri.tryParse(format['url'] as String);
-          if (uri != null) return uri;
-        }
+        final uri = await _pickAudioUri(formats, spec);
+        if (uri != null) return uri;
       } catch (_) {
         // Bir istemci başarısızsa sıradakine geç.
       }
     }
 
-    // Son çare: Invidious local=true akış adresleri.
+    // Son çare: birden fazla Invidious örneğinden local=true akış adresleri.
     final inv = await _invGet(
       '/api/v1/videos/${Uri.encodeComponent(id)}?local=true',
     );
@@ -463,26 +874,58 @@ class YoutubeService {
         ...(inv['formatStreams'] as List? ?? const []).whereType<Map>(),
         ...(inv['adaptiveFormats'] as List? ?? const []).whereType<Map>(),
       ];
-      final audio = formats.where((format) {
-        final type = format['type']?.toString() ?? '';
-        final url = format['url']?.toString() ?? '';
-        return type.startsWith('audio/') && url.isNotEmpty;
-      }).toList();
-
-      for (final itag in itags) {
-        for (final format in audio) {
-          if (format['itag']?.toString() != itag.toString()) continue;
-          final uri = Uri.tryParse(format['url'] as String);
-          if (uri != null) return uri;
-        }
-      }
-      for (final format in audio) {
-        final uri = Uri.tryParse(format['url'] as String);
-        if (uri != null) return uri;
-      }
+      final uri = await _pickAudioUri(formats, spec);
+      if (uri != null) return uri;
     }
 
     // Çözülemezse null: oynatıcı aynı parçada hata gösterir, atlama yapmaz.
+    return null;
+  }
+
+  static bool _isAudioFormat(Map format) {
+    final mime = (format['mimeType'] ?? format['type'] ?? '').toString();
+    if (mime.startsWith('audio/')) return true;
+    final container = format['container']?.toString() ?? '';
+    return container.startsWith('audio/');
+  }
+
+  static int? _itagOf(Map format) {
+    final value = format['itag'];
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  static int _bitrateOf(Map format) {
+    final value = format['bitrate'] ?? format['averageBitrate'] ?? 0;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static Uri? _uriOf(Map format) {
+    final url = format['url']?.toString() ?? '';
+    if (url.isEmpty) return null;
+    return Uri.tryParse(url);
+  }
+
+  /// Kalite kısıtına uyan ilk geçerli URI'yı döner. Eşleşme yoksa
+  /// `low` en düşük, diğer seçenekler en yüksek bitrate'e düşer (hi-res/HDR).
+  Future<Uri?> _pickAudioUri(List<Map> formats, _QualitySpec spec) async {
+    final audio = formats.where(_isAudioFormat).toList();
+    for (final itag in spec.itags) {
+      for (final format in audio) {
+        if (_itagOf(format) != itag) continue;
+        final uri = _uriOf(format);
+        if (uri != null && await _isUriUsable(uri)) return uri;
+      }
+    }
+    if (audio.isEmpty) return null;
+    audio.sort((a, b) => spec.preferHighestBitrate
+        ? _bitrateOf(b).compareTo(_bitrateOf(a))
+        : _bitrateOf(a).compareTo(_bitrateOf(b)));
+    for (final format in audio) {
+      final uri = _uriOf(format);
+      if (uri != null && await _isUriUsable(uri)) return uri;
+    }
     return null;
   }
 
@@ -561,11 +1004,4 @@ class YoutubeService {
           '(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
     },
   ];
-
-  static const Map<String, List<int>> _qualityItags = {
-    'low': [139, 149, 249, 250, 251, 140, 600],
-    'medium': [140, 250, 249, 251, 139, 149, 600],
-    'high': [251, 140, 250, 249, 139, 149, 600],
-    'veryhigh': [251, 140, 600, 250, 249, 139, 149],
-  };
 }

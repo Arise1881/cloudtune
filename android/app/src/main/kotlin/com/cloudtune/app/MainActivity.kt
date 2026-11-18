@@ -5,8 +5,6 @@ import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.MediaStore
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -41,17 +39,6 @@ class MainActivity : AudioServiceActivity() {
             )
         }
 
-        // Sesli arama icin mikrofon izni.
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(android.Manifest.permission.RECORD_AUDIO),
-                2002
-            )
-        }
-
         // "Dogrudan cihaza kaydet": indirilen sesi MediaStore'a yazar;
         // Android 10+ RELATIVE_PATH ile Download/CloudTune klasorunde gorunur.
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "cloudtune/saver")
@@ -61,6 +48,14 @@ class MainActivity : AudioServiceActivity() {
                         val src = call.argument<String>("path")
                         val title = call.argument<String>("title") ?: "CloudTune"
                         val artist = call.argument<String>("artist") ?: ""
+                        // Dart tarafı gerçek itag/MIME'ye göre uzantı ve tip
+                        // gönderir; sabit .m4a her dosyayı bozuk gösteriyordu.
+                        val extension = call.argument<String>("extension")
+                            ?.takeIf { it.matches(Regex("\\.(webm|m4a|mp3)")) }
+                            ?: ".m4a"
+                        val mime = call.argument<String>("mime")
+                            ?.takeIf { it.startsWith("audio/") }
+                            ?: "audio/mp4"
                         try {
                             val f = File(src ?: "")
                             if (!f.exists()) {
@@ -71,10 +66,10 @@ class MainActivity : AudioServiceActivity() {
                                 .replace(Regex("[^\\p{L}\\p{N}_ -]"), "")
                                 .trim()
                                 .ifEmpty { "CloudTune" }
-                            val fileName = "$safe.m4a"
+                            val fileName = "$safe$extension"
                             val values = ContentValues().apply {
                                 put(MediaStore.Audio.Media.DISPLAY_NAME, fileName)
-                                put(MediaStore.Audio.Media.MIME_TYPE, "audio/mp4")
+                                put(MediaStore.Audio.Media.MIME_TYPE, mime)
                                 put(MediaStore.Audio.Media.TITLE, title)
                                 put(MediaStore.Audio.Media.ARTIST, artist)
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

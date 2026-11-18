@@ -5,9 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:cloudtune/core/app_palette.dart';
 
 import 'package:flutter/services.dart';
-import 'package:speech_to_text/speech_recognition_error.dart';
-import 'package:speech_to_text/speech_recognition_result.dart';
-import 'package:speech_to_text/speech_to_text.dart';
 
 import '../core/download_service.dart';
 import '../core/link_handler.dart';
@@ -17,6 +14,8 @@ import '../core/models.dart';
 import '../core/player_controller.dart';
 import '../core/repair_bot.dart';
 import '../core/room_service.dart';
+import '../core/settings_service.dart';
+import '../core/speech_service.dart';
 import '../core/theme_state.dart';
 import '../core/update_service.dart';
 import '../core/youtube_service.dart';
@@ -47,7 +46,10 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
-  final SpeechToText _speech = SpeechToText();
+  // Yerel Whisper: sistem/Google sesli arama kullanılmaz.
+  final SpeechService _speech = WhisperSpeechService();
+  StreamSubscription<SpeechStatus>? _speechStatusSub;
+  StreamSubscription<String>? _voiceResultSub;
 
   late List<_FeedSource> _feed;
   late Map<String, Future<List<Track>>> _feedFutures;
@@ -55,6 +57,7 @@ class _HomePageState extends State<HomePage> {
   List<Track>? _results;
   List<Track> _artistTracks = const <Track>[];
   String? _artistName;
+  String? _artistId;
   bool _artistTracksLoading = false;
   int _searchGeneration = 0;
   bool _busy = false;
@@ -62,11 +65,13 @@ class _HomePageState extends State<HomePage> {
   bool _showHistory = false;
   bool _prefetched = false;
   bool _speechReady = false;
+  bool _speechBusy = false;
   bool _voiceSubmitDone = false;
   bool _pausedForVoice = false;
   bool _voiceStopOnUp = false;
   bool _voiceSubmitOnReady = false;
   String _voiceText = '';
+  String _voiceStatus = '';
   DateTime? _voicePressAt;
   String _lastQuery = '';
   Track? _lastTrack;
@@ -76,6 +81,9 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     Library.instance.addListener(_onLibraryChanged);
     PlayerController.instance.addListener(_onPlayerChanged);
+    // Model indirme ilerlemesi ve hata mesajları arama çubuğunda gösterilir.
+    _speechStatusSub = _speech.status.listen(_onSpeechStatus);
+    _voiceResultSub = _speech.partialResults.listen(_onVoiceResult);
     _prepareFeed();
   }
 
@@ -83,14 +91,16 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     Library.instance.removeListener(_onLibraryChanged);
     PlayerController.instance.removeListener(_onPlayerChanged);
+    unawaited(_speechStatusSub?.cancel());
+    unawaited(_voiceResultSub?.cancel());
     unawaited(_restorePlaybackAfterVoice());
-    unawaited(_speech.cancel());
+    unawaited(_speech.dispose());
     _input.dispose();
     _scroll.dispose();
     super.dispose();
   }
 
-  void _prepareFeed() {
+  void _prepareFeed({bool refresh = false}) {
     final library = Library.instance;
     final sources = <_FeedSource>[];
 
@@ -125,13 +135,20 @@ class _HomePageState extends State<HomePage> {
     ]);
 
     _feed = sources;
-    _reloadFeeds();
+    _reloadFeeds(refresh: refresh);
   }
 
-  void _reloadFeeds() {
+  void _reloadFeeds({bool refresh = false}) {
+    // Arama sonuçları önbellekte tutulur; yalnızca pull-to-refresh gerçek
+    // network isteği yapar. Diğer çağrılar (library bildirimi, feed kurulumu)
+    // önbelleği kullanır.
     _feedFutures = {
       for (final source in _feed)
-        source.title: _load(source.query, isPlaylist: source.isPlaylist),
+        source.title: _load(
+          source.query,
+          isPlaylist: source.isPlaylist,
+          refresh: refresh,
+        ),
     };
   }
 
@@ -164,7 +181,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _refreshFeed() async {
-    setState(_prepareFeed);
+    setState(() => _prepareFeed(refresh: true));
     try {
       await Future.wait(_feedFutures.values, eagerError: false)
           .timeout(const Duration(seconds: 12));
@@ -172,7 +189,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _refreshResults() async {
-    if (_lastQuery.isNotEmpty) await _submit(_lastQuery);
+    if (_lastQuery.isNotEmpty) {
+      await _submit(_lastQuery, refresh: true);
+    }
   }
 
   void _onPlayerChanged() {
@@ -182,17 +201,29 @@ class _HomePageState extends State<HomePage> {
     if (track != null && mounted) setState(_buildFeed);
   }
 
-  Future<List<Track>> _load(String query, {bool isPlaylist = false}) async {
+  Future<List<Track>> _load(
+    String query, {
+    bool isPlaylist = false,
+    bool refresh = false,
+  }) async {
     if (isPlaylist) {
       final saved = Library.instance.getPlaylist(query);
       if (saved.isNotEmpty) {
         _prefetchOnce(saved.first.id);
         return saved;
       }
-      return YoutubeService.instance.search(query, limit: 15);
+      return YoutubeService.instance.search(
+        query,
+        limit: 15,
+        refresh: refresh,
+      );
     }
 
-    final tracks = await YoutubeService.instance.search(query, limit: 15);
+    final tracks = await YoutubeService.instance.search(
+      query,
+      limit: 15,
+      refresh: refresh,
+    );
     if (tracks.isNotEmpty) _prefetchOnce(tracks.first.id);
     return tracks;
   }
@@ -218,7 +249,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Future<void> _submit(String text) async {
+  Future<void> _submit(String text, {bool refresh = false}) async {
     final value = text.trim();
     if (value.isEmpty) {
       setState(() => _results = null);
@@ -232,6 +263,7 @@ class _HomePageState extends State<HomePage> {
       _showHistory = false;
       _artistTracks = const <Track>[];
       _artistName = null;
+      _artistId = null;
       _artistTracksLoading = false;
     });
 
@@ -258,7 +290,10 @@ class _HomePageState extends State<HomePage> {
 
     setState(() => _busy = true);
     try {
-      final found = await YoutubeService.instance.search(value);
+      final found = await YoutubeService.instance.search(
+        value,
+        refresh: refresh,
+      );
       if (!mounted || generation != _searchGeneration) return;
       setState(() => _results = found);
       if (found.isEmpty) _toast('Sonuç bulunamadı.');
@@ -274,9 +309,10 @@ class _HomePageState extends State<HomePage> {
         );
         setState(() {
           _artistName = seed.artist;
+          _artistId = seed.artistId;
           _artistTracksLoading = true;
         });
-        unawaited(_loadArtistTracks(seed, generation));
+        unawaited(_loadArtistTracks(seed, generation, refresh: refresh));
       }
     } catch (_) {
       RepairBot.instance.reportEvent('search_failed', {'query': value});
@@ -287,12 +323,17 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _loadArtistTracks(Track seed, int generation) async {
+  Future<void> _loadArtistTracks(
+    Track seed,
+    int generation, {
+    bool refresh = false,
+  }) async {
     try {
       final tracks = await YoutubeService.instance.artistTracks(
         seed.artist,
         channelId: seed.artistId,
         limit: 60,
+        refresh: refresh,
       );
       if (!mounted || generation != _searchGeneration) return;
       final seen = <String>{
@@ -308,6 +349,46 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {
       if (!mounted || generation != _searchGeneration) return;
       setState(() => _artistTracksLoading = false);
+    }
+  }
+
+  /// Arama sonucunda bulunan sanatçının parçalarını ayrı çalma listesi olarak
+  /// kaydeder; indirmeyi tekrar tetiklemez (kitaplık listesi referanstır).
+  Future<void> _saveArtistPlaylist() async {
+    final artist = _artistName;
+    if (artist == null || _artistTracks.isEmpty) {
+      _toast('Kaydedilecek sanatçı parçası yok.');
+      return;
+    }
+    try {
+      await Library.instance.saveArtistPlaylist(
+        _artistId ?? artist,
+        artist,
+        _artistTracks,
+      );
+      _toast('$artist listesi kitaplığa kaydedildi.');
+    } catch (_) {
+      _toast('Liste kaydedilemedi.');
+    }
+  }
+
+  /// Sanatçı parçalarını toplu indirir ve indirme grubu olarak kaydeder.
+  Future<void> _downloadArtistPlaylist() async {
+    if (_artistTracks.isEmpty) {
+      _toast('İndirilecek sanatçı parçası yok.');
+      return;
+    }
+    _toast('${_artistTracks.length} parça indiriliyor…');
+    try {
+      final artist = _artistName ?? 'Sanatçı';
+      await DownloadService.instance.saveArtistPlaylist(
+        _artistId ?? artist,
+        artist,
+        _artistTracks,
+      );
+      _toast('$artist parçaları indirildi.');
+    } catch (_) {
+      _toast('İndirme tamamlanamadı.');
     }
   }
 
@@ -332,24 +413,27 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {}
   }
 
-  /// Mikrofonu tamamen bırakır. Tanıma bittikten sonra oturum açık kalırsa
-  /// cihaz kullanıcı konuşmasa da sesi dinlemeye devam ediyordu.
+  /// Mikrofonu tamamen bırakır. Yerel oturum açık kalırsa kayıt devam
+  /// etmesin diye servis oturumu iptal edilir.
   Future<void> _releaseVoice() async {
     try {
-      await _speech.cancel().timeout(const Duration(seconds: 3));
+      await _speech.cancel().timeout(const Duration(seconds: 4));
     } catch (_) {}
     unawaited(_restorePlaybackAfterVoice());
     if (mounted) setState(() => _listening = false);
   }
 
-  /// `submit=true` kullanıcı mikrofonu bıraktığında araç çubuğuna yazılan
-  /// kısmi metni aratır. Konuşma zaten final sonuç ürettiyse tekrar arama
-  /// yapılmaz (`_voiceSubmitDone`).
+  /// Kayıt durur → WAV → yerel Whisper transkripti → arama.
+  /// Nihai metin `stop()` içinde üretilir ve serviste saklanır.
   Future<void> _stopVoice({bool submit = false}) async {
-    final text = _voiceText.trim();
+    final fallback = _voiceText.trim();
     try {
-      await _speech.stop().timeout(const Duration(seconds: 3));
+      // İlk kullanımda model indirmesi de bu süreye dahil olabilir.
+      await _speech.stop().timeout(const Duration(seconds: 120));
     } catch (_) {}
+    final transcript = _speech.lastTranscript.trim();
+    final text = transcript.isNotEmpty ? transcript : fallback;
+    _voiceText = text;
     await _releaseVoice();
     if (submit && text.isNotEmpty && !_voiceSubmitDone) {
       _voiceSubmitDone = true;
@@ -358,150 +442,106 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _onVoiceResult(SpeechRecognitionResult result) {
-    final text = result.recognizedWords.trim();
-    if (text.isNotEmpty) _voiceText = text;
-    if (!mounted || !result.finalResult) return;
-    if (_voiceSubmitDone) return;
-    _voiceSubmitDone = true;
-    final query = text.isEmpty ? _voiceText : text;
-    if (query.isEmpty) return;
-    _input.text = query;
-    unawaited(_stopVoice());
-    unawaited(_submit(query));
+  /// Whisper parçaları arama kutusuna hazırlanır; arama yalnızca kullanıcı
+  /// mikrofonu bıraktığında (kayıt durduktan sonra) tetiklenir.
+  void _onVoiceResult(String text) {
+    final value = text.trim();
+    if (value.isNotEmpty) _voiceText = value;
   }
 
-  String _voiceErrorMessage(String code) => switch (code) {
-        'error_no_match' => 'Konuşma algılanmadı. Tekrar deneyin.',
-        'error_speech_timeout' => 'Konuşma algılanmadı. Tekrar deneyin.',
-        'error_audio' => 'Mikrofon sesi alınamadı.',
-        'error_network' ||
-        'error_server' =>
-          'Sesli arama sunucusuna ulaşılamadı.',
-        'error_busy' => 'Sesli arama şu an meşgul.',
-        'error_insufficient_permissions' => 'Mikrofon izni gerekli.',
-        'error_client' => 'Sesli arama başlatılamadı.',
-        _ => 'Sesli arama hatası: $code',
-      };
-
-  void _onVoiceError(SpeechRecognitionError error) {
-    // Hata sonrası otomatik yeniden dinleme yok. Mikrofon yalnızca kullanıcı
-    // düğmeye bastığında açılır.
-    _voiceError(_voiceErrorMessage(error.errorMsg));
-    unawaited(_stopVoice());
+  String _voiceErrorMessage(String message) {
+    if (message.trim().isEmpty) return 'Sesli arama hatası.';
+    return message;
   }
 
-  Future<void> _startListening(String localeId) async {
+  /// Servis hata akışı: otomatik yeniden dinleme yok; mikrofon yalnızca
+  /// kullanıcı düğmeye bastığında açılır.
+  void _onVoiceError(String message) {
+    _voiceError(message);
+  }
+
+  void _onSpeechStatus(SpeechStatus status) {
+    if (!mounted) return;
+    setState(() => _voiceStatus = status.message);
+    if (status.phase == SpeechPhase.error) _onVoiceError(status.message);
+  }
+
+  Future<void> _startListening() async {
     try {
-      // 7.x API'sinde listen() hata callback'i almaz; hata initialize()
-      // sırasında verilen errorListener üzerinden gelir (bkz. _beginVoice).
-      // Kısmi sonuçlar yalnızca dahili olarak tutulur; kullanıcı mikrofonu
-      // bıraktığında arama başlatılır. Oturum tek cümleyle sınırlıdır, hata
-      // durumunda kendiliğinden kapanır; arka planda dinleme yapılmaz.
       await _speech
-          .listen(
-            onResult: _onVoiceResult,
-            listenOptions: SpeechListenOptions(
-              localeId: localeId.isEmpty ? null : localeId,
-              partialResults: true,
-              cancelOnError: true,
-              listenMode: ListenMode.search,
-              autoPunctuation: false,
-              pauseFor: const Duration(seconds: 2),
-              listenFor: const Duration(seconds: 15),
-            ),
-          )
-          .timeout(const Duration(seconds: 6));
+          .listen(locale: SettingsService.instance.languageCode)
+          .timeout(const Duration(seconds: 10));
       if (mounted) setState(() => _listening = true);
-      // Mikrofon bırakılmış ama initialize/listen henüz tamamlanmamış olabilir.
+      // Mikrofon bırakılmış ama izin/kayıt başlangıcı gecikebilir.
       if (_voiceSubmitOnReady) {
         _voiceSubmitOnReady = false;
         unawaited(_stopVoice(submit: true));
       }
     } on TimeoutException {
-      // Cihazda konuşma tanıma servisi yoksa/bağlanmıyorsa session sessizce
-      // takılmasın; kullanıcıya anlaşılır mesaj gösterilsin.
-      _voiceError('Sesli arama şu an kullanılamıyor.');
-      unawaited(_releaseVoice());
+      _voiceError('Ses kaydı başlatılamadı.');
     } catch (_) {
-      _voiceError('Sesli arama başlatılamadı.');
+      // Ayrıntılı mesaj servisin hata akışından gelir; tekrar gösterilmez.
       unawaited(_releaseVoice());
-    }
-  }
-
-  /// Cihazda tr-TR tanıma dilinin kurulu olup olmadığını kontrol et. Kurulu
-  /// değilse sistemin varsayılan dilini kullan; aksi halde sessiz timeout
-  /// oluşuyor ve kullanıcı "çalışmıyor" sanıyor.
-  Future<String> _pickVoiceLocale() async {
-    try {
-      final locales = await _speech
-          .locales()
-          .timeout(const Duration(seconds: 4), onTimeout: () => []);
-      if (locales.any((l) => l.localeId == 'tr-TR')) return 'tr-TR';
-      final system = await _speech
-          .systemLocale()
-          .timeout(const Duration(seconds: 4), onTimeout: () => null);
-      return system?.localeId ?? '';
-    } catch (_) {
-      return 'tr-TR';
     }
   }
 
   Future<void> _beginVoice() async {
-    if (_listening) return;
+    if (_listening || _speechBusy) return;
+    _speechBusy = true;
+    try {
+      if (!_speechReady) {
+        try {
+          _speechReady = await _speech
+              .initialize()
+              .timeout(const Duration(seconds: 6));
+        } on TimeoutException {
+          _voiceError('Sesli arama şu an kullanılamıyor.');
+          return;
+        } catch (_) {
+          _voiceError('Sesli arama başlatılamadı.');
+          return;
+        }
+        if (!_speechReady) {
+          _voiceError('Sesli arama bu cihazda kullanılamıyor.');
+          return;
+        }
+      }
 
-    if (!_speechReady) {
-      // speech_to_text izni initialize() sırasında ister; hasPermission
-      // yalnızca mevcut durumu okur. Bu yüzden önce initialize çağrılır.
-      bool available;
+      // Mikrofon izni YALNIZCA kullanıcı düğmeye bastığında istenir.
+      bool granted;
       try {
-        available = await _speech
-            .initialize(
-              onError: _onVoiceError,
-              onStatus: (s) {
-                if (s == 'done' || s == 'notListening' || s == 'aborted') {
-                  unawaited(_releaseVoice());
-                }
-              },
-            )
-            .timeout(const Duration(seconds: 6));
-      } on TimeoutException {
-        _voiceError('Sesli arama şu an kullanılamıyor.');
-        return;
+        granted = await _speech.hasPermission().timeout(
+              const Duration(seconds: 8),
+              onTimeout: () => false,
+            );
       } catch (_) {
-        _voiceError('Sesli arama başlatılamadı.');
+        granted = false;
+      }
+      if (!granted) {
+        _voiceError('Mikrofon izni gerekli.');
         return;
       }
-      if (!available) {
-        final hasPermission = await _speech.hasPermission;
-        _toast(
-          hasPermission
-              ? 'Sesli arama kullanılamıyor.'
-              : 'Mikrofon izni gerekli.',
-        );
-        return;
+
+      // Müzik çalarken mikrofon şarkıyı duyuyor, tanıma başarısız oluyordu.
+      if (PlayerController.instance.playing) {
+        await PlayerController.instance.pause();
+        _pausedForVoice = true;
       }
-      _speechReady = true;
-    }
 
-    // Müzik çalarken mikrofon şarkıyı duyuyor, tanıma başarısız oluyordu.
-    if (PlayerController.instance.playing) {
-      await PlayerController.instance.pause();
-      _pausedForVoice = true;
+      _voiceSubmitDone = false;
+      _voiceText = '';
+      await _startListening();
+    } finally {
+      _speechBusy = false;
     }
-
-    _voiceSubmitDone = false;
-    _voiceText = '';
-    final locale = await _pickVoiceLocale();
-    await _startListening(locale);
   }
 
-  /// Kısa dokunuş: dinlemeyi açık bırak, konuşma bitince otomatik ara.
-  /// Uzun basış: bırakıldığında (_onMicUp) söyleneni ara.
+  /// Kısa dokunuş: kayıt açık kalır, ikinci dokunuşta durur ve aranır.
+  /// Uzun basış: bırakıldığında (_onMicUp) söyleneni arar.
   void _onMicDown() {
     _voicePressAt = DateTime.now();
     _voiceStopOnUp = _listening;
-    if (!_listening) unawaited(_beginVoice());
+    if (!_listening && !_speechBusy) unawaited(_beginVoice());
   }
 
   void _onMicUp() {
@@ -528,8 +568,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _voiceError(String msg) {
-    _toast(msg);
-    if (mounted) setState(() => _listening = false);
+    _toast(_voiceErrorMessage(msg));
+    if (mounted) setState(() => _voiceStatus = '');
+    unawaited(_releaseVoice());
   }
 
   void _openArtist(Track track) {
@@ -632,6 +673,7 @@ class _HomePageState extends State<HomePage> {
       _results = null;
       _artistTracks = const <Track>[];
       _artistName = null;
+      _artistId = null;
       _artistTracksLoading = false;
       _input.clear();
     });
@@ -819,6 +861,15 @@ class _HomePageState extends State<HomePage> {
               ),
             ],
           ),
+          // Yerel Whisper modeli ilk kullanımda indirilir; ilerleme burada görünür.
+          if (_voiceStatus.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                _voiceStatus,
+                style: TextStyle(fontSize: 12, color: ThemeState.value),
+              ),
+            ),
           if (_showHistory && Library.instance.searchHistory.isNotEmpty)
             _searchHistory(),
         ],
@@ -973,6 +1024,8 @@ class _HomePageState extends State<HomePage> {
                     title: 'Çalma Listeleri ve Şarkılar',
                     subtitle: subtitle,
                     queue: primary,
+                    onSave: hasArtistTracks ? _saveArtistPlaylist : null,
+                    onDownload: hasArtistTracks ? _downloadArtistPlaylist : null,
                   );
                 }
 
@@ -1018,6 +1071,8 @@ class _HomePageState extends State<HomePage> {
     required String title,
     String? subtitle,
     required List<Track> queue,
+    VoidCallback? onSave,
+    VoidCallback? onDownload,
   }) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
@@ -1054,6 +1109,18 @@ class _HomePageState extends State<HomePage> {
               tooltip: 'Tümünü çal',
               onPressed: () =>
                   PlayerController.instance.playQueue(queue, 0, radio: false),
+            ),
+          if (onSave != null)
+            IconButton(
+              icon: const Icon(Icons.playlist_add),
+              tooltip: 'Sanatçı listesini kaydet',
+              onPressed: onSave,
+            ),
+          if (onDownload != null)
+            IconButton(
+              icon: const Icon(Icons.download_for_offline),
+              tooltip: 'Tümünü indir',
+              onPressed: onDownload,
             ),
         ],
       ),

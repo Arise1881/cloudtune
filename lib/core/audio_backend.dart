@@ -46,6 +46,16 @@ abstract class AudioBackend {
 AudioBackend createAudioBackend() =>
     Platform.isLinux ? MediaKitAudioBackend() : JustAudioBackend();
 
+/// Preset kazançları (dB). Android zinciri ve libmpv `af` zinciri aynı eğriyi
+/// kullanır; 'normal'/'flat' düz kalır.
+List<double> equalizerGains(String preset) => switch (preset) {
+      'flat' || 'normal' => [0, 0, 0, 0, 0],
+      'bass' => [8, 5, 0, -1, 1],
+      'treble' => [-1, 0, 2, 6, 8],
+      'vocal' => [-2, 1, 5, 3, 0],
+      _ => [0, 0, 0, 0, 0],
+    };
+
 class JustAudioBackend implements AudioBackend {
   late final AudioPlayer _player;
   AndroidEqualizer? _equalizer;
@@ -146,20 +156,12 @@ class JustAudioBackend implements AudioBackend {
       if (!enabled) return;
       final bands = (await eq.parameters).bands;
       if (bands.isEmpty) return;
-      final gains = _gains(preset);
+      final gains = equalizerGains(preset);
       for (var i = 0; i < bands.length; i++) {
         await bands[i].setGain(gains[i % gains.length]);
       }
     } catch (_) {}
   }
-
-  static List<double> _gains(String preset) => switch (preset) {
-        'flat' => [0, 0, 0, 0, 0],
-        'bass' => [8, 5, 0, -1, 1],
-        'treble' => [-1, 0, 2, 6, 8],
-        'vocal' => [-2, 1, 5, 3, 0],
-        _ => [0, 0, 0, 0, 0],
-      };
 }
 
 /// Linux ses motoru. `media_kit_libs_linux` paketi libmpv binary'sini
@@ -185,6 +187,27 @@ class MediaKitAudioBackend implements AudioBackend {
       }
     });
     _player.stream.error.listen((message) => _errors.add(message));
+
+    // Parçalar arası ses seviyesi farkı (özellikle YouTube akışları) bazı
+    // şarkıları duyulmaz kılıyordu. ReplayGain her parçada normalize edilir.
+    unawaited(() async {
+      try {
+        await _setMpvProperty('audio-replay-gain-mode', 'track');
+      } catch (_) {}
+    }());
+  }
+
+  /// `Player.platform` yalnızca PlatformPlayer sözleşmesini açığa çıkarır;
+  /// mpv özellikleri NativePlayer üzerinden ayarlanır.
+  NativePlayer? get _nativePlayer {
+    final platform = _player.platform;
+    return platform is NativePlayer ? platform : null;
+  }
+
+  Future<void> _setMpvProperty(String name, String value) async {
+    final native = _nativePlayer;
+    if (native == null) return;
+    await native.setProperty(name, value);
   }
 
   void _emitStatus() {
@@ -267,5 +290,33 @@ class MediaKitAudioBackend implements AudioBackend {
   Future<void> seek(Duration position) => _player.seek(position);
 
   @override
-  Future<void> applyEqualizer(bool enabled, String preset) async {}
+  Future<void> applyEqualizer(bool enabled, String preset) async {
+    try {
+      await _setMpvProperty('audio-replay-gain-mode', 'track');
+      if (!enabled) {
+        await _setMpvProperty('af', '');
+        await _player.setVolume(100);
+        return;
+      }
+
+      // libmpv, FFmpeg `equalizer` filtresini `lavfi=[...]` ile uygular.
+      // Beş bant: bas, alt-orta, orta, üst-orta, tiz.
+      const frequencies = <int>[100, 400, 1600, 6000, 12000];
+      final gains = equalizerGains(preset);
+      final filters = <String>[
+        for (var i = 0; i < frequencies.length; i++)
+          'equalizer=f=${frequencies[i]}:t=q:w=1:g=${gains[i % gains.length]}',
+      ];
+      await _setMpvProperty('af', 'lavfi=[${filters.join(',')}]');
+      await _player.setVolume(100);
+    } catch (_) {
+      // Eski libmpv yapılarında `af` desteklenmeyebilir; en azından
+      // seviye_normalizasyonu ve gain 100 uygulanır.
+      try {
+        await _setMpvProperty('af', '');
+        await _setMpvProperty('audio-replay-gain-mode', 'track');
+        await _player.setVolume(100);
+      } catch (_) {}
+    }
+  }
 }
