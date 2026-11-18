@@ -186,9 +186,12 @@ class _RoomPageState extends State<RoomPage>
     final name = _displayName.text.trim();
     if (name.isNotEmpty) await _saveDisplayName(name);
     _toast('Odaya bağlanılıyor…');
+    // Avatarı katılımın içinde gönder; ack sonrası ikinci yayını bekleme.
+    final avatar = await _avatarDataUrl();
     final created = await RoomService.instance.create(
       name: _roomName.text.trim(),
       password: RoomService.normalizePassword(_password.text),
+      avatar: avatar,
       displayName: name,
     );
     if (!mounted) return;
@@ -215,9 +218,11 @@ class _RoomPageState extends State<RoomPage>
     final allowed = await _ensureRemoteDataConsent();
     if (!mounted) return;
     _toast('Odaya bağlanılıyor…');
+    final avatar = await _avatarDataUrl();
     final result = await RoomService.instance.joinWithResult(
       code: code,
       password: password,
+      avatar: avatar,
       displayName: name,
     );
     if (!mounted) return;

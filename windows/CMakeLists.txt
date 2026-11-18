@@ -43,6 +43,13 @@ function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_options(${TARGET} PRIVATE /EHsc)
   target_compile_definitions(${TARGET} PRIVATE "_HAS_EXCEPTIONS=0")
   target_compile_definitions(${TARGET} PRIVATE "$<$<CONFIG:Debug>:_DEBUG>")
+  # Release: tam program optimizasyonu + LTCG + ölü kod/aynı fonksiyon birleştirme.
+  target_compile_options(${TARGET} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/GL>")
+  target_link_options(${TARGET} PRIVATE
+    "$<$<NOT:$<CONFIG:Debug>>:/LTCG>"
+    "$<$<NOT:$<CONFIG:Debug>>:/OPT:REF>"
+    "$<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>"
+  )
 endfunction()
 
 # Flutter library and tool build rules.

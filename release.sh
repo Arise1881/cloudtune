@@ -9,12 +9,21 @@ set -euo pipefail
 # Parametreler
 BUMP="${1:-patch}"  # major / minor / patch (varsayılan: patch)
 
-# Ortam değişkenleri
-export PATH="/home/msi/development/flutter/bin:$PATH"
-export ANDROID_SDK_ROOT=/home/msi/android-sdk
-PROJECT="/home/msi/Belgeler/Default Project/CloudTune"
-DIST="/tmp/opencode/cloudtune-dist"
-STAGING="/tmp/opencode/cloudtune-release"
+# Ortam değişkenleri — sabit kullanıcı yolu yok, başka makinede de çalışır.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="${FLUTTER_BIN:-$HOME/development/flutter/bin}:$PATH"
+export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$HOME/android-sdk}"
+TMP_ROOT="${CT_TMP_ROOT:-${TMPDIR:-/tmp}/opencode}"
+mkdir -p "$TMP_ROOT"
+PROJECT="${CT_PROJECT_DIR:-$SCRIPT_DIR}"
+DIST="${CT_DIST_DIR:-$TMP_ROOT/cloudtune-dist}"
+STAGING="${CT_STAGING_DIR:-$TMP_ROOT/cloudtune-release}"
+if [[ ! -d "$DIST/.git" ]]; then
+  echo "Dağıtım reposu klonlanıyor: $DIST"
+  # Token remote config'e yazılmaz; yalnızca bu komut için başlıkta tutulur.
+  git -c http.extraheader="AUTHORIZATION: bearer $GH_TOKEN" clone \
+    https://github.com/Arise1881/cloudtune-dist.git "$DIST"
+fi
 # Token sürüm kontrolünde saklanmaz; ortam değişkeninden veya yerel dosyadan okunur.
 GH_TOKEN="${GH_TOKEN:-}"
 if [[ -z "$GH_TOKEN" && -f "$HOME/.config/cloudtune-gh-token" ]]; then
@@ -57,11 +66,22 @@ echo "Yeni: $NEW_FULL"
 [[ "$BUMP" != "current" ]] && sed -i "s/^version:.*/version: $NEW_FULL/" pubspec.yaml
 # Kaynak README dosya haritasındaki sürümü de yeni sürüme taşı (yalnızca
 # mevcut sürümü; Windows eski paket notundaki 3.0.5+206 korunur).
-sed -i "s/$CURRENT/$NEW_FULL/g" README.md
+# sed'de noktalar regex wildcard olduğu için Python ile literal değiştirme.
+python3 - "$CURRENT" "$NEW_FULL" <<'PY'
+import sys
+old, new = sys.argv[1], sys.argv[2]
+p = 'README.md'
+s = open(p, encoding='utf-8').read()
+open(p, 'w', encoding='utf-8').write(s.replace(old, new))
+PY
 
 # ─── 3. Analiz ───
+# Generated.xcconfig sürümünü pubspec'ten yenile; aksi halde iOS eski
+# sürüm numarasıyla derlenebilir.
+flutter pub get
+
 echo "── flutter analyze ──"
-flutter analyze || true
+flutter analyze
 
 echo "── flutter test ──"
 flutter test
@@ -97,14 +117,39 @@ cp -f build/app/outputs/flutter-apk/app-x86_64-release.apk "$STAGING/CloudTune-x
 # için kütüphaneyi bundle/lib içine koyuyoruz; deb ayrıca libmpv2'ye bağlı.
 LIBMPV=$(ldconfig -p 2>/dev/null | awk '/libmpv\.so\.2 .* => \// {print $NF; exit}')
 if [[ -n "$LIBMPV" ]]; then
+  mkdir -p build/linux/x64/release/bundle/lib
   cp -L "$LIBMPV" build/linux/x64/release/bundle/lib/libmpv.so.2
   ln -sfn libmpv.so.2 build/linux/x64/release/bundle/lib/libmpv.so
+  # Kütüphane eksikse bozuk paket üretme; derlemeyi durdur.
+  ldd build/linux/x64/release/bundle/cloudtune | grep -q 'libmpv.so.2' || {
+    echo "HATA: libmpv.so.2 bundle RUNPATH üzerinden çözümlenemedi."
+    exit 1
+  }
   echo "libmpv bundle'a eklendi: $LIBMPV"
 else
-  echo "UYARI: libmpv.so.2 bulunamadı; deb Depends ile kurulacak."
+  echo "HATA: libmpv.so.2 bulunamadı; Linux paketi üretilemez."
+  exit 1
 fi
+# Release ikilisi zaten -s ile strip ediliyor; yine de emin ol.
+strip build/linux/x64/release/bundle/cloudtune 2>/dev/null || true
 
-# Linux tar.gz
+# Linux tar.gz — masaüstü entegrasyonu bundle içinde de olsun.
+# %k .desktop dosyasının kendisidir; $0 olarak kabuğa geçirip dizinini buluyoruz.
+# Böylece tarball herhangi bir klasöre açıldığında da binary çalışır.
+BUNDLE="build/linux/x64/release/bundle"
+cat > "$BUNDLE/cloudtune.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=CloudTune
+GenericName=Music Player
+Comment=Spotify tarzı müzik çalar (YouTube, reklamsız)
+Exec=sh -c 'cd "$(dirname "$0")" && exec ./cloudtune "$@"' "%k"
+Icon=cloudtune
+Terminal=false
+Categories=Audio;AudioVideo;Player;
+StartupWMClass=com.cloudtune.app
+EOF
+cp -f "$DIST/icon.png" "$BUNDLE/cloudtune.png"
 cd build/linux/x64/release
 tar -czf "$STAGING/CloudTune-linux.tar.gz" bundle
 cd "$PROJECT"
@@ -113,32 +158,36 @@ cd "$PROJECT"
 if [[ -f build/windows/x64/runner/Release/cloudtune.exe ]]; then
   echo "── Windows paketle ──"
   cd build/windows/x64/runner/Release
-  zip -qr "$STAGING/CloudTune-windows.zip" . -x "*.pdb" -x "flutter_windows.dll" -x "Darwin*"
+  # flutter_windows.dll ZORUNLU runtime dosyası; pakete mutlaka girmeli.
+  zip -qr "$STAGING/CloudTune-windows.zip" . -x "*.pdb"
   cd "$PROJECT"
 fi
 
 # iOS ipa (yalnızca macOS makinede build edilirse)
 if [[ -d build/ios/iphoneos ]]; then
   echo "── iOS paketle ──"
-  mkdir -p /tmp/opencode/ipa/Payload
-  cp -R build/ios/iphoneos/*.app /tmp/opencode/ipa/Payload/
-  cd /tmp/opencode/ipa
+  IPA_DIR="$TMP_ROOT/cloudtune-ipa"
+  rm -rf "$IPA_DIR/Payload"
+  mkdir -p "$IPA_DIR/Payload"
+  cp -R build/ios/iphoneos/*.app "$IPA_DIR/Payload/"
+  cd "$IPA_DIR"
   zip -qr "$STAGING/CloudTune.ipa" Payload
   cd "$PROJECT"
 fi
 
 # DEB paketle
-DEB_DIR="/tmp/opencode/cloudtune-deb"
+DEB_DIR="$TMP_ROOT/cloudtune-deb"
+rm -rf "$DEB_DIR"
 mkdir -p "$DEB_DIR/usr/share/cloudtune" "$DEB_DIR/DEBIAN"
-rm -rf "$DEB_DIR/usr/share/cloudtune/"* 2>/dev/null || true
 cp -a build/linux/x64/release/bundle/. "$DEB_DIR/usr/share/cloudtune/"
+# Sadece sürüm artışında değil, build artışında da yükseltme yapılabilsin.
 cat > "$DEB_DIR/DEBIAN/control" <<EOF
 Package: cloudtune
-Version: $NEW_VER
+Version: $NEW_VER-$NEW_BUILD
 Section: sound
 Priority: optional
 Architecture: amd64
-Depends: libmpv2
+Depends: libmpv2 (>= 0.35)
 Maintainer: Arise1881 <arise1881@users.noreply.github.com>
 Description: CloudTune — YouTube müzik çalar (reklamsız)
  Installed-Size: $(du -sk "$DEB_DIR/usr/share/cloudtune" | cut -f1)
@@ -158,9 +207,14 @@ Exec=/usr/share/cloudtune/cloudtune
 Icon=cloudtune
 Terminal=false
 Categories=Audio;AudioVideo;Player;
-StartupWMClass=cloudtune
+# GTK g_set_prgname("com.cloudtune.app") ile eşleşmeli; aksi halde dock ikonu
+# ayrı pencere olarak görünür.
+StartupWMClass=com.cloudtune.app
 EOF
 cp -f "$DIST/icon.png" "$DEB_DIR/usr/share/icons/hicolor/512x512/apps/cloudtune.png"
+# Kabuktan `cloudtune` ile başlatılabilsin.
+mkdir -p "$DEB_DIR/usr/bin"
+ln -sfn /usr/share/cloudtune/cloudtune "$DEB_DIR/usr/bin/cloudtune"
 cat > "$DEB_DIR/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
@@ -186,7 +240,7 @@ with open('update.json') as f:
     d = json.load(f)
 d['version'] = '$NEW_VER'
 d['versionCode'] = $NEW_BUILD
-d['notes'] = 'Yerel Whisper sesli arama; tekrar/karışık çalma ve ses kalitesi; sanatçı parçalarını indirme/kaydetme; sıralanabilir çalma listeleri; oda listesi, şifreli davet ve avatar onayı; TR/EN dil; tam onarım.'
+d['notes'] = 'Yerel Whisper sesli arama; oda presence/ack ve kişi sayısı düzeltmeleri; Android R8 + kaynak küçültme + HTTPS-only; Linux deb/tar.gz strip, libmpv doğrulama ve masaüstü entegrasyonu; Windows LTCG + runtime DLL; iOS obfuscation. Windows/iOS binary CI ödeme limiti nedeniyle eski.'
 d['platforms']['linux'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.deb'
 d['platforms']['linux-targz'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.tar.gz'
 d['platforms']['android-arm64'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-arm64.apk'
@@ -209,7 +263,7 @@ with open(p) as f:
 app = a['apps'][0]
 app['version'] = '$NEW_VER'
 app['versionDate'] = '$NEW_DATE'
-app['versionDescription'] = 'CloudTune $NEW_FULL'
+app['versionDescription'] = 'CloudTune $NEW_FULL — R8/strip/LTCG/obfuscation, oda presence/ack ve kişi sayısı düzeltmeleri'
 with open(p, 'w') as f:
     json.dump(a, f, indent=2, ensure_ascii=False)
 print(f'apps.json -> {app[\"version\"]} / {app[\"versionDate\"]}')
@@ -217,7 +271,7 @@ print(f'apps.json -> {app[\"version\"]} / {app[\"versionDate\"]}')
 
 # ─── 7. GitHub release asset'lerini güncelle ───
 echo "── Eski asset'leri sil ──"
-RELEASE_ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
+RELEASE_ID=$(curl -fsS -H "Authorization: token $GH_TOKEN" \
   "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/tags/$RELEASE_TAG" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 
@@ -228,7 +282,7 @@ curl -s -o /dev/null -X PATCH \
   -d "{\"name\":\"CloudTune $NEW_VER (build $NEW_BUILD)\",\"tag_name\":\"$RELEASE_TAG\"}"
 echo "Release başlığı -> CloudTune $NEW_VER (build $NEW_BUILD)"
 
-ASSET_IDS=$(curl -s -H "Authorization: token $GH_TOKEN" \
+ASSET_IDS=$(curl -fsS -H "Authorization: token $GH_TOKEN" \
   "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/tags/$RELEASE_TAG" \
   | python3 -c "
 import sys,json,os.path
@@ -238,7 +292,7 @@ for a in json.load(sys.stdin)['assets']:
         print(a['id'])
 ")
 for aid in $ASSET_IDS; do
-  curl -s -o /dev/null -X DELETE \
+  curl -fsS -o /dev/null -X DELETE \
     -H "Authorization: token $GH_TOKEN" \
     "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/assets/$aid"
 done
@@ -249,34 +303,40 @@ for f in CloudTune-arm64.apk CloudTune-armv7.apk CloudTune-x86_64.apk CloudTune-
   MIME="application/octet-stream"
   [[ "$f" == *.apk ]] && MIME="application/vnd.android.package-archive"
   [[ "$f" == *.tar.gz ]] && MIME="application/gzip"
-  curl -s -o /dev/null -w "$f -> %{http_code}\n" -X POST \
+  CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
     -H "Authorization: token $GH_TOKEN" \
     -H "Content-Type: $MIME" \
     --data-binary "@$STAGING/$f" \
-    "$UPLOAD?name=$f"
+    "$UPLOAD?name=$f")
+  echo "$f -> $CODE"
+  [[ "$CODE" =~ ^2 ]] || { echo "HATA: $f yüklenemedi"; exit 1; }
 done
 
 # deb (yeni isimle)
 DEB_FILE="CloudTune-linux.deb"
-curl -s -o /dev/null -w "$DEB_FILE -> %{http_code}\n" -X POST \
+CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
   -H "Authorization: token $GH_TOKEN" \
   -H "Content-Type: application/vnd.debian.binary-package" \
   --data-binary "@$STAGING/$DEB_FILE" \
-  "$UPLOAD?name=$DEB_FILE"
+  "$UPLOAD?name=$DEB_FILE")
+echo "$DEB_FILE -> $CODE"
+[[ "$CODE" =~ ^2 ]] || { echo "HATA: deb yüklenemedi"; exit 1; }
 
 # Windows + iOS paketleri (yalnızca build edilen varsa yenilenir)
 for f in CloudTune-windows.zip CloudTune.ipa; do
   if [[ -f "$STAGING/$f" ]]; then
-    curl -s -o /dev/null -w "$f -> %{http_code}\n" -X POST \
+    CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
       -H "Authorization: token $GH_TOKEN" \
       -H "Content-Type: application/octet-stream" \
       --data-binary "@$STAGING/$f" \
-      "$UPLOAD?name=$f"
+      "$UPLOAD?name=$f")
+    echo "$f -> $CODE"
+    [[ "$CODE" =~ ^2 ]] || { echo "HATA: $f yüklenemedi"; exit 1; }
   fi
 done
 
 # Eski deb asset'ini sil (farklı isimde kalabilir)
-OLD_DEB_ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
+OLD_DEB_ID=$(curl -fsS -H "Authorization: token $GH_TOKEN" \
   "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/tags/$RELEASE_TAG" \
   | python3 -c "
 import sys,json
@@ -286,7 +346,7 @@ for a in json.load(sys.stdin)['assets']:
 " 2>/dev/null)
 if [ -n "$OLD_DEB_ID" ]; then
   for aid in $OLD_DEB_ID; do
-    curl -s -o /dev/null -X DELETE \
+    curl -fsS -o /dev/null -X DELETE \
       -H "Authorization: token $GH_TOKEN" \
       "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/assets/$aid"
   done
@@ -302,29 +362,42 @@ echo "── Push ──"
 git add update.json apps.json index.html README.md
 git -c user.name="Arise1881" -c user.email="arise1881@users.noreply.github.com" \
   commit -m "v$NEW_FULL: $BUMP bump, Pages manifest URL, release guncellemesi" 2>&1 | tail -1
-git push "https://x-access-token:${GH_TOKEN}@github.com/Arise1881/cloudtune-dist.git" main 2>&1 | tail -1
+git -c http.extraheader="AUTHORIZATION: bearer $GH_TOKEN" \
+  push https://github.com/Arise1881/cloudtune-dist.git main 2>&1 | tail -1
 
 # ─── 8b. Kaynak repoyu push et (CI aynı sürümü derlesin) ───
 cd "$PROJECT"
-git add -A
+# Yalnızca sürüm dosyaları; bootstrap/generated çıktılar yanlışlıkla
+# commit edilmesin. Platform dosyaları ayrıca elle commit edilir.
+git add pubspec.yaml README.md
 git -c user.name="Arise1881" -c user.email="arise1881@users.noreply.github.com" \
   commit -m "chore: surum $NEW_FULL - tam yeniden yazim" 2>&1 | tail -1 || true
-git push "https://x-access-token:${GH_TOKEN}@github.com/Arise1881/cloudtune.git" HEAD 2>&1 | tail -1
+git -c http.extraheader="AUTHORIZATION: bearer $GH_TOKEN" \
+  push https://github.com/Arise1881/cloudtune.git HEAD 2>&1 | tail -1
 
 # ─── 8c. iOS + Windows CI derlemelerini tetikle ───
 echo "── iOS + Windows derlemelerini tetikle ──"
 for wf in ios-build.yml windows-build.yml; do
-  curl -s -o /dev/null -w "$wf -> %{http_code}\n" -X POST \
+  CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
     -H "Authorization: token $GH_TOKEN" \
     -H "Accept: application/vnd.github+json" \
     "https://api.github.com/repos/Arise1881/cloudtune/actions/workflows/$wf/dispatches" \
-    -d '{"ref":"main"}'
+    -d '{"ref":"main"}')
+  echo "$wf -> $CODE"
+  [[ "$CODE" =~ ^2 ]] || echo "UYARI: $wf tetiklenemedi (billing olabilir)"
 done
 
 # ─── 9. Son doğrulama ───
 echo "── Son doğrulama ──"
-curl -s -o /dev/null -w "GitHub Pages -> %{http_code}\n" "https://arise1881.github.io/cloudtune-dist/update.json"
-curl -s "https://arise1881.github.io/cloudtune-dist/update.json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Pages manifest -> {d[\"version\"]} / {d[\"versionCode\"]}')"
+# Pages build CDN'i birkaç saniye gecikebilir; kısa bir backoff ile bekle.
+for attempt in $(seq 1 12); do
+  LIVE=$(curl -fsS "https://arise1881.github.io/cloudtune-dist/update.json?check=$attempt" 2>/dev/null || echo '{}')
+  LIVE_VER=$(printf '%s' "$LIVE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('version',''))" 2>/dev/null || true)
+  [[ "$LIVE_VER" == "$NEW_VER" ]] && break
+  sleep 5
+done
+echo "Pages manifest -> ${LIVE_VER:-eski} / hedef $NEW_VER"
+[[ "$LIVE_VER" == "$NEW_VER" ]] || echo "UYARI: Pages henüz yeni manifest'i yayınlamadı; birazdan kontrol edin."
 
 echo ""
 echo "✅ Yayın tamamlandı: v$NEW_FULL"

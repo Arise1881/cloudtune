@@ -45,6 +45,27 @@ void main() {
     expect(RoomService.normalizeCode('A' * 13), isEmpty);
   });
 
+  test('gerçek RoomService: şifre normalize ve discovery payload', () {
+    // Hem host hem katılan aynı normalize yolunu kullanır; büyük/küçük harf
+    // anlamlıdır, yalnızca kenar boşlukları atılır.
+    expect(RoomService.normalizePassword('  sifre  '), 'sifre');
+    expect(RoomService.normalizePassword('Sifre'), 'Sifre');
+    expect(RoomService.normalizePassword(''), '');
+
+    final room = RoomDiscovery.fromJson(<String, dynamic>{
+      'code': ' ab12 ',
+      'hostId': 'host-1',
+      'roomName': 'Oda',
+      'memberCount': 3,
+      'hasPassword': false,
+      'hostName': 'Ali',
+    });
+    expect(room.code, 'AB12');
+    expect(room.memberCount, 3);
+    expect(room.hasPassword, isFalse);
+    expect(room.toJson()['code'], 'AB12');
+  });
+
   test('gerçek SpeechService sözleşmesi en az bu metotları sunar', () {
     final SpeechService speech = WhisperSpeechService();
     expect(speech.isListening, isFalse);

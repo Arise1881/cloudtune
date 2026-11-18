@@ -154,7 +154,7 @@ test/                     Bağlantı, dil, playlist, repeat ve Whisper sözleşm
 tool/bootstrap.sh          flutter create sonrası Android dosyalarını üret/yamala
 tool/patch_android.py      Manifest izinleri, intent-filter, servisler, minSdk yaması
 tool/ct_full_test.py       Emülatör kurulum→etkileşim→logcat→ses→ekran raporu
-.github/workflows/build.yml   Android + Linux CI
+.github/workflows/build.yml   Android CI (Linux paketleri release.sh ile üretilir)
 .github/workflows/ios-build.yml   iOS IPA derleme (CI)
 .github/workflows/windows-build.yml Windows zip derleme (CI)
 
@@ -234,11 +234,35 @@ flutter build apk --release
 flutter build apk --release --split-per-abi
 
 # Masaüstü / web
-flutter build linux --release
-flutter build windows --release   # Windows makinede
-flutter build ios --release --no-codesign  # macOS'ta
+flutter build linux --release   # Release: -s ile strip
+flutter build windows --release   # Windows makinede (/GL /LTCG /OPT:REF /OPT:ICF)
+flutter build ios --release --no-codesign \
+  --obfuscate --split-debug-info=build/ios/symbols  # macOS'ta
 flutter build web --release
 ```
+
+### 3.0.40+241 — platform optimizasyonları
+
+- **Android:** R8 minify + `shrinkResources` açık; JNI/Flutter keep kuralları
+  `android/app/proguard-rules.pro` içinde. ABI bazlı APK'lar 20–26 MB
+  (önceki evrensel 64 MB). Düz metin (HTTP) trafiği kapalı, tüm uç noktalar
+  HTTPS/wss. Gradle heap 4G'ye indirildi; CI artık `bootstrap.sh` ile manifesti
+  yeniden üretmiyor.
+- **Linux:** Release ikilisi stripped; `libmpv.so.2` bundle'a kopyalanıp `ldd`
+  ile doğrulanıyor. deb sürümü `3.0.40-241`, `Depends: libmpv2 (>= 0.35)`,
+  `StartupWMClass=com.cloudtune.app` ve `/usr/bin/cloudtune` symlink'i var.
+  tar.gz içinde kendi dizininden çalışan `.desktop` + ikon bulunuyor.
+- **Windows:** MSVC Release `/GL /LTCG /OPT:REF /OPT:ICF`; zip içinde
+  `flutter_windows.dll` zorunlu runtime dosyası korunuyor, yalnızca `.pdb`
+  sembolleri hariç. Runner.rc version resource kaçışları düzeltildi.
+- **iOS:** İmzasız AltStore IPA'sı `--obfuscate --split-debug-info` ile
+  küçültülüyor; Payload klasörü paketlemeden önce temizleniyor. İmzalı
+  App Store dağıtımı için ayrı sertifika/profile gerekir.
+- **Oda:** `presence_request` ile anlık avatar/state senkronu, host doğrulamalı
+  ack, doğru kişi sayısı, odadan çıkınca avatar/discovery temizliği.
+
+Windows/iOS ikili paketleri mevcut GitHub billing/spending limiti nedeniyle
+eski sürümde kaldı; limit düzelince dispatch ile yenilenecek.
 
 Sürüm yayınlama (APK + Linux + GitHub release + `update.json` + `apps.json` + Pages):
 

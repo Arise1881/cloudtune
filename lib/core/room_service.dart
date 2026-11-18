@@ -652,11 +652,24 @@ class RoomService extends ChangeNotifier {
           // Yalnızca ev sahibi oda varlığını doğrular; şifre yanlışsa
           // katılan başka kanalda olduğu için hello hiç ulaşmaz.
           _publish('ack', {'to': remoteId});
+          if (payloadMap['requestPresence'] == true) {
+            // Katılan kişi avatarları hemen görmek istiyor. Periyodik
+            // presence'ı beklemeden tüm üyelerden presence iste.
+            _publishPresence();
+            _publishState(force: true);
+            _publish('presence_request', const {});
+          }
         }
         notifyListeners();
 
+      case 'presence_request':
+        // Ev sahibi yeni katılımda istedi; sadece presence yayınla, state'i
+        // yalnızca host gönderir (çoklu state yazımı kuyruğu bozabilir).
+        if (!_isHost) _publishPresence();
+
       case 'ack':
-        if (payloadMap['to'] == _clientId) {
+        if (payloadMap['to'] == _clientId && member.isHost) {
+          // ack yalnızca gerçek ev sahibinden gelirse katılım onaylanır.
           final completer = _ackCompleter;
           if (completer != null && !completer.isCompleted) {
             completer.complete(true);
@@ -999,7 +1012,9 @@ class RoomService extends ChangeNotifier {
         'code': _roomId,
         'hostId': _clientId,
         'roomName': _roomName,
-        'memberCount': _members.length + 1,
+        // self zaten _publishPresence() ile _members içinde; +1 yapılırsa
+        // oda listesinde kişi sayısı bir fazla görünür.
+        'memberCount': _members.length,
         // Şifrenin kendisi hiç gönderilmez, yalnızca var olup olmadığı.
         'hasPassword': _password.isNotEmpty,
         'hostName': _displayName,
@@ -1034,6 +1049,11 @@ class RoomService extends ChangeNotifier {
     _password = '';
     _displayName = '';
     _isHost = false;
+    // Odadan çıkınca eski avatarı ve sürümünü sıfırla; aksi halde yeni odaya
+    // önceki odanın avatarı eski sürüm numarasıyla taşınır.
+    _avatarDataUrl = '';
+    _avatarVersion = 0;
+    _remoteDataAllowed = false;
     _members.clear();
     _chat.clear();
     _reactions.clear();
@@ -1044,6 +1064,8 @@ class RoomService extends ChangeNotifier {
 
   Future<void> leave() async {
     await _detach(publishBye: true);
+    // Keşif kanalı odadan bağımsız; odadan çıkınca boşa bağlı kalmasın.
+    stopDiscovery();
     _clearRoom();
     _error = '';
     notifyListeners();

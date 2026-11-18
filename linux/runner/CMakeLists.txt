@@ -23,4 +23,8 @@ add_definitions(-DAPPLICATION_ID="${APPLICATION_ID}")
 target_link_libraries(${BINARY_NAME} PRIVATE flutter)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK)
 
+# Release ikilisi sembolleri atar; deb/tar.gz boyutu düşer. Hata ayıklama
+# sembolleri yalnızca Debug derlemesinde kalır.
+target_link_options(${BINARY_NAME} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:-s>")
+
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")

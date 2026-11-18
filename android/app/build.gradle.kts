@@ -48,9 +48,19 @@ android {
 
     buildTypes {
         release {
+            // R8: kullanılmayan Dart/Java/Kotlin kodunu ve kaynaklarını atar.
+            // audio_service bildirim ikonları keep.xml ile korunur.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             if (keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             } else {
+                // Yerel/GitHub dağıtımı imzasız APK kullanır; Play hedefli
+                // bir derlemede key.properties zorunlu olmalı.
                 signingConfig = signingConfigs.getByName("debug")
             }
         }

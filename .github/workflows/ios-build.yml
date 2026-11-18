@@ -1,14 +1,18 @@
 name: iOS Build
 
+# Yayın tetikleyicisi release.sh üzerinden workflow_dispatch'dir; sürüm
+# etiketi oluşturulmadığı için tag trigger'ı istemciyi yanıltıyordu.
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-ios:
-    runs-on: macos-latest
+    runs-on: macos-15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -18,15 +22,18 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Bagimliliklar
+      - name: Bağımlılıklar
         run: flutter pub get
 
-      - name: iOS release derle (imzasiz)
-        run: flutter build ios --release --no-codesign
+      # AltStore/Sideload hedefli imzasız IPA. Kod obfuscation IPA boyutunu
+      # küçültür; semboller ayrı klasöre yazılır.
+      - name: iOS release derle (imzasiz, obfuscate)
+        run: flutter build ios --release --no-codesign --obfuscate --split-debug-info=build/ios/symbols
 
       - name: IPA paketle
         run: |
           cd build/ios/iphoneos
+          rm -rf Payload
           mkdir -p Payload
           cp -R Runner.app Payload/
           rm -f CloudTune.ipa
@@ -37,6 +44,8 @@ jobs:
         with:
           name: CloudTune-ipa
           path: build/ios/iphoneos/CloudTune.ipa
+          retention-days: 30
+          compression-level: 6
 
       - name: GitHub release'e yukle
         env:
@@ -47,16 +56,18 @@ jobs:
             exit 0
           fi
           API="https://api.github.com/repos/Arise1881/cloudtune-dist/releases/tags/cloudtune-latest"
-          REL=$(curl -s -H "Authorization: token $GH_TOKEN" "$API")
-          REL_ID=$(printf '%s' "$REL" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
-          OLD=$(printf '%s' "$REL" | python3 -c "import sys,json;[print(a['id']) for a in json.load(sys.stdin)['assets'] if a['name']=='CloudTune.ipa']")
+          REL=$(curl -fsS -H "Authorization: token $GH_TOKEN" "$API") || exit 1
+          REL_ID=$(printf '%s' "$REL" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])") || exit 1
+          OLD=$(printf '%s' "$REL" | python3 -c "import sys,json;[print(a['id']) for a in json.load(sys.stdin)['assets'] if a['name']=='CloudTune.ipa']") || exit 1
           for id in $OLD; do
-            curl -s -o /dev/null -X DELETE \
+            curl -fsS -o /dev/null -X DELETE \
               -H "Authorization: token $GH_TOKEN" \
               "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/assets/$id"
           done
-          curl -s -o /dev/null -w "CloudTune.ipa -> %{http_code}\n" -X POST \
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
             -H "Authorization: token $GH_TOKEN" \
             -H "Content-Type: application/octet-stream" \
             --data-binary @build/ios/iphoneos/CloudTune.ipa \
-            "https://uploads.github.com/repos/Arise1881/cloudtune-dist/releases/$REL_ID/assets?name=CloudTune.ipa"
+            "https://uploads.github.com/repos/Arise1881/cloudtune-dist/releases/$REL_ID/assets?name=CloudTune.ipa")
+          echo "CloudTune.ipa -> $CODE"
+          [[ "$CODE" =~ ^2 ]] || exit 1

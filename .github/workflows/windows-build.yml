@@ -1,14 +1,18 @@
 name: Windows Build
 
+# Yayın tetikleyicisi release.sh üzerinden workflow_dispatch'dir; sürüm
+# etiketi oluşturulmadığı için tag trigger'ı istemciyi yanıltıyordu.
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -18,7 +22,7 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Bagimliliklar
+      - name: Bağımlılıklar
         run: flutter pub get
 
       - name: Windows release derle
@@ -27,7 +31,14 @@ jobs:
       - name: ZIP paketle (Windows)
         shell: pwsh
         run: |
-          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath CloudTune-windows.zip -Force
+          $Stage = "windows-stage"
+          Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $Stage | Out-Null
+          Copy-Item -Recurse -Force build/windows/x64/runner/Release/* $Stage/
+          # PDB hata ayıklama sembolleri dağıtıma girmez. flutter_windows.dll
+          # ZORUNLU: çalıştırıcı olmadan cloudtune.exe açılmaz.
+          Get-ChildItem -Recurse -File -Path $Stage | Where-Object { $_.Extension -eq '.pdb' } | Remove-Item -Force
+          Compress-Archive -Path "$Stage/*" -DestinationPath CloudTune-windows.zip -Force
           Get-Item CloudTune-windows.zip | Select-Object Name, Length
 
       - name: Web release derle
@@ -42,7 +53,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: CloudTune-windows
-          path: CloudTune-windows.zip
+          path: |
+            CloudTune-windows.zip
+            CloudTune-web.zip
+          retention-days: 30
+          compression-level: 6
 
       - name: GitHub release'e yukle (windows + web)
         env:

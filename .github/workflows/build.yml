@@ -5,9 +5,15 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Aynı sürüm için birden fazla build/asset yüklemesi yarışmasın.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -22,8 +28,13 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Platform dosyalarını üret ve yamala
-        run: bash tool/bootstrap.sh
+      - name: Gradle bağımlılık önbelleği
+        uses: gradle/actions/setup-gradle@v4
+
+      # bootstrap.sh Android platformunu baştan üretip özel manifest/izinleri
+      # kaybettiriyordu. Commit'li android/ klasörü doğrudan kullanılıyor.
+      - name: Bağımlılıklar
+        run: flutter pub get
 
       - name: Testler
         run: flutter test
@@ -35,3 +46,5 @@ jobs:
         with:
           name: CloudTune-apk
           path: build/app/outputs/flutter-apk/*.apk
+          retention-days: 30
+          compression-level: 6
