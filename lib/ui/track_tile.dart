@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:cloudtune/core/app_palette.dart';
 
@@ -7,6 +6,7 @@ import '../core/library.dart';
 import '../core/models.dart';
 import '../core/player_controller.dart';
 import '../core/theme_state.dart';
+import 'cover_image.dart';
 
 List<Track> _artistTracks(List<Track> queue, Track track) {
   final sameArtist = queue.where((item) => item.artist == track.artist).toList();
@@ -144,17 +144,12 @@ class TrackTile extends StatelessWidget {
         return ListTile(
           onTap: () => player.playQueue(queue, index),
           onLongPress: () => showActions(context),
-          leading: ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: CachedNetworkImage(
-              imageUrl: track.thumb,
-              width: 52,
-              height: 52,
-              fit: BoxFit.cover,
-              placeholder: (_, __) => Container(color: AppPalette.card),
-              errorWidget: (_, __, ___) =>
-                  const Icon(Icons.music_note, size: 36),
-            ),
+          leading: CoverImage(
+            url: track.thumb,
+            width: 52,
+            height: 52,
+            borderRadius: 6,
+            iconSize: 36,
           ),
           title: Text(
             track.title,

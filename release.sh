@@ -267,7 +267,7 @@ with open('update.json') as f:
     d = json.load(f)
 d['version'] = '$NEW_VER'
 d['versionCode'] = $NEW_BUILD
-d['notes'] = 'Arama düzeltmesi: arattığın şarkı sabit kalır, kendiliğinden başka parçalara geçmez. Sanatçının ilgili yeni parçaları yalnızca yukarıdan aşağıya kaydırıp yenileyince listeye eklenir. Arama ayarları, vurgu rengi ve diğer dosyalar değiştirilmedi. Hızlı parça açılışı, ana sayfa açılışı, varsayılan sonsuz radyo, iki cihazlı oda senkronu korundu. Android/Linux güncel; Windows/iOS CI ödeme limiti nedeniyle eski.'
+d['notes'] = 'Davet linkiyle hizli oda katilimi, iki cihazli senkron, sohbet ve profil fotografi, mobil veri/Wi-Fi optimizasyonu, kucuk kapak indirmeleri, hizli parca acilisi. Kitaplik/gecmis/calma listeleri ve tema korundu. Android/Linux guncel; Windows/iOS CI odeme limiti nedeniyle eski.'
 d['platforms']['linux'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.deb'
 d['platforms']['linux-targz'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-linux.tar.gz'
 d['platforms']['android-arm64'] = 'https://github.com/Arise1881/cloudtune-dist/releases/download/$RELEASE_TAG/CloudTune-arm64.apk'
@@ -290,7 +290,7 @@ with open(p) as f:
 app = a['apps'][0]
 app['version'] = '$NEW_VER'
 app['versionDate'] = '$NEW_DATE'
-app['versionDescription'] = 'CloudTune $NEW_FULL — arama sonuçları sabit kalır, hızlı parça açılışı, iki cihazlı oda senkronu, 28 dil'
+app['versionDescription'] = 'CloudTune $NEW_FULL — davet linkiyle hizli katilim, iki cihazli oda senkronu, sohbet ve profil fotografi, mobil veri/Wi-Fi optimizasyonu, kucuk kapaklar, 28 dil'
 with open(p, 'w') as f:
     json.dump(a, f, indent=2, ensure_ascii=False)
 print(f'apps.json -> {app[\"version\"]} / {app[\"versionDate\"]}')

@@ -35,6 +35,9 @@ Future<void> main() async {
   };
   await DownloadService.instance.init();
   await RoomService.init();
+  // Odalar her cihazda, uygulama açılır açılmaz görünsün. RoomPage yalnızca
+  // zaten başlatılmış dinleyiciye abone olur; keşif bağlantısı globaldir.
+  unawaited(RoomService.instance.startDiscovery());
 
   await AudioService.init(
     builder: () => PlayerController.instance,
@@ -69,8 +72,11 @@ class CloudTuneApp extends StatefulWidget {
 
 class _CloudTuneAppState extends State<CloudTuneApp> {
   final AppLinks _appLinks = AppLinks();
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   StreamSubscription<Uri>? _linkSub;
   String? _lastLink;
+  String? _pendingRoomCode;
+  String? _pendingRoomPassword;
   DateTime _lastLinkAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
@@ -130,22 +136,42 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
       final code = !isWebRoomLink
           ? (segments.isNotEmpty ? segments.first : '')
           : (segments.length > 1 ? segments[1] : '');
-      if (code.isNotEmpty && context.mounted) {
+      if (code.isNotEmpty) {
         // Davet linkindeki ?p= parolası, şifreli odaya katılım için gerekli.
         final password = uri.queryParameters['p'] ?? '';
-        unawaited(Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => RoomPage(
-              initialCode: code.toUpperCase(),
-              initialPassword: password,
-            ),
-          ),
-        ));
+        _openRoomPage(code.toUpperCase(), password);
       }
       return;
     }
     if (!YoutubeLinkResolver.isYoutubeLink(link)) return;
     await LinkHandler.open(link);
+  }
+
+  /// İlk bağlantı `runApp` tamamlanmadan gelebilir; Navigator henüz yoksa
+  /// kod bekletilir ve ilk frame'den sonra açılır.
+  void _openRoomPage(String code, String password) {
+    final state = _navigatorKey.currentState;
+    if (state == null || !state.mounted) {
+      _pendingRoomCode = code;
+      _pendingRoomPassword = password;
+      return;
+    }
+    unawaited(state.push(
+      MaterialPageRoute(
+        builder: (_) => RoomPage(
+          initialCode: code,
+          initialPassword: password,
+        ),
+      ),
+    ));
+  }
+
+  void _flushPendingRoomLink() {
+    final code = _pendingRoomCode;
+    if (code == null) return;
+    _pendingRoomCode = null;
+    _openRoomPage(code, _pendingRoomPassword ?? '');
+    _pendingRoomPassword = null;
   }
 
   @override
@@ -156,6 +182,7 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
 
   @override
   Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _flushPendingRoomLink());
     return ListenableBuilder(
       listenable: ThemeState.accent,
       builder: (context, _) {
@@ -170,6 +197,7 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
                 // SettingsService değişince bu builder yeniden kurulur; dil
                 // değişimi MaterialApp.locale üzerinden anında yansır.
                 return MaterialApp(
+                  navigatorKey: _navigatorKey,
                   title: 'CloudTune',
                   debugShowCheckedModeBanner: false,
                   theme: _theme(accent, Brightness.light, oled: false),

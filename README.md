@@ -132,7 +132,7 @@ Loglar yalnızca cihazda `repair_bot_logs.json` dosyasına yazılır; e-posta ve
 ```
 README.md                  Bu dosya: özellikler, kurulum, uyum, güncelleme, gizlilik
 LICENSE                    MIT lisans
-pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.46+247)
+pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.47+248)
 analysis_options.yaml      Dart/Flutter linter kuralları
 .metadata                  Flutter proje metadata
 release.sh                 Build → analyze/test → artifact → GitHub release → push
@@ -263,6 +263,27 @@ flutter build ios --release --no-codesign \
   --obfuscate --split-debug-info=build/ios/symbols  # macOS'ta
 flutter build web --release
 ```
+
+### 3.0.47+248 — oda deneyimi ve ağ optimizasyonu
+
+- **Hızlı davet katılımı:** `http://cloudtune.app/room/KOD?p=sifre` bağlantısı
+  açılır açılmaz odaya girer; şifre yalnızca linkte varsa sorulur.
+- **Oda eşzamanlılığı:** iki cihaz aynı parçayı çalar; play/pause/next/seek
+  her iki yönden de anında yayılır, konum host saatine bağlanır.
+- **Sohbet:** giriş artık uygulama içi profil fotoğrafını gösterir; mesajlar
+  iki cihazda da anında görünür. Giriş alanı sistem navigasyon çubuğunun
+  altına düşmez.
+- **Mobil veri / Wi-Fi:** mobil veride kalp atışı 4 sn, presence 16 sn, keşif
+  10 sn ve tam sıra yenilemesi 12 tick; Wi-Fi'de 2/8/5/8. Komutlar anında
+  kalır. Kapaklar küçük varyantla indirilir, arama önbelleği mobil veride
+  daha uzun yaşar.
+- **Arama kapakları:** YouTube çalma listesi/arama sonuçlarında gerçek
+  miniature'ler görünür; alternatif CDN yedeği korunur.
+- **Varsayılanlar:** en yüksek ses kalitesi, ekolayzır açık, normal preset;
+  kitaplık/geçmiş/çalma listeleri ve tema korunur.
+- **Odalar (Beta):** sekme ve ana sayfa ikonu Beta etiketini taşır.
+- Doğrulama: `flutter analyze` 0 issue, `flutter test` 84/84, iki emülatör
+  tam testi 13/13 (farklı parçalarla), davet bağlantısı katılımı doğrulandı.
 
 ### 3.0.46+247 — arama sonuçları sabit kalır
 

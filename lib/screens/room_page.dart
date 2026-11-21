@@ -15,6 +15,7 @@ import '../core/models.dart';
 import '../core/player_controller.dart';
 import '../core/room_service.dart';
 import '../core/theme_state.dart';
+import '../ui/cover_image.dart';
 
 /// Odalar: internet üzerinden oda kurma/koda katılma ve kişisel kitaplık.
 class RoomPage extends StatefulWidget {
@@ -44,6 +45,7 @@ class _RoomPageState extends State<RoomPage>
   final TextEditingController _joinCode = TextEditingController();
   final TextEditingController _joinPassword = TextEditingController();
   final TextEditingController _chatInput = TextEditingController();
+  final ScrollController _chatScroll = ScrollController();
 
   late final TabController _tabs = TabController(
     length: 2,
@@ -65,11 +67,14 @@ class _RoomPageState extends State<RoomPage>
     if (code != null && code.isNotEmpty && !_joinedInitial) {
       _joinedInitial = true;
       _joinCode.text = code;
-      final password = widget.initialPassword;
-      if (password != null && password.isNotEmpty) {
-        _joinPassword.text = password;
-      }
-      unawaited(_openJoinDialog());
+      _joinPassword.text = widget.initialPassword ?? '';
+      // Davet bağlantısı hızlı katılım: şifre linkte varsa sorulmaz, yoksa
+      // önce şifresiz denenir; başarısız olursa kod giriş diyaloğu açılır.
+      // initState bitmeden ScaffoldMessenger/Theme erişimi yapılamaz; ilk
+      // frame'den sonra hızlı katılımı başlat.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_joinFromInvite());
+      });
     }
   }
 
@@ -82,6 +87,7 @@ class _RoomPageState extends State<RoomPage>
     _joinCode.dispose();
     _joinPassword.dispose();
     _chatInput.dispose();
+    _chatScroll.dispose();
     super.dispose();
   }
 
@@ -208,15 +214,20 @@ class _RoomPageState extends State<RoomPage>
 
   /// Kod/şifre onaylandıktan sonra gerçek katılımı yapar. Sonuç tipi hata
   /// mesajını doğrudan taşır; "Oda bulunamadı veya şifre yanlış" net görünür.
-  Future<void> _performJoin({
+  Future<bool> _performJoin({
     required String code,
     required String password,
     String? displayName,
+    bool fromInvite = false,
   }) async {
     final name = displayName ?? _displayName.text.trim();
     if (name.isNotEmpty) await _saveDisplayName(name);
-    final allowed = await _ensureRemoteDataConsent();
-    if (!mounted) return;
+    // Davetle katılımda ek onay diyaloğu gösterilmez; oda işlevleri
+    // (çalma, sıra, sohbet) zaten çalışır. Avatar gizliliği isteğe bağlıdır.
+    final allowed = fromInvite
+        ? true
+        : await _ensureRemoteDataConsent();
+    if (!mounted) return false;
     _toast('Odaya bağlanılıyor…');
     final avatar = await _avatarDataUrl();
     final result = await RoomService.instance.joinWithResult(
@@ -225,12 +236,45 @@ class _RoomPageState extends State<RoomPage>
       avatar: avatar,
       displayName: name,
     );
-    if (!mounted) return;
+    if (!mounted) return result.ok;
     if (result.ok) {
       await _publishMyAvatar();
       _toast(allowed ? 'Odaya katıldın' : 'Odaya katıldın · uzak avatarlar gizli');
+      // Katılımdan sonra sohbet aşağıda görünür; listeyi en alta kaydır.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_chatScroll.hasClients) {
+          _chatScroll.jumpTo(_chatScroll.position.maxScrollExtent);
+        }
+      });
     } else {
       _toast(result.error.isEmpty ? 'Katılım başarısız' : result.error);
+    }
+    return result.ok;
+  }
+
+  /// `?p=` içeren bağlantı şifreyi sormaz; şifresiz oda doğrudan açılır.
+  /// Başarısızlıkta kullanıcıya şifre girmesi için kod diyaloğu gösterilir.
+  Future<void> _joinFromInvite([RoomInvite? parsed]) async {
+    final invite = parsed ??
+        (RoomService.parseInvite(_joinCode.text) ??
+            RoomInvite(
+              code: RoomService.normalizeCode(_joinCode.text),
+              password: '',
+            ));
+    if (RoomService.normalizeCode(invite.code).isEmpty) {
+      _toast('Geçersiz davet bağlantısı');
+      return;
+    }
+    _joinCode.text = invite.code;
+    _joinPassword.text = invite.password;
+    final ok = await _performJoin(
+      code: invite.code,
+      password: invite.password,
+      fromInvite: true,
+    );
+    if (!mounted || ok) return;
+    if (invite.password.isEmpty) {
+      await _openJoinDialog(code: invite.code);
     }
   }
 
@@ -346,7 +390,8 @@ class _RoomPageState extends State<RoomPage>
     }
     _joinCode.text = invite.code;
     _joinPassword.text = invite.password;
-    await _openJoinDialog();
+    // Linkte şifre varsa doğrudan katıl; yoksa hızlıca şifresiz dene.
+    await _joinFromInvite(invite);
   }
 
   void _toast(String message) {
@@ -371,14 +416,14 @@ class _RoomPageState extends State<RoomPage>
     final accent = ThemeState.accent.value;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Odalar'),
+        title: const Text('Odalar (Beta)'),
         bottom: TabBar(
           controller: _tabs,
           indicatorColor: accent,
           labelColor: accent,
           unselectedLabelColor: AppPalette.textMuted,
           tabs: const [
-            Tab(icon: Icon(Icons.graphic_eq), text: 'Odalar'),
+            Tab(icon: Icon(Icons.graphic_eq), text: 'Odalar (Beta)'),
             Tab(icon: Icon(Icons.favorite), text: 'Kitaplığım'),
           ],
         ),
@@ -391,20 +436,24 @@ class _RoomPageState extends State<RoomPage>
         ]),
         builder: (context, _) => TabBarView(
           controller: _tabs,
-          children: [_roomTab(accent), _libraryTab(accent)],
+          children: [_roomTab(context, accent), _libraryTab(accent)],
         ),
       ),
     );
   }
 
-  Widget _roomTab(Color accent) {
+  Widget _roomTab(BuildContext context, Color accent) {
     final room = RoomService.instance;
     if (room.busy) {
       return const Center(child: CircularProgressIndicator());
     }
     if (!room.inRoom) return _entry(accent);
+    // Sohbet girişi son öğe; sistem navigasyon çubuğu/klavye inset'iyle
+    // üst üste binmesin. Ekstra boşluk girişin her cihazda dokunulabilir
+    // kalmasını sağlar.
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      padding: EdgeInsets.fromLTRB(16, 12, 16, 24 + bottomInset),
       children: [
         _roomHeader(room, accent),
         const SizedBox(height: 12),
@@ -415,6 +464,7 @@ class _RoomPageState extends State<RoomPage>
         _queue(room),
         const SizedBox(height: 12),
         _chatCard(room, accent),
+        const SizedBox(height: 56),
       ],
     );
   }
@@ -746,6 +796,7 @@ class _RoomPageState extends State<RoomPage>
 
   /// Katılımcı detayını açmadan önce onay ister; onay yoksa veri gösterilmez.
   Future<void> _memberDetail(RoomMember member) async {
+    final room = RoomService.instance;
     final allowed = await _ensureRemoteDataConsent();
     if (!allowed || !mounted) return;
     final avatar = _memberAvatar(member);
@@ -755,16 +806,52 @@ class _RoomPageState extends State<RoomPage>
     await showModalBottomSheet<void>(
       context: context,
       builder: (_) => SafeArea(
-        child: ListTile(
-          leading: CircleAvatar(
-            radius: 28,
-            backgroundImage: avatar,
-            child: avatar == null ? const Icon(Icons.person) : null,
-          ),
-          title: Text(member.name),
-          subtitle: Text(
-            '${member.isHost ? 'Ev sahibi' : 'Dinleyici'} · $shortId',
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: CircleAvatar(
+                radius: 28,
+                backgroundImage: avatar,
+                child: avatar == null ? const Icon(Icons.person) : null,
+              ),
+              title: Text(member.name),
+              subtitle: Text(
+                '${member.isHost ? 'Ev sahibi' : 'Dinleyici'} · $shortId',
+              ),
+            ),
+            // Ev sahibi katılımcıyı odadan çıkarabilir veya ev sahipliğini
+            // devredebilir; komutlar tüm cihazlara yayılır.
+            if (room.isHost && !member.isHost)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          unawaited(room.transferHost(member.clientId));
+                          Navigator.pop(context);
+                        },
+                        icon: const Icon(Icons.admin_panel_settings_outlined),
+                        label: const Text('Ev sahibi yap'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          unawaited(room.kick(member.clientId));
+                          Navigator.pop(context);
+                        },
+                        icon: const Icon(Icons.person_remove),
+                        label: const Text('Çıkar'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -777,68 +864,151 @@ class _RoomPageState extends State<RoomPage>
     final title = track?.title ?? remote?['title']?.toString() ?? 'Parça yok';
     final artist = track?.artist ?? remote?['artist']?.toString() ?? '';
     final id = track?.id ?? remote?['id']?.toString() ?? '';
+    final inRoom = room.inRoom;
+    // Paylaşılan sıra gelmişse yerel oyuncu henüz parçayı yüklememiş olsa
+    // bile düğmeler etkin: komut tüm cihazlara yayılır ve ilk parçayı
+    // RoomService yükler. Bu, yavaş bağlantıda "Oynat"ın pasif kalmasını önler.
+    final canControl = track != null || room.queue.isNotEmpty || remote != null;
+
+    void toggle() {
+      if (inRoom) {
+        unawaited(room.togglePlayback());
+      } else {
+        unawaited(player.toggle());
+      }
+    }
 
     return Card(
       color: accent.withValues(alpha: 0.12),
       child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+        child: Column(
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: id.isEmpty
-                  ? Container(
-                      width: 48,
-                      height: 48,
-                      color: AppPalette.card,
-                      child: const Icon(Icons.music_note, size: 26),
-                    )
-                  : CachedNetworkImage(
-                      imageUrl: 'https://i.ytimg.com/vi/$id/hqdefault.jpg',
-                      width: 48,
-                      height: 48,
-                      fit: BoxFit.cover,
-                      errorWidget: (_, __, ___) => Container(
+            Row(
+              children: [
+                id.isEmpty
+                    ? Container(
                         width: 48,
                         height: 48,
                         color: AppPalette.card,
                         child: const Icon(Icons.music_note, size: 26),
+                      )
+                    : CoverImage(
+                        url: track?.thumb ??
+                            'https://i.ytimg.com/vi/$id/hqdefault.jpg',
+                        width: 48,
+                        height: 48,
+                        iconSize: 26,
                       ),
-                    ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700)),
+                      Text(artist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: AppPalette.textSubtle, fontSize: 12)),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Sıraya ekle',
+                  icon: const Icon(Icons.add, size: 20),
+                  onPressed: track == null
+                      ? null
+                      : () => inRoom
+                          ? unawaited(room.addTrack(track))
+                          : unawaited(player.addToQueue(track)),
+                ),
+              ],
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w700)),
-                  Text(artist,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: AppPalette.textSubtle, fontSize: 12)),
-                ],
+            // Oda senkronunda konum saate bağlıdır. Yerel kaydırıcı dokunma
+            // anında seek komutuyla tüm cihazlara yayılır.
+            if (canControl && inRoom && track != null)
+              StreamBuilder<Duration>(
+                stream: player.positionStream,
+                builder: (context, snapshot) {
+                  final maxMs = track.duration?.inMilliseconds ?? 0;
+                  final posMs = snapshot.data?.inMilliseconds ?? 0;
+                  final max = maxMs > 0 ? maxMs.toDouble() : 1.0;
+                  final pos = posMs.toDouble().clamp(0.0, max).toDouble();
+                  return Column(
+                    children: [
+                      Slider(
+                        value: pos,
+                        max: max,
+                        activeColor: accent,
+                        onChanged: (value) => unawaited(
+                          room.seekTo(Duration(milliseconds: value.round())),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(_mmss(Duration(milliseconds: posMs)),
+                                style: TextStyle(
+                                    color: AppPalette.textFaint,
+                                    fontSize: 10)),
+                            Text(_mmss(track.duration ?? Duration.zero),
+                                style: TextStyle(
+                                    color: AppPalette.textFaint,
+                                    fontSize: 10)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
-            ),
-            if (track != null)
-              IconButton(
-                tooltip: player.playing ? 'Duraklat' : 'Oynat',
-                icon: Icon(player.playing ? Icons.pause : Icons.play_arrow,
-                    color: accent),
-                onPressed: player.toggle,
-              ),
-            IconButton(
-              tooltip: 'Sıraya ekle',
-              icon: const Icon(Icons.add, size: 20),
-              onPressed: track == null ? null : () => room.addToQueue(track),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  tooltip: 'Önceki',
+                  icon: const Icon(Icons.skip_previous),
+                  onPressed: canControl
+                      ? () => inRoom
+                          ? unawaited(room.previous())
+                          : unawaited(player.previous())
+                      : null,
+                ),
+                IconButton(
+                  tooltip: player.playing ? 'Duraklat' : 'Oynat',
+                  icon: Icon(
+                      player.playing ? Icons.pause_circle : Icons.play_circle,
+                      color: accent,
+                      size: 36),
+                  onPressed: canControl ? toggle : null,
+                ),
+                IconButton(
+                  tooltip: 'Sonraki',
+                  icon: const Icon(Icons.skip_next),
+                  onPressed: canControl
+                      ? () => inRoom
+                          ? unawaited(room.next())
+                          : unawaited(player.next())
+                      : null,
+                ),
+              ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  String _mmss(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 
   Widget _queue(RoomService room) {
@@ -864,14 +1034,14 @@ class _RoomPageState extends State<RoomPage>
                       maxLines: 1, overflow: TextOverflow.ellipsis),
                   subtitle: Text(track.artist,
                       maxLines: 1, overflow: TextOverflow.ellipsis),
-                  trailing: room.isHost
-                      ? IconButton(
-                          tooltip: 'Sıradan çıkar',
-                          icon: const Icon(Icons.close, size: 18),
-                          onPressed: () => room.removeFromQueue(i),
-                        )
-                      : null,
-                  onTap: () => room.playFromQueue(i),
+                  // Her katılımcı sıradan parça çıkarabilir; komut tüm
+                  // cihazlara yayılır (artık yalnızca host'a özel değil).
+                  trailing: IconButton(
+                    tooltip: 'Sıradan çıkar',
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => unawaited(room.removeFromQueue(i)),
+                  ),
+                  onTap: () => unawaited(room.playAt(i)),
                 ),
               );
             },
@@ -881,24 +1051,37 @@ class _RoomPageState extends State<RoomPage>
     );
   }
 
-  Widget _thumbnail(Track track, {double size = 48}) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: CachedNetworkImage(
-        imageUrl: track.thumb,
+  Widget _thumbnail(Track track, {double size = 48}) => CoverImage(
+        url: track.thumb,
         width: size,
         height: size,
-        fit: BoxFit.cover,
-        errorWidget: (_, __, ___) => Container(
-          color: AppPalette.card,
-          child: Icon(Icons.music_note, size: size * 0.6),
-        ),
-      ),
-    );
+        iconSize: size * 0.6,
+      );
+
+  void _sendChat(RoomService room) {
+    final text = _chatInput.text.trim();
+    if (text.isEmpty) return;
+    room.sendChat(text);
+    _chatInput.clear();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_chatScroll.hasClients) {
+        _chatScroll.animateTo(
+          _chatScroll.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   Widget _chatCard(RoomService room, Color accent) {
     final reactions = room.reactions.entries.toList();
+    // Yeni mesaj/oda katılımı sonrası sohbeti otomatik alta kaydır.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_chatScroll.hasClients) {
+        _chatScroll.jumpTo(_chatScroll.position.maxScrollExtent);
+      }
+    });
     return Card(
       color: AppPalette.cardAlt,
       child: Padding(
@@ -915,6 +1098,7 @@ class _RoomPageState extends State<RoomPage>
                       child: Text('Henüz mesaj yok.',
                           style: TextStyle(color: AppPalette.textFaint)))
                   : ListView.builder(
+                      controller: _chatScroll,
                       itemCount: room.chat.length,
                       itemBuilder: (context, i) {
                         final message = room.chat[i];
@@ -946,23 +1130,32 @@ class _RoomPageState extends State<RoomPage>
                   child: TextField(
                     controller: _chatInput,
                     textInputAction: TextInputAction.send,
-                    onSubmitted: (value) {
-                      room.sendChat(value);
-                      _chatInput.clear();
-                    },
-                    decoration: const InputDecoration(
+                    onSubmitted: (_) => _sendChat(room),
+                    decoration: InputDecoration(
                       hintText: 'Mesaj yaz…',
                       isDense: true,
+                      // Profil fotoğrafı yoksa kişi simgesi; giriş artık
+                      // her cihazda kendi uygulama içi avatarını taşır.
+                      prefixIcon: Padding(
+                        padding: const EdgeInsets.only(left: 6, right: 4),
+                        child: CircleAvatar(
+                          radius: 13,
+                          backgroundImage: _avatarImage,
+                          child: _avatarImage == null
+                              ? Icon(Icons.person,
+                                  size: 16, color: AppPalette.iconSubtle)
+                              : null,
+                        ),
+                      ),
+                      prefixIconConstraints:
+                          const BoxConstraints(minWidth: 36, minHeight: 30),
                     ),
                   ),
                 ),
                 IconButton(
                   tooltip: 'Gönder',
                   icon: Icon(Icons.send, color: accent),
-                  onPressed: () {
-                    room.sendChat(_chatInput.text);
-                    _chatInput.clear();
-                  },
+                  onPressed: () => _sendChat(room),
                 ),
               ],
             ),
@@ -1074,12 +1267,24 @@ class _RoomPageState extends State<RoomPage>
             Text('$title (${tracks.length})', style: _sectionTitle),
             if (tracks.isNotEmpty)
               TextButton(
-                onPressed: () => PlayerController.instance.playQueue(
-                  tracks,
-                  0,
-                  radio: false,
+                onPressed: () {
+                  final room = RoomService.instance;
+                  if (room.inRoom) {
+                    for (final track in tracks) {
+                      unawaited(room.addTrack(track));
+                    }
+                  } else {
+                    unawaited(PlayerController.instance.playQueue(
+                      tracks,
+                      0,
+                      radio: false,
+                    ));
+                  }
+                },
+                child: Text(
+                  RoomService.instance.inRoom ? 'Odaya ekle' : 'Tümünü çal',
+                  style: TextStyle(color: accent),
                 ),
-                child: Text('Tümünü çal', style: TextStyle(color: accent)),
               ),
           ],
         ),
@@ -1102,28 +1307,58 @@ class _RoomPageState extends State<RoomPage>
   }
 
   Widget _trackCard(Track track, List<Track> queue, int index, Color accent) {
+    final room = RoomService.instance;
+    final inRoom = room.inRoom;
     return SizedBox(
       width: 136,
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
-        onTap: () =>
-            PlayerController.instance.playQueue(queue, index, radio: false),
+        // Odadayken kart dokunuşu parçayı paylaşılan sıraya ekler. Yerel
+        // çalma host state'i tarafından geri alınacağı için kullanılmaz.
+        onTap: inRoom
+            ? () => unawaited(room.addTrack(track))
+            : () => unawaited(
+                PlayerController.instance.playQueue(queue, index, radio: false),
+              ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: CachedNetworkImage(
-                imageUrl: track.thumb,
-                width: 136,
-                height: 136,
-                fit: BoxFit.cover,
-                errorWidget: (_, __, ___) => Container(
-                  color: AppPalette.card,
-                  child: Icon(Icons.music_note,
-                      size: 48, color: accent.withValues(alpha: 0.7)),
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: CachedNetworkImage(
+                    imageUrl: track.thumb,
+                    width: 136,
+                    height: 136,
+                    fit: BoxFit.cover,
+                    errorWidget: (_, __, ___) => Container(
+                      color: AppPalette.card,
+                      child: Icon(Icons.music_note,
+                          size: 48, color: accent.withValues(alpha: 0.7)),
+                    ),
+                  ),
                 ),
-              ),
+                if (inRoom)
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: accent.withValues(alpha: 0.9),
+                        shape: BoxShape.circle,
+                      ),
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints.tightFor(
+                            width: 30, height: 30),
+                        tooltip: 'Odaya ekle',
+                        icon: const Icon(Icons.add, size: 20),
+                        onPressed: () => unawaited(room.addTrack(track)),
+                      ),
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 6),
             Text(track.title,

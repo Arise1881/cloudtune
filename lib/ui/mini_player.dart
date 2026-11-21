@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:cloudtune/core/app_palette.dart';
 
@@ -6,6 +5,7 @@ import '../core/library.dart';
 import '../core/models.dart';
 import '../core/player_controller.dart';
 import '../core/theme_state.dart';
+import 'cover_image.dart';
 import 'player_page.dart';
 
 bool _radioActive(Object player) {
@@ -86,13 +86,12 @@ class MiniPlayer extends StatelessWidget {
                     height: 62,
                     child: Row(
                       children: [
-                        CachedNetworkImage(
-                          imageUrl: track.thumb,
+                        CoverImage(
+                          url: track.thumb,
                           width: 62,
                           height: 62,
-                          fit: BoxFit.cover,
-                          errorWidget: (_, __, ___) =>
-                              const Icon(Icons.music_note),
+                          borderRadius: 0,
+                          iconSize: 30,
                         ),
                         const SizedBox(width: 12),
                         Expanded(

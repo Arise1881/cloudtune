@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' as flutter;
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -180,7 +182,7 @@ class RoomDiscovery {
       };
 }
 
-class RoomService extends ChangeNotifier {
+class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
   RoomService._();
 
   static final RoomService instance = RoomService._();
@@ -191,6 +193,26 @@ class RoomService extends ChangeNotifier {
 
   /// Kabaca 100 KB JPEG için base64 karakter sınırı.
   static const int maxAvatarDataUrlChars = 140000;
+
+  /// Syncwatch tarzı eşzamanlı çalma: çalma konumu saate bağlanır. Wi-Fi'de
+  /// 2 sn, mobil veride 4 sn'lik kalp atışı yeterli olur; komutlar anında gider.
+  static const Duration _stateTickWifi = Duration(seconds: 2);
+  static const Duration _stateTickMobile = Duration(seconds: 4);
+  static const Duration _presenceTickWifi = Duration(seconds: 8);
+  static const Duration _presenceTickMobile = Duration(seconds: 16);
+  static const Duration _discoveryTickWifi = Duration(seconds: 5);
+  static const Duration _discoveryTickMobile = Duration(seconds: 10);
+
+  /// Medya kaynağı açılışı uzayabilir (zayıf bağlantıda 20 sn'ye kadar).
+  /// Oda kilitlerini bu kadar uzun tutmak state'leri işlenmez kıldığı için
+  /// player işlemlerini sınırlar; alttaki Future devam etse bile sync bloke olmaz.
+  static const Duration _playerOpTimeout = Duration(seconds: 4);
+
+  /// Bir odada taşınabilecek en fazla parça ve bağlantı kopukluğunda bekletilen
+  /// en fazla mesaj. Mobil veride Paket başına maliyet bu sınırlarla sabitlenir.
+  static const int _queueLimit = 100;
+  static const int _maxQueuedPublishes = 24;
+  static const Duration _commandTtl = Duration(seconds: 30);
 
   static String _clientId = '';
   static Future<void>? _initFuture;
@@ -231,6 +253,32 @@ class RoomService extends ChangeNotifier {
   bool _applyingRemote = false;
   Map<String, dynamic>? _pendingRemoteState;
   Completer<bool>? _ackCompleter;
+
+  /// Paylaşılan sıranın sürümü. Yalnızca liste değişince artar; kalp atışları
+  /// tüm sırayı yeniden göndermez, mobil veri trafiği ~10 kat azalır.
+  int _queueRev = 0;
+  int _sentQueueRev = -1;
+
+  /// Host değişiminde eski sunucunun geç kalan paketleri ayırt edilir.
+  int _hostEpoch = 0;
+
+  /// Host saati - yerel saat. NTP benzeri gidiş-dönüş ölçümüyle hesaplanır;
+  /// konum tahmininde ağ gecikmesi telafi edilir.
+  int _clockOffsetMs = 0;
+  final Map<String, int> _probeSend = {};
+  final Set<String> _seenCommands = {};
+
+  /// Bağlantı yokken yayınlanamayan mesajlar. QoS1 tekrarlarla birlikte
+  /// kopuklukta kaybolan play/pause komutlarını da kurtarır.
+  final List<Map<String, dynamic>> _queuedPublishes = [];
+
+  bool _mobileData = false;
+  bool _avatarDirty = false;
+  int _presenceParity = 0;
+  int _stateParity = 0;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+  bool _connectivityWatchStarted = false;
+  Timer? _rateTimer;
 
   MqttServerClient? _discoveryClient;
   StreamSubscription<List<MqttReceivedMessage<MqttMessage>>>? _discoverySub;
@@ -289,6 +337,35 @@ class RoomService extends ChangeNotifier {
 
   String get roomPassword => _password;
 
+  /// Paylaşılan sıranın sürümü; arayüz "senkron" göstergesinde kullanılır.
+  int get queueRevision => _queueRev;
+
+  /// Host ile yerel saat arasındaki tahmini fark (ms).
+  int get clockOffsetMs => _clockOffsetMs;
+
+  /// Mobil veride daha seyrek kalp atışı ve daha küçük paket kullanılır.
+  bool get mobileData => _mobileData;
+
+  /// Ağ türüne göre oda trafiği sıklığı. Statik olmaları test edilebilir
+  /// kılıyor ve zamanlayıcıların tek kaynaktan beslenmesini sağlıyor.
+  static Duration stateInterval({required bool mobileData}) =>
+      mobileData ? _stateTickMobile : _stateTickWifi;
+
+  static Duration presenceInterval({required bool mobileData}) =>
+      mobileData ? _presenceTickMobile : _presenceTickWifi;
+
+  static Duration discoveryInterval({required bool mobileData}) =>
+      mobileData ? _discoveryTickMobile : _discoveryTickWifi;
+
+  /// Tam sıranın kaçıncı kalp atışında bir yeniden gönderileceği.
+  /// Mobil veride daha seyrek; sıra değişimleri yine anında yayınlanır.
+  static int queueRefreshTicks({required bool mobileData}) =>
+      mobileData ? 12 : 8;
+
+  /// Misafirin host saatiyle arasındaki kaymayı ölçme sıklığı (tick).
+  static int clockProbeTicks({required bool mobileData}) =>
+      mobileData ? 8 : 4;
+
   /// Ev sahibinin gerçek çalar kuyruğunu ve konumunu taşıyan state mesajı.
   /// Radyo/sıralama kuyruğu ile oda kuyruğunun ayrışması eşzamanlı çalmayı
   /// bozduğu için kaynak tek noktada üretilir.
@@ -301,6 +378,9 @@ class RoomService extends ChangeNotifier {
     int seq = 0,
     int sentAt = 0,
     String hostId = '',
+    int queueRev = 0,
+    bool includeQueue = true,
+    int epoch = 0,
   }) {
     final safeIndex =
         tracks.isEmpty ? 0 : index.clamp(0, tracks.length - 1);
@@ -312,7 +392,13 @@ class RoomService extends ChangeNotifier {
       'seq': seq,
       'sentAt': sentAt,
       'hostId': hostId,
-      'queue': tracks.map((item) => item.toJson()).toList(),
+      'queueRev': queueRev,
+      'epoch': epoch,
+      // Kalp atışında sıra gönderilmez; alıcı son bilinen sırayı korur.
+      // Eski sürüm client'lar `queue` olmadığında mevcut listesini kullanır.
+      'queue': includeQueue
+          ? tracks.map((item) => item.toJson()).toList()
+          : null,
       'playback': track == null
           ? <String, dynamic>{
               'id': '',
@@ -335,20 +421,77 @@ class RoomService extends ChangeNotifier {
       value is num ? value.toInt() : 0;
 
   /// QoS1 tekrarı, geciken paket veya host değişiminden sonra eski state
-  /// uygulanmasın diye zaman + sıra karşılaştırması yapılır.
+  /// uygulanmasın diye host dönemi + zaman + sıra karşılaştırması yapılır.
   static bool isRemoteStateNewer(
     Map<String, dynamic> incoming,
     Map<String, dynamic>? current,
   ) {
     if (current == null) return true;
+    final incomingEpoch = _stateNumber(incoming['epoch']);
+    final currentEpoch = _stateNumber(current['epoch']);
+    if (incomingEpoch != currentEpoch) return incomingEpoch > currentEpoch;
     final incomingAt = _stateNumber(incoming['sentAt']);
     final currentAt = _stateNumber(current['sentAt']);
     if (incomingAt != currentAt) return incomingAt > currentAt;
     final incomingSeq = _stateNumber(incoming['seq']);
     final currentSeq = _stateNumber(current['seq']);
     if (incomingSeq != currentSeq) return incomingSeq > currentSeq;
-    return '${incoming['hostId'] ?? ''}' != '${current['hostId'] ?? ''}';
+    // Eski host kimliği boşsa kesinlikle daha yeni sayılmaz. İkisi de dolu
+    // ve eşit zaman/sıraysa deterministik karşılaştırma gerekir; aksi halde
+    // aynı paket iki kez gelince "daha yeni" sanılıp gereksiz seek yapılırdı.
+    final incomingHost = '${incoming['hostId'] ?? ''}';
+    final currentHost = '${current['hostId'] ?? ''}';
+    if (incomingHost.isEmpty) return false;
+    if (currentHost.isEmpty) return true;
+    return incomingHost.compareTo(currentHost) > 0;
   }
+
+  /// NTP benzeri gidiş-dönüş ölçümü: `t0` yerel gönderim, `t1` host varış,
+  /// `t2` host yanıt, `t3` yerel varış (ms). Host `t2 = t1` olarak döndürür.
+  static int clockOffset({
+    required int t0,
+    required int t1,
+    required int t2,
+    required int t3,
+  }) {
+    final forward = t1 - t0;
+    final backward = t2 - t3;
+    return ((forward + backward) / 2).round();
+  }
+
+  /// Host'un `sentAt` anında ölçtüğü konumu, yerel saate ve tahmini saat
+  /// farkına göre bugüne taşır. Duraklatılmışsa konum sabit kalır.
+  static int syncTargetMs({
+    required int positionMs,
+    required int sentAt,
+    required int nowMs,
+    required bool playing,
+    int offsetMs = 0,
+  }) {
+    if (!playing || sentAt <= 0) return positionMs;
+    final elapsed = nowMs + offsetMs - sentAt;
+    // Saat farkı çok büyükse (yanlış NTP) tahmini kullanma; ham konum daha
+    // güvenlidir.
+    if (elapsed.isNegative || elapsed > 60000) return positionMs;
+    return positionMs + elapsed;
+  }
+
+  /// Her cihazın aynı komutu bir kez uygulaması için benzersiz kimlik.
+  static String commandId(String clientId) =>
+      '${clientId}_${DateTime.now().microsecondsSinceEpoch}';
+
+  /// Komut zarfı; oda kanalı dışına çıkmaz, şifre taşımaz.
+  static Map<String, dynamic> buildCommand({
+    required String id,
+    required String action,
+    required Map<String, dynamic> payload,
+  }) =>
+      <String, dynamic>{
+        'id': id,
+        'action': action,
+        'at': DateTime.now().millisecondsSinceEpoch,
+        ...payload,
+      };
 
   /// Gelen index yabancı kuyruğa ait olabilir; parça id'si her zaman
   /// önceliklidir. Böylece sıra/radyo değişince joiner yanlış parçaya atlamaz.
@@ -554,6 +697,16 @@ class RoomService extends ChangeNotifier {
     _lastRemoteState = null;
     _pendingRemoteState = null;
     _applyingRemote = false;
+    _queueRev = 0;
+    _sentQueueRev = -1;
+    _hostEpoch = isHost ? _hostEpoch + 1 : 0;
+    _clockOffsetMs = 0;
+    _probeSend.clear();
+    _seenCommands.clear();
+    _queuedPublishes.clear();
+    _cancelRateCorrection();
+
+    unawaited(_watchConnectivity());
 
     final connected = await _attach();
     if (!connected) {
@@ -565,14 +718,40 @@ class RoomService extends ChangeNotifier {
     }
 
     PlayerController.instance.addListener(_onLocalPlayerChanged);
-    _presenceTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+    flutter.WidgetsBinding.instance.addObserver(this);
+    _presenceTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      _presenceParity++;
+      // Mobil veride her iki presence bir atlanır (16 sn'de bir). Wi-Fi'de 8 sn.
+      if (_mobileData && _presenceParity % 2 != 0) return;
       _publishPresence();
       _pruneMembers();
     });
+    _presenceParity = 0;
+    _stateParity = 0;
     _startStateTimer();
-    _publishPresence();
+    // İlk presence avatarı taşır; diğer cihaz yeni katılımcıyı hemen görsün.
+    // uploadAvatar sonrası gelen ikinci presence yalnızca avatar değiştiğinde
+    // gönderilir (aynı veri tekrar gönderilmez).
+    _publishPresence(includeAvatar: true);
     if (avatar.isNotEmpty) unawaited(uploadAvatar(avatar));
-    if (_isHost) _publishState(force: true);
+    if (_isHost) {
+      // Oda, host'un o anda çaldığı parçayla başlar. Paylaşılan sıra artık
+      // çalar kuyruğundan bağımsız değil; her iki cihaz da aynı listeyi görür.
+      final player = PlayerController.instance;
+      if (player.tracks.isNotEmpty) {
+        _queue = List<Track>.unmodifiable(
+          player.tracks.take(_queueLimit).toList(),
+        );
+        _queueRev++;
+        _playback = <String, dynamic>{
+          ...player.current!.toJson(),
+          'index': player.index,
+          'positionMs': player.position.inMilliseconds,
+          'playing': player.playing,
+        };
+      }
+      _publishState(force: true);
+    }
 
     // Ev sahibi keşif kanalında görünsün; katılanlar zaten dinliyor.
     unawaited(startDiscovery().then((_) => _publishDiscovery()));
@@ -596,8 +775,12 @@ class RoomService extends ChangeNotifier {
     }
 
     // ack host varlığını doğrular; state_request ilk oda durumunu hemen ister.
-    // hello kaybolursa 3 saniyelik periyodik yayını beklemek gerekmez.
-    if (!_isHost) _publish('state_request', const <String, dynamic>{});
+    // hello kaybolursa periyodik yayını beklemek gerekmez. clock probe ile
+    // konum tahmini ilk günden itibaren ağ gecikmesini telafi eder.
+    if (!_isHost) {
+      _publish('state_request', const <String, dynamic>{});
+      _sendTimeProbe();
+    }
 
     _setBusy(false, '');
     return RoomJoinResult.success;
@@ -618,9 +801,24 @@ class RoomService extends ChangeNotifier {
       client.autoReconnect = true;
       client.logging(on: false);
       client.setProtocolV311();
+      // Son istek (LWT): cihaz aniden düşerse diğer cihaz 18 sn beklemeden
+      // üyeyi kaldırır ve host yoksa yeni host seçilir.
+      final bye = jsonEncode(<String, dynamic>{
+        'room': _roomId,
+        'channel': _channel(_roomId ?? '', _password),
+        'type': 'bye',
+        'clientId': id,
+        'name': _displayName,
+        'isHost': _isHost,
+        'at': DateTime.now().millisecondsSinceEpoch,
+        'payload': <String, dynamic>{'reason': 'lwt'},
+      });
       client.connectionMessage = MqttConnectMessage()
           .withClientIdentifier(id)
-          .startClean();
+          .startClean()
+          .withWillTopic(_topic)
+          .withWillMessage(bye)
+          .withWillQos(MqttQos.atLeastOnce);
       client.onDisconnected = () {
         if (!inRoom) return;
         _error = 'Bağlantı koptu, yeniden deneniyor…';
@@ -632,8 +830,24 @@ class RoomService extends ChangeNotifier {
         notifyListeners();
       };
       client.onConnected = () {
+        if (!inRoom) return;
         _error = '';
         notifyListeners();
+        // Kopuklukta kaçan komutları gönder, state'i yeniden iste. Gecikmeli
+        // gönderim abone yeniden kurulmadan önce kaybolmasın diye kullanılır.
+        Timer(const Duration(milliseconds: 1200), () {
+          if (!inRoom) return;
+          _flushQueuedPublishes();
+          if (!_isHost) {
+            _publishPresence();
+            _publish('state_request', const <String, dynamic>{});
+            _publish('time_probe', <String, dynamic>{
+              't0': DateTime.now().millisecondsSinceEpoch,
+            });
+          } else {
+            _publishState(force: true);
+          }
+        });
       };
 
       final status = await client
@@ -751,7 +965,7 @@ class RoomService extends ChangeNotifier {
           if (payloadMap['requestPresence'] == true) {
             // Katılan kişi avatarları hemen görmek istiyor. Periyodik
             // presence'ı beklemeden tüm üyelerden presence iste.
-            _publishPresence();
+            _publishPresence(includeAvatar: true);
             _publishState(force: true);
             _publish('presence_request', const {});
           }
@@ -759,9 +973,9 @@ class RoomService extends ChangeNotifier {
         notifyListeners();
 
       case 'presence_request':
-        // Ev sahibi yeni katılımda istedi; sadece presence yayınla, state'i
-        // yalnızca host gönderir (çoklu state yazımı kuyruğu bozabilir).
-        if (!_isHost) _publishPresence();
+        // Ev sahibi yeni katılımda istedi; avatarı da gönder ki yeni üye
+        // katılımcıları görebilsin. State'i yalnızca host gönderir.
+        if (!_isHost) _publishPresence(includeAvatar: true);
 
       case 'ack':
         if (payloadMap['to'] == _clientId && member.isHost) {
@@ -775,7 +989,49 @@ class RoomService extends ChangeNotifier {
       case 'bye':
         _members.remove(remoteId);
         _memberSeen.remove(remoteId);
+        // Host aniden düşerse oda donmasın: kalan ilk üye yeni host olur.
+        if (member.isHost && !_isHost && _members.isNotEmpty) {
+          final next = _members.keys.reduce((a, b) => a.compareTo(b) <= 0 ? a : b);
+          if (next == _clientId) _becomeHost();
+        }
         notifyListeners();
+
+      case 'command':
+        // Her cihaz aynı komutu uygular; kimse tekrar yayınlamaz. Host ayrıca
+        // bir state yayınlayarak geç kalan katılımcıları da yakalar.
+        _handleCommand(payloadMap, remoteId);
+        break;
+
+      case 'time_probe':
+        _publish('time_probe_ack', <String, dynamic>{
+          'to': remoteId,
+          't0': payloadMap['t0'],
+          't1': DateTime.now().millisecondsSinceEpoch,
+        });
+        break;
+
+      case 'time_probe_ack':
+        if (payloadMap['to'] == _clientId) {
+          final t0 = (payloadMap['t0'] as num?)?.toInt();
+          final t1 = (payloadMap['t1'] as num?)?.toInt();
+          if (t0 != null && t1 != null) {
+            _probeSend.remove('$t0');
+            final offset = clockOffset(
+              t0: t0,
+              t1: t1,
+              t2: t1,
+              t3: DateTime.now().millisecondsSinceEpoch,
+            );
+            // Ani sapmaları süzer; ölçüm gürültüsü konumu oynatmasın.
+            if (offset.abs() < 60000) {
+              _clockOffsetMs = _clockOffsetMs == 0
+                  ? offset
+                  : ((_clockOffsetMs * 3 + offset) / 4).round();
+            }
+            notifyListeners();
+          }
+        }
+        break;
 
       case 'kick':
         if (payloadMap['memberId'] == _clientId) {
@@ -791,13 +1047,7 @@ class RoomService extends ChangeNotifier {
             _members[entry.key] =
                 entry.value.copyWith(isHost: entry.key == targetId);
           }
-          if (targetId == _clientId && !_isHost) {
-            _isHost = true;
-            _lastRemoteState = null;
-            _pendingRemoteState = null;
-            _startStateTimer();
-            _publishState(force: true);
-          }
+          if (targetId == _clientId && !_isHost) _becomeHost();
           notifyListeners();
         }
 
@@ -849,6 +1099,260 @@ class RoomService extends ChangeNotifier {
     _members[member.clientId] = member;
   }
 
+  /// Host düştüğünde veya transfer edildiğinde yeni host state'i devralır.
+  /// Epoch artışı, eski host'un gecikmiş paketlerinin uygulanmasını engeller.
+  void _becomeHost() {
+    if (_isHost) return;
+    _isHost = true;
+    _hostEpoch++;
+    _lastRemoteState = null;
+    _pendingRemoteState = null;
+    _sentQueueRev = -1;
+    _clockOffsetMs = 0;
+    _startStateTimer();
+    _publishPresence();
+    _publishState(force: true);
+    _publish('state_request', const <String, dynamic>{});
+    notifyListeners();
+  }
+
+  void _sendTimeProbe() {
+    final t0 = DateTime.now().millisecondsSinceEpoch;
+    _probeSend['$t0'] = t0;
+    if (_probeSend.length > 8) _probeSend.remove(_probeSend.keys.first);
+    _publish('time_probe', <String, dynamic>{'t0': t0});
+  }
+
+  // ---------------------------------------------------------------------
+  // İki yönlü oda komutları (syncwatch)
+  // ---------------------------------------------------------------------
+
+  void _handleCommand(Map<String, dynamic> payload, String _) {
+    final id = payload['id']?.toString() ?? '';
+    if (id.isEmpty || !_seenCommands.add(id)) return;
+    if (_seenCommands.length > 200) {
+      _seenCommands.remove(_seenCommands.first);
+    }
+    final at = (payload['at'] as num?)?.toInt() ?? 0;
+    if (at > 0 &&
+        DateTime.now().millisecondsSinceEpoch - at >
+            _commandTtl.inMilliseconds) {
+      return;
+    }
+    unawaited(_applyCommand('${payload['action'] ?? ''}', payload));
+    // Host, komutu alan herkese güncel durumu bir kez daha bildirir; böylece
+    // paketi kaçıran cihaz da bir sonraki tick'i beklemeden yakalar.
+    if (_isHost) _publishState(force: true);
+  }
+
+  /// Paylaşılan kuyrukta çalan parçanın sırası. Bulunamazsa ilk parça kabul
+  /// edilir; next bu durumda ikinci parçaya geçer.
+  int _queueIndex(PlayerController player) {
+    final id = player.current?.id;
+    if (id == null) return 0;
+    final found = _queue.indexWhere((track) => track.id == id);
+    return found >= 0 ? found : 0;
+  }
+
+  Future<void> _playerOp(Future<void> Function() operation) async {
+    try {
+      await operation().timeout(_playerOpTimeout);
+    } on TimeoutException {
+      if (kDebugMode) debugPrint('CT room player op timeout');
+    }
+  }
+
+  /// Kilidi bırakır ve biriken en yeni state'i uygular. Komut içinde kilit
+  /// zaten tutuluyorsa (wasApplying) bekleyen state bırakılmaz; gerçek sahibi
+  /// bitirdiğinde alınır.
+  void _releaseApplyingRemote(bool wasApplying) {
+    _applyingRemote = wasApplying;
+    if (_applyingRemote) return;
+    final pending = _pendingRemoteState;
+    _pendingRemoteState = null;
+    if (pending != null) unawaited(_applyRemoteState(pending));
+  }
+
+  Future<void> _applyCommand(
+    String action,
+    Map<String, dynamic> data, {
+    bool local = false,
+  }) async {
+    if (!local && !inRoom) return;
+    final player = PlayerController.instance;
+    final wasApplying = _applyingRemote;
+    _applyingRemote = true;
+    try {
+      switch (action) {
+        case 'play':
+          // Sırada parça var ama hiçbir cihaz çalmaya başlamadıysa ilk
+          // parçayı yükle; aksi halde player.play() boş kuyrukta sessiz kalır.
+          if (player.current == null && _queue.isNotEmpty) {
+            await _playerOp(
+              () => player.playQueue(
+                List<Track>.from(_queue),
+                0,
+                radio: false,
+                useShufflePreference: false,
+              ),
+            );
+          }
+          await _playerOp(() => player.play());
+          break;
+        case 'pause':
+          await _playerOp(() => player.pause());
+          break;
+        case 'next':
+          if (_queue.isEmpty) {
+            await _playerOp(() => player.next());
+            break;
+          }
+          // Yerel player kuyruğu oda kuyruğundan eski olabilir (yeni eklenen
+          // parçalar henüz yüklenmemiştir). Bu yüzden sırayı her seferinde
+          // paylaşılan kuyruktan yeniden kurarak ilerleriz.
+          final wasPlaying = player.playing;
+          final current = _queueIndex(player);
+          final target = current + 1 >= _queue.length ? 0 : current + 1;
+          await _playerOp(
+            () => player.playQueue(
+              List<Track>.from(_queue),
+              target,
+              radio: false,
+              useShufflePreference: false,
+            ),
+          );
+          if (!wasPlaying && player.playing) {
+            await _playerOp(() => player.pause());
+          }
+          break;
+        case 'previous':
+          if (_queue.isEmpty) {
+            await _playerOp(() => player.previous());
+            break;
+          }
+          final wasPlayingPrev = player.playing;
+          final currentPrev = _queueIndex(player);
+          final targetPrev = currentPrev <= 0 ? 0 : currentPrev - 1;
+          await _playerOp(
+            () => player.playQueue(
+              List<Track>.from(_queue),
+              targetPrev,
+              radio: false,
+              useShufflePreference: false,
+            ),
+          );
+          if (!wasPlayingPrev && player.playing) {
+            await _playerOp(() => player.pause());
+          }
+          break;
+        case 'seek':
+          final ms = (data['positionMs'] as num?)?.toInt();
+          if (ms != null && ms >= 0) {
+            await _playerOp(() => player.seek(Duration(milliseconds: ms)));
+          }
+          break;
+        case 'play_at':
+          if (_queue.isEmpty) break;
+          final id = data['trackId']?.toString() ?? '';
+          var index = (data['index'] as num?)?.toInt() ?? 0;
+          final found = id.isEmpty
+              ? -1
+              : _queue.indexWhere((track) => track.id == id);
+          if (found >= 0) index = found;
+          index = index.clamp(0, _queue.length - 1);
+          await _playerOp(
+            () => player.playQueue(
+              List<Track>.from(_queue),
+              index,
+              radio: false,
+              useShufflePreference: false,
+            ),
+          );
+          final ms = (data['positionMs'] as num?)?.toInt() ?? 0;
+          if (ms > 0) {
+            await _playerOp(() => player.seek(Duration(milliseconds: ms)));
+          }
+          break;
+        case 'add':
+          final raw = data['track'];
+          if (raw is! Map) break;
+          final track = Track.fromJson(Map<String, dynamic>.from(raw));
+          if (track.id.isEmpty || _queue.length >= _queueLimit) break;
+          if (_queue.any((item) => item.id == track.id)) break;
+          _queue = List<Track>.unmodifiable([..._queue, track]);
+          _queueRev++;
+          break;
+        case 'remove':
+          final id = data['trackId']?.toString() ?? '';
+          var index = (data['index'] as num?)?.toInt() ?? -1;
+          if (id.isNotEmpty) {
+            final found = _queue.indexWhere((track) => track.id == id);
+            if (found >= 0) index = found;
+          }
+          if (index < 0 || index >= _queue.length) break;
+          _queue = List<Track>.unmodifiable(
+            List<Track>.from(_queue)..removeAt(index),
+          );
+          _queueRev++;
+          break;
+      }
+    } catch (error) {
+      if (kDebugMode) debugPrint('CT room command error: $error');
+    } finally {
+      _releaseApplyingRemote(wasApplying);
+      notifyListeners();
+    }
+  }
+
+  Future<void> _sendCommand(
+    String action,
+    Map<String, dynamic> data, {
+    bool applyLocally = true,
+  }) async {
+    if (!inRoom) return;
+    final command = buildCommand(
+      id: commandId(_clientId),
+      action: action,
+      payload: data,
+    );
+    // Yayın önce: yerel medya yüklemesi uzayabilir (zayıf bağlantıda 20 sn).
+    // Komutu bekletirse diğer cihazlar oynat/duraklat sinyalini alamaz.
+    _publish('command', command);
+    if (applyLocally) await _applyCommand(action, command, local: true);
+    if (_isHost) _publishState(force: true);
+  }
+
+  /// Oda içindeki oynat/duraklat düğmesi. Her cihaz aynı komutu alır.
+  Future<void> togglePlayback() async {
+    final player = PlayerController.instance;
+    if (!inRoom || !_autoSync) {
+      await player.toggle();
+      return;
+    }
+    await _sendCommand(player.playing ? 'pause' : 'play', const {});
+  }
+
+  Future<void> play() => _sendCommand('play', const {});
+  Future<void> pause() => _sendCommand('pause', const {});
+  Future<void> next() => _sendCommand('next', const {});
+  Future<void> previous() => _sendCommand('previous', const {});
+
+  Future<void> seekTo(Duration position) =>
+      _sendCommand('seek', <String, dynamic>{
+        'positionMs': position.inMilliseconds,
+      });
+
+  Future<void> playAt(int index) async {
+    if (index < 0 || index >= _queue.length) return;
+    await _sendCommand('play_at', <String, dynamic>{
+      'index': index,
+      'trackId': _queue[index].id,
+    });
+  }
+
+  Future<void> addTrack(Track track) =>
+      _sendCommand('add', <String, dynamic>{'track': track.toJson()});
+
   Future<void> _removedByHost() async {
     const message = 'Ev sahibi seni odadan çıkardı.';
     await _detach(publishBye: false);
@@ -860,59 +1364,63 @@ class RoomService extends ChangeNotifier {
     // Eski/geciken state yeni parçayı geri almasın. Bu kontrol kuyruk
     // güncellenmeden önce yapılmalı; aksi halde UI eski sıraya döner.
     if (!isRemoteStateNewer(payload, _lastRemoteState)) return;
-    _lastRemoteState = payload;
 
-    // Önceki uygulama sürüyorsa en yeni durumu kuyruğa al; 3 sn'lik tick'ler
-    // arasında kaybolmasın.
+    // Önceki uygulama sürüyorsa en yeni durumu kuyruğa al; tick'ler arasında
+    // kaybolmasın. `_lastRemoteState` yalnızca gerçekten uygulanınca güncellenir;
+    // erken güncellenirse bekleyen paket kendisi "eski" sayılıp atılır.
     if (_applyingRemote) {
       _pendingRemoteState = payload;
       return;
     }
-
-    final incoming = payload['queue'];
-    List<Track> decoded = const <Track>[];
-    if (incoming is List) {
-      decoded = incoming
-          .whereType<Map>()
-          .map((item) => Track.fromJson(Map<String, dynamic>.from(item)))
-          .where((track) => track.id.isNotEmpty)
-          .toList();
-      if (decoded.isNotEmpty) _queue = List<Track>.unmodifiable(decoded);
-    }
-    final remote = payload['playback'];
-    final remoteMap =
-        remote is Map ? Map<String, dynamic>.from(remote) : <String, dynamic>{};
-    if (remote is Map) _playback = remoteMap;
-    if (payload['roomName'] is String) {
-      _roomName = payload['roomName'] as String;
-    }
-    notifyListeners();
-
-    if (!_autoSync || _isHost) return;
-
-    final player = PlayerController.instance;
-    final stopped = payload['stopped'] == true ||
-        remoteMap['stopped'] == true ||
-        (remoteMap['id']?.toString() ?? '').isEmpty;
-    if (stopped) {
-      // Host durduğunda joiner eski parçayı çalmaya devam etmesin.
-      if (player.playing) await player.pause();
-      _playback = null;
-      notifyListeners();
-      return;
-    }
-
-    final id = remoteMap['id']!.toString();
-    final queue = decoded.isNotEmpty
-        ? decoded
-        : (_queue.isNotEmpty
-            ? _queue
-            : <Track>[Track.fromJson(remoteMap)]);
-    final index = resolveStateIndex(queue, remoteMap);
-    final shouldPlay = remoteMap['playing'] == true;
-
     _applyingRemote = true;
     try {
+      _lastRemoteState = payload;
+      final incoming = payload['queue'];
+      List<Track> decoded = const <Track>[];
+      if (incoming is List) {
+        decoded = incoming
+            .whereType<Map>()
+            .map((item) => Track.fromJson(Map<String, dynamic>.from(item)))
+            .where((track) => track.id.isNotEmpty)
+            .take(_queueLimit)
+            .toList();
+        if (decoded.isNotEmpty) _queue = List<Track>.unmodifiable(decoded);
+      }
+      final incomingRev = _stateNumber(payload['queueRev']);
+      if (incomingRev > _queueRev) _queueRev = incomingRev;
+      final remote = payload['playback'];
+      final remoteMap = remote is Map
+          ? Map<String, dynamic>.from(remote)
+          : <String, dynamic>{};
+      if (remote is Map) _playback = remoteMap;
+      if (payload['roomName'] is String) {
+        _roomName = payload['roomName'] as String;
+      }
+      notifyListeners();
+
+      if (!_autoSync || _isHost) return;
+
+      final player = PlayerController.instance;
+      final stopped = payload['stopped'] == true ||
+          remoteMap['stopped'] == true ||
+          (remoteMap['id']?.toString() ?? '').isEmpty;
+      if (stopped) {
+        // Host durduğunda joiner eski parçayı çalmaya devam etmesin.
+        if (player.playing) await _playerOp(() => player.pause());
+        _playback = null;
+        notifyListeners();
+        return;
+      }
+
+      final id = remoteMap['id']!.toString();
+      final queue = decoded.isNotEmpty
+          ? decoded
+          : (_queue.isNotEmpty
+              ? _queue
+              : <Track>[Track.fromJson(remoteMap)]);
+      final index = resolveStateIndex(queue, remoteMap);
+      final shouldPlay = remoteMap['playing'] == true;
+
       // Aynı parça görünse bile hata varsa kaynak yeniden açılmalı. Shuffle
       // tercihi oda kuyruğuna uygulanmaz; yoksa her tick kuyruğu karıştırıp
       // parçayı baştan başlatıyordu.
@@ -920,34 +1428,82 @@ class RoomService extends ChangeNotifier {
           !_sameQueue(player.tracks, queue) ||
           player.error != null;
       if (needsReload) {
-        await player.playQueue(
-          queue,
-          index,
-          radio: false,
-          useShufflePreference: false,
+        await _playerOp(
+          () => player.playQueue(
+            queue,
+            index,
+            radio: false,
+            useShufflePreference: false,
+          ),
         );
       }
       final rawPosition = remoteMap['positionMs'];
-      final positionMs = rawPosition is num ? rawPosition.toInt() : null;
-      if (positionMs != null &&
-          (player.position.inMilliseconds - positionMs).abs() > 5000) {
-        await player.seek(Duration(milliseconds: positionMs));
+      final sampled = rawPosition is num ? rawPosition.toInt() : null;
+      if (sampled != null) {
+        final sentAt = _stateNumber(payload['sentAt']);
+        final target = syncTargetMs(
+          positionMs: sampled,
+          sentAt: sentAt,
+          nowMs: DateTime.now().millisecondsSinceEpoch,
+          playing: shouldPlay,
+          offsetMs: _clockOffsetMs,
+        );
+        _correctDrift(
+          localMs: player.position.inMilliseconds,
+          targetMs: target,
+          playing: shouldPlay,
+        );
       }
       // toggle() yerine açık komut: backend henüz "playing" olmadan toggling
       // yanlış yöne gidebiliyordu.
       if (shouldPlay) {
-        if (!player.playing) await player.play();
+        if (!player.playing) await _playerOp(() => player.play());
       } else if (player.playing) {
-        await player.pause();
+        await _playerOp(() => player.pause());
       }
     } catch (error) {
       if (kDebugMode) debugPrint('CT room state apply error: $error');
     } finally {
-      _applyingRemote = false;
-      final pending = _pendingRemoteState;
-      _pendingRemoteState = null;
-      if (pending != null) unawaited(_applyRemoteState(pending));
+      _releaseApplyingRemote(false);
     }
+  }
+
+  /// Küçük kaymaları hız ayarıyla, büyük kaymaları seek ile düzeltir.
+  /// Sürekli seek yapmak tamponu bozduğu için eşik ayrıldı.
+  void _correctDrift({
+    required int localMs,
+    required int targetMs,
+    required bool playing,
+  }) {
+    if (!playing) {
+      _cancelRateCorrection();
+      return;
+    }
+    final diffMs = localMs - targetMs;
+    final diff = diffMs.abs();
+    if (diff < 120) {
+      _cancelRateCorrection();
+      return;
+    }
+    if (diff > 1500) {
+      _cancelRateCorrection();
+      unawaited(
+        PlayerController.instance.seek(Duration(milliseconds: targetMs)),
+      );
+      return;
+    }
+    // diff > 0: yerel konum öndeyse yavaşlat; < 0: yetişmek için hızlandır.
+    final rate = (1 - (diffMs / 9000)).clamp(0.90, 1.10);
+    unawaited(PlayerController.instance.setSpeed(rate));
+    _rateTimer?.cancel();
+    _rateTimer = Timer(const Duration(milliseconds: 1400), () {
+      unawaited(PlayerController.instance.setSpeed(1));
+    });
+  }
+
+  void _cancelRateCorrection() {
+    _rateTimer?.cancel();
+    _rateTimer = null;
   }
 
   void _onLocalPlayerChanged() {
@@ -964,8 +1520,18 @@ class RoomService extends ChangeNotifier {
         .where((id) => id != _clientId && !_memberSeen.containsKey(id))
         .toList();
     if (removed.isEmpty) return;
+    final hostGone = removed.any((id) => _members[id]?.isHost == true);
     for (final id in removed) {
       _members.remove(id);
+    }
+    // Broker LWT teslim edilmediyse (ör. broker restart) host sessizce kaybolur.
+    // 18 sn sonra kalan üyeler arasından deterministik seçim yapılır.
+    if (hostGone && !_isHost) {
+      final candidates = <String>{..._members.keys, _clientId};
+      candidates.removeWhere((id) => removed.contains(id));
+      if (candidates.isNotEmpty && candidates.reduce((a, b) => a.compareTo(b) <= 0 ? a : b) == _clientId) {
+        _becomeHost();
+      }
     }
     notifyListeners();
   }
@@ -976,7 +1542,69 @@ class RoomService extends ChangeNotifier {
     Map<String, dynamic> envelope,
   ) {
     final builder = MqttClientPayloadBuilder()..addString(jsonEncode(envelope));
-    client.publishMessage(topic, MqttQos.atLeastOnce, builder.payload!);
+    try {
+      client.publishMessage(topic, MqttQos.atLeastOnce, builder.payload!);
+    } catch (_) {
+      // Bağlantı kopmuşsa yayın hata verir. Komutları drop etmek yerine
+      // sınırlı bir kuyruğa al; bağlantı gelince _flushQueuedPublishes gönderir.
+      _queuedPublishes.add(envelope);
+      if (_queuedPublishes.length > _maxQueuedPublishes) {
+        _queuedPublishes.removeAt(0);
+      }
+    }
+  }
+
+  void _flushQueuedPublishes() {
+    final client = _client;
+    if (client == null || !inRoom || _queuedPublishes.isEmpty) return;
+    final pending = List<Map<String, dynamic>>.from(_queuedPublishes);
+    _queuedPublishes.clear();
+    for (final envelope in pending) {
+      // Kuyrukta uzun süre kalmış state/chat artık güncel değildir; yalnızca
+      // komutlar ve katılım mesajları yeniden gönderilmeye değer.
+      final age = DateTime.now().millisecondsSinceEpoch -
+          ((envelope['at'] as num?)?.toInt() ?? 0);
+      final type = envelope['type']?.toString() ?? '';
+      final isCommand = type == 'command' || type == 'state_request';
+      if (age > _commandTtl.inMilliseconds && !isCommand) continue;
+      _publishRaw(client, _topic, envelope);
+    }
+  }
+
+  /// Wi-Fi ve mobil veri için yayın sıklığını ayarlar. Mobil veride kalp
+  /// atışları seyrekleşir; komutlar (play/pause/add) anında ve küçük kalır.
+  Future<void> _watchConnectivity() async {
+    if (_connectivityWatchStarted && _connectivitySub != null) return;
+    _connectivityWatchStarted = true;
+    try {
+      final connectivity = Connectivity();
+      final initial = await connectivity.checkConnectivity();
+      _setConnectivity(initial);
+      await _connectivitySub?.cancel();
+      _connectivitySub =
+          connectivity.onConnectivityChanged.listen((results) {
+        _setConnectivity(results);
+      });
+    } catch (_) {
+      // Plugin yoksa Wi-Fi varsayılır; oda trafiği eski hızda çalışmaya devam
+      // eder. Başlatma bayrağı sıfırlanır ki sonraki katılım yeniden denesin.
+      _mobileData = false;
+      _connectivityWatchStarted = false;
+    }
+  }
+
+  void _setConnectivity(List<ConnectivityResult> results) {
+    final hasMobile = results.contains(ConnectivityResult.mobile);
+    final hasWifi = results.contains(ConnectivityResult.wifi) ||
+        results.contains(ConnectivityResult.ethernet);
+    final next = hasMobile && !hasWifi;
+    if (next == _mobileData) return;
+    _mobileData = next;
+    if (inRoom) _startStateTimer();
+    // Keşif, odada olmasa bile açık kalır. Ağ değişince periyodu da
+    // güncelle ki mobil veride gereksiz oda listesi trafiği oluşmasın.
+    if (_discoveryClient != null) _startDiscoveryTimer();
+    notifyListeners();
   }
 
   void _publish(String type, Map<String, dynamic> payload) {
@@ -994,7 +1622,11 @@ class RoomService extends ChangeNotifier {
     });
   }
 
-  void _publishPresence() {
+  /// Avatar verisi yalnızca değiştiğinde (ya da yeni katılım/isteke yanıt)
+  /// gönderilir. Rutin 8 sn'lik presence paketi artık ~100 KB değil ~100 bayt;
+  /// mobil veride trafik ve pil tüketimi belirgin düşer. Avatar olmayan
+  /// presence'ta `avatarVersion` da gönderilmez; alıcı mevcut sürümü korur.
+  void _publishPresence({bool includeAvatar = false}) {
     _memberSeen[_clientId] = DateTime.now();
     _putMember(RoomMember(
       clientId: _clientId,
@@ -1003,45 +1635,76 @@ class RoomService extends ChangeNotifier {
       avatarVersion: _avatarVersion,
       isHost: _isHost,
     ));
-    _publish('presence', {
-      'roomName': _roomName,
-      'avatar': _avatarDataUrl,
-      'avatarVersion': _avatarVersion,
-    });
+    final payload = <String, dynamic>{'roomName': _roomName};
+    if (includeAvatar || _avatarDirty) {
+      payload['avatar'] = _avatarDataUrl;
+      payload['avatarVersion'] = _avatarVersion;
+      _avatarDirty = false;
+    }
+    _publish('presence', payload);
   }
 
   void _startStateTimer() {
     _stateTimer?.cancel();
-    _stateTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (_isHost) _publishState(force: true);
-    });
+    _stateTimer = Timer.periodic(
+      stateInterval(mobileData: _mobileData),
+      (_) {
+        _stateParity++;
+        if (!_isHost) {
+          // Misafirler host saatiyle arada kalan gecikmeyi periyodik ölçer.
+          // Paket çok küçük; mobil veride daha seyrek tutulur.
+          if (_stateParity % clockProbeTicks(mobileData: _mobileData) == 0) {
+            _sendTimeProbe();
+          }
+          return;
+        }
+        // Sıra değişmediyse tam liste yerine yalnızca konum/çalma durumu.
+        // Tam liste yalnızca tanımlı aralıklarla gönderilir; paket kaybında
+        // katılımcılar kendini onarır, komutlar anında yayınlanır.
+        final includeQueue =
+            _stateParity % queueRefreshTicks(mobileData: _mobileData) == 0;
+        _publishState(force: true, includeQueue: includeQueue);
+      },
+    );
   }
 
-  void _publishState({bool force = false}) {
+  void _publishState({bool force = false, bool? includeQueue}) {
     if (!_isHost) return;
     final now = DateTime.now();
     if (!force &&
-        now.difference(_lastStatePublish) < const Duration(seconds: 2)) {
+        now.difference(_lastStatePublish) < const Duration(seconds: 1)) {
       return;
     }
     _lastStatePublish = now;
     final player = PlayerController.instance;
-    // Oda kuyruğu değil, çaların gerçek kuyruğu yayınlanır. Aksi halde
-    // radyo/shuffle sırasında index ve parça birbirinden ayrışıyordu.
+    // Oda kuyruğu tek kaynaktır; çalar kuyruğu yalnızca yedek. Böylece iki
+    // cihazın farklı sıraları nedeniyle index/parça ayrışması oluşmaz.
+    final tracks = _queue.isNotEmpty ? _queue : player.tracks;
+    var index = player.index;
+    if (player.current != null && tracks.isNotEmpty) {
+      final found = tracks.indexWhere((item) => item.id == player.current!.id);
+      if (found >= 0) index = found;
+    }
     final seq = ++_stateSeq;
+    final sendQueue = includeQueue ??
+        (_sentQueueRev != _queueRev || _stateParity % 8 == 0);
     _publish(
       'state',
       buildStatePayload(
         roomName: _roomName,
-        tracks: player.tracks,
-        index: player.index,
+        tracks: tracks,
+        index: index,
         positionMs: player.position.inMilliseconds,
         playing: player.playing,
         seq: seq,
         sentAt: now.millisecondsSinceEpoch,
         hostId: _clientId,
+        queueRev: _queueRev,
+        includeQueue: sendQueue,
+        epoch: _hostEpoch,
       ),
     );
+    if (sendQueue) _sentQueueRev = _queueRev;
   }
 
   // ---------------------------------------------------------------------
@@ -1056,6 +1719,9 @@ class RoomService extends ChangeNotifier {
     _discoveryStarting = true;
     try {
       await init();
+      // Keşif uygulama açılır açılmaz başlar; ağ türü oda dışındayken de
+      // bilinmeli ki ilk yayın doğru periyotla yapılsın.
+      unawaited(_watchConnectivity());
       // Oda kanalından ayrı, sabit bir istemci kimliği: self-filter ve
       // oda katılımı birbirini etkilemesin.
       final id = 'ct_${_clientId}_disc';
@@ -1103,10 +1769,7 @@ class RoomService extends ChangeNotifier {
       client.subscribe(RoomRelay.discoveryTopic, MqttQos.atLeastOnce);
       _discoverySub = client.updates?.listen(_onDiscoveryMessages);
       _discoveryClient = client;
-      _discoveryTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-        _pruneDiscovery();
-        _publishDiscovery();
-      });
+      _startDiscoveryTimer();
       _publishDiscovery();
       notifyListeners();
       return true;
@@ -1117,6 +1780,18 @@ class RoomService extends ChangeNotifier {
     } finally {
       _discoveryStarting = false;
     }
+  }
+
+  /// Keşif yayınını ağ türüne göre ayarlar. Wi-Fi'de 5 sn, mobil veride 10 sn.
+  void _startDiscoveryTimer() {
+    _discoveryTimer?.cancel();
+    _discoveryTimer = Timer.periodic(
+      discoveryInterval(mobileData: _mobileData),
+      (_) {
+        _pruneDiscovery();
+        _publishDiscovery();
+      },
+    );
   }
 
   void stopDiscovery() {
@@ -1232,9 +1907,34 @@ class RoomService extends ChangeNotifier {
     _queue = const [];
     _playback = null;
     _stateSeq = 0;
+    _queueRev = 0;
+    _sentQueueRev = -1;
+    _clockOffsetMs = 0;
+    _probeSend.clear();
+    _seenCommands.clear();
+    _queuedPublishes.clear();
     _lastRemoteState = null;
     _pendingRemoteState = null;
     _applyingRemote = false;
+    _cancelRateCorrection();
+  }
+
+  @override
+  void didChangeAppLifecycleState(flutter.AppLifecycleState state) {
+    if (!inRoom) return;
+    if (state == flutter.AppLifecycleState.resumed) {
+      // Telefon uyandığında WebSocket çoğu zaman yeniden bağlanır; yerel
+      // abonelik geri gelmezse diğer cihazın durumu 2-4 sn içinde gelmez.
+      _publishPresence();
+      if (_isHost) {
+        _publishState(force: true);
+      } else {
+        _publish('state_request', const <String, dynamic>{});
+        _sendTimeProbe();
+      }
+    } else if (state == flutter.AppLifecycleState.paused) {
+      _cancelRateCorrection();
+    }
   }
 
   Future<void> leave() async {
@@ -1263,6 +1963,12 @@ class RoomService extends ChangeNotifier {
     _stateTimer = null;
     _pruneTimer?.cancel();
     _pruneTimer = null;
+    _rateTimer?.cancel();
+    _rateTimer = null;
+    unawaited(_connectivitySub?.cancel());
+    _connectivitySub = null;
+    _connectivityWatchStarted = false;
+    flutter.WidgetsBinding.instance.removeObserver(this);
     PlayerController.instance.removeListener(_onLocalPlayerChanged);
     final client = _client;
     _client = null;
@@ -1313,6 +2019,7 @@ class RoomService extends ChangeNotifier {
 
     _avatarDataUrl = clean;
     _avatarVersion++;
+    _avatarDirty = true;
     _members[_clientId] = RoomMember(
       clientId: _clientId,
       name: _displayName,
@@ -1365,11 +2072,14 @@ class RoomService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Sıradan çıkarma artık iki cihazda da kullanılabilir; komut tüm
+  /// katılımcılara yayılır (eski sürümde yalnızca host yapabiliyordu).
   Future<void> removeFromQueue(int index) async {
-    if (!_isHost || index < 0 || index >= _queue.length) return;
-    _queue = List<Track>.from(_queue)..removeAt(index);
-    _publishState(force: true);
-    notifyListeners();
+    if (index < 0 || index >= _queue.length) return;
+    await _sendCommand('remove', <String, dynamic>{
+      'index': index,
+      'trackId': _queue[index].id,
+    });
   }
 
   Future<void> react(String emoji) async {
@@ -1379,29 +2089,10 @@ class RoomService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> playFromQueue(int index) async {
-    if (index < 0 || index >= _queue.length) return;
-    final track = _queue[index];
-    _playback = {
-      ...track.toJson(),
-      'index': index,
-      'positionMs': 0,
-      'playing': true,
-    };
-    notifyListeners();
-    await PlayerController.instance.playQueue(
-      List<Track>.from(_queue),
-      index,
-      radio: false,
-    );
-    _publishState(force: true);
-  }
+  Future<void> playFromQueue(int index) => playAt(index);
 
-  Future<void> addToQueue(Track track) async {
-    _queue = [..._queue, track];
-    _publishState(force: true);
-    notifyListeners();
-  }
+  /// Her iki cihaz da kendi kitaplığından odaya parça ekleyebilir.
+  Future<void> addToQueue(Track track) => addTrack(track);
 
   Future<void> kick(String memberId) async {
     if (!_isHost || memberId.isEmpty || memberId == _clientId) return;

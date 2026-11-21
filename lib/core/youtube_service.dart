@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
@@ -54,7 +56,9 @@ class ArtistPlaylist {
 /// birden fazla herkese açık Invidious örneğine yedeklenir. Arayüzde aracı
 /// ayarı yoktur.
 class YoutubeService {
-  YoutubeService._();
+  YoutubeService._() {
+    unawaited(_watchConnectivity());
+  }
 
   static final YoutubeService instance = YoutubeService._();
 
@@ -65,7 +69,8 @@ class YoutubeService {
   static const Duration _playlistTimeout = Duration(seconds: 15);
   static const Duration _resolveTimeout = Duration(seconds: 20);
   static const Duration _cacheTtl = Duration(minutes: 15);
-  static const Duration _searchTtl = Duration(minutes: 10);
+  static const Duration _searchTtlWifi = Duration(minutes: 10);
+  static const Duration _searchTtlMobile = Duration(minutes: 30);
   static const Duration _uriValidationTtl = Duration(seconds: 30);
 
   static const int _maxSearchResults = 50;
@@ -78,6 +83,48 @@ class YoutubeService {
     'https://inv.nadeko.net',
     'https://invidious.privacyredirect.com',
   ];
+
+  bool _mobileData = false;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+
+  /// Mobil veride arama/öneri yanıtları daha uzun önbellekte tutulur ve daha
+  /// az yedek sunucuya başvurulur. Ses çözümlemesi kaliteyi düşürmez.
+  bool get mobileData => _mobileData;
+
+  static Duration searchTtlFor({required bool mobileData}) =>
+      mobileData ? _searchTtlMobile : _searchTtlWifi;
+
+  static int invBaseCount({required bool mobileData}) =>
+      mobileData ? 2 : _invBases.length;
+
+  Duration get searchTtl => searchTtlFor(mobileData: _mobileData);
+
+  List<String> get _activeInvBases => _invBases
+      .take(invBaseCount(mobileData: _mobileData))
+      .toList(growable: false);
+
+  Future<void> _watchConnectivity() async {
+    try {
+      final connectivity = Connectivity();
+      final initial = await connectivity.checkConnectivity();
+      _setConnectivity(initial);
+      await _connectivitySub?.cancel();
+      _connectivitySub = connectivity.onConnectivityChanged.listen(_setConnectivity);
+    } catch (_) {
+      _mobileData = false;
+    }
+  }
+
+  void _setConnectivity(List<ConnectivityResult> results) {
+    final hasMobile = results.contains(ConnectivityResult.mobile);
+    final hasWifi = results.contains(ConnectivityResult.wifi) ||
+        results.contains(ConnectivityResult.ethernet);
+    final next = hasMobile && !hasWifi;
+    if (next == _mobileData) return;
+    _mobileData = next;
+    // Ağ değişince arama önbelleğinin TTL'i de değişir; eski kayıtlar yine
+    // kendi yaşlarına göre değerlendirilir, ek istek yapılmaz.
+  }
 
   final Map<String, Uri> _cache = {};
   final Map<String, DateTime> _cachedAt = {};
@@ -149,7 +196,7 @@ class YoutubeService {
   /// Sıralı denemede ilk üç örnek yanıt vermediğinde arama/öneri de 18 sn
   /// bekliyordu; artık en yavaş tek örnek kadar sürer.
   Future<dynamic> _invGet(String path) => firstSuccess<dynamic>([
-        for (final base in _invBases) _invGetBase(base, path),
+        for (final base in _activeInvBases) _invGetBase(base, path),
       ]);
 
   Future<dynamic> _invGetBase(String base, String path) async {
@@ -184,7 +231,9 @@ class YoutubeService {
     String? coverUrl;
     final thumbs = m['videoThumbnails'] ?? m['thumbnails'];
     if (thumbs is List) {
-      String urlOf(dynamic t) => t is Map ? (t['url']?.toString() ?? '') : '';
+      String urlOf(dynamic t) => t is Map
+          ? (t['url']?.toString() ?? '')
+          : (t is String ? t : '');
       for (final quality in const ['medium', 'high', 'standard', 'default']) {
         for (final t in thumbs) {
           if (t is! Map || t['quality']?.toString() != quality) continue;
@@ -213,13 +262,21 @@ class YoutubeService {
     );
   }
 
-  Track _fromVideo(Video video) => Track(
-        id: video.id.value,
-        title: video.title,
-        artist: video.author,
-        duration: video.duration,
-        artistId: video.channelId.value.isEmpty ? null : video.channelId.value,
-      );
+  Track _fromVideo(Video video) {
+    // Kapak URL'ini açıkça taşı: transit/yedek kaynaklarda `Track.thumb`
+    // varsayılan YouTube host'una erişilemediğinde görsel boş kalıyordu.
+    // Liste/küçük kapak için mqdefault yeterli; büyük player görseli de
+    // Track.artwork üzerinden orijinal adresi kullanabilir.
+    final thumb = video.thumbnails.mediumResUrl;
+    return Track(
+      id: video.id.value,
+      title: video.title,
+      artist: video.author,
+      duration: video.duration,
+      artistId: video.channelId.value.isEmpty ? null : video.channelId.value,
+      coverUrl: thumb.isEmpty ? null : thumb,
+    );
+  }
 
   /// Arama sonuçları 10 dakika önbellekte tutulur. [refresh] yalnızca
   /// pull-to-refresh gibi kullanıcı kaynaklı yenilemelerde true geçilir.
@@ -235,7 +292,7 @@ class YoutubeService {
     if (!refresh) {
       final cached = _searchCache[key];
       if (cached != null &&
-          DateTime.now().difference(cached.at) <= _searchTtl) {
+          DateTime.now().difference(cached.at) <= searchTtl) {
         return cached.results.take(limit).toList();
       }
     }
@@ -399,10 +456,25 @@ class YoutubeService {
       final title = data['title']?.toString().trim() ?? '';
       if (title.isNotEmpty) {
         final author = data['author']?.toString().trim() ?? '';
+        final rawThumb = data['thumbnailUrl'] ?? data['thumbnail'] ?? data['image'];
+        String? thumb;
+        if (rawThumb is String && rawThumb.isNotEmpty) {
+          thumb = rawThumb;
+        } else if (rawThumb is Map) {
+          thumb = rawThumb['url']?.toString();
+        } else if (data['videoThumbnails'] is List) {
+          for (final item in data['videoThumbnails'] as List) {
+            if (item is Map && item['url']?.toString().isNotEmpty == true) {
+              thumb = item['url']?.toString();
+              break;
+            }
+          }
+        }
         return PlaylistInfo(
           id: data['playlistId']?.toString() ?? id,
           title: title,
           author: author.isEmpty ? 'Bilinmeyen' : author,
+          thumbUrl: thumb,
         );
       }
     }
@@ -555,7 +627,7 @@ class YoutubeService {
     final out = <Track>[];
     final seen = <String>{};
     final path = '/api/v1/videos/${Uri.encodeComponent(videoId)}';
-    for (final base in _invBases) {
+    for (final base in _activeInvBases) {
       if (out.length >= limit) break;
       try {
         final response =
@@ -620,12 +692,6 @@ class YoutubeService {
     final title = cleanName.isNotEmpty
         ? cleanName
         : (cleanQuery.isNotEmpty ? cleanQuery : 'Sanatçı çalma listesi');
-    final info = PlaylistInfo(
-      id: id.isEmpty ? (cleanQuery.isNotEmpty ? cleanQuery : title) : id,
-      title: title,
-      author: title,
-    );
-
     List<Track> tracks = const <Track>[];
     if (id.isNotEmpty) {
       tracks = await artistTracks(title, channelId: id, limit: 60);
@@ -633,6 +699,12 @@ class YoutubeService {
     if (tracks.isEmpty && cleanQuery.isNotEmpty) {
       tracks = await search(cleanQuery, limit: 60);
     }
+    final info = PlaylistInfo(
+      id: id.isEmpty ? (cleanQuery.isNotEmpty ? cleanQuery : title) : id,
+      title: title,
+      author: title,
+      thumbUrl: tracks.isEmpty ? null : tracks.first.thumb,
+    );
     return ArtistPlaylist(
       info: info,
       tracks: List<Track>.unmodifiable(tracks),

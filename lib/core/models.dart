@@ -1,3 +1,25 @@
+/// YouTube kapaklarını listeler için küçük varyanta indirger.
+/// `hqdefault`/`maxresdefault` gibi dosyalar 480–1280 px; 48–64 px'lik
+/// tile'larda aynı görsel `mqdefault` (320x180) ile yüklenir. Mobil veride
+/// kapak trafiği belirgin düşer, Wi-Fi'de de gereksiz indirme olmaz.
+String compactThumbnailUrl(String url) {
+  final uri = Uri.tryParse(url);
+  final youtubeThumbHost = uri?.host.endsWith('ytimg.com') == true ||
+      uri?.host.endsWith('youtube.com') == true;
+  if (uri == null || !youtubeThumbHost) return url;
+  final segments = uri.pathSegments;
+  if (segments.length < 3 || segments[segments.length - 3] != 'vi') return url;
+  if (segments.last == 'mqdefault.jpg') return uri.toString();
+  return uri
+      .replace(
+        pathSegments: <String>[
+          ...segments.sublist(0, segments.length - 1),
+          'mqdefault.jpg',
+        ],
+      )
+      .toString();
+}
+
 class Track {
   const Track({
     required this.id,
@@ -21,7 +43,13 @@ class Track {
   /// Özel kapak adresi; yoksa YouTube miniature düşülür.
   final String? coverUrl;
 
-  String get thumb => coverUrl ?? 'https://i.ytimg.com/vi/$id/hqdefault.jpg';
+  /// UI ve medya bildirimi için bant genişliği dostu kapak.
+  String get thumb => compactThumbnailUrl(
+        coverUrl ?? 'https://i.ytimg.com/vi/$id/hqdefault.jpg',
+      );
+
+  /// Büyük kapak gerektiren yerler için orijinal URL korunur.
+  String get artwork => coverUrl ?? 'https://i.ytimg.com/vi/$id/hqdefault.jpg';
 
   String get watchUrl => 'https://www.youtube.com/watch?v=$id';
 
@@ -81,11 +109,18 @@ class PlaylistInfo {
     required this.id,
     required this.title,
     required this.author,
+    this.thumbUrl,
   });
 
   final String id;
   final String title;
   final String author;
 
-  String get thumb => 'https://i.ytimg.com/vi/$id/hqdefault.jpg';
+  /// Liste kimliği video kimliği değildir; kapak yalnızca gerçek bir parça
+  /// veya API'nin döndürdüğü görselden gelir. Boşsa UI placeholder gösterir.
+  final String? thumbUrl;
+
+  String? get thumb => (thumbUrl == null || thumbUrl!.isEmpty)
+      ? null
+      : compactThumbnailUrl(thumbUrl!);
 }

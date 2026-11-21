@@ -53,7 +53,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   bool _radioMode = true;
   RepeatMode _repeatMode = RepeatMode.off;
   bool _shuffleEnabled = false;
-  String _quality = 'high';
+  String _quality = 'veryhigh';
 
   SharedPreferences? _prefs;
   Future<void>? _prefsFuture;
@@ -109,7 +109,9 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   // Motor "ready" sinyali göndermeden de play() çoğu zaman çalışır. 5 sn
   // beklemek her parçada gereksiz gecikmeydi; kısa süre sonra play() yine
   // denenir (bkz. _ensurePlaying).
-  static const Duration _readyTimeout = Duration(milliseconds: 1500);
+  // Dokunma→ses gecikmesi: motor "ready" sinyalini beklemeden play() çağrılır.
+  // Yalnızca geri dönüş/timeout için kısa bir üst sınır tutulur.
+  static const Duration _readyTimeout = Duration(milliseconds: 250);
 
   List<Track> get tracks => _queue;
   int get index => _index;
@@ -296,6 +298,16 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   Future<void> _ensurePlaying(int transition, int generation) async {
     if (_isStale(transition, generation)) return;
+    // Önce play(): ExoPlayer/AVPlayer açılan kaynağı tamponlarken de play()
+    // çağrısını kabul eder. "ready" beklemek 1.5 sn'ye kadar gecikme
+    // yaratıyordu; kullanıcı dokunduğunda sesin hemen başlaması için motor
+    // hazır sinyalini beklemeden ilk play() yapılır.
+    try {
+      await _player.play();
+      return;
+    } catch (_) {
+      // Bazı motorlar open() hemen sonrasında play()'i reddeder.
+    }
     final status = _player.status;
     if (status != PlaybackStatus.ready && status != PlaybackStatus.buffering) {
       try {
@@ -308,17 +320,13 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
             )
             .timeout(_readyTimeout);
       } catch (_) {
-        // Motor hazır sinyali göndermese de play() denenmelidir.
+        // Motor hazır sinyali göndermese de ikinci play() denenmelidir.
       }
     }
     if (_isStale(transition, generation)) return;
     try {
       await _player.play();
-    } catch (_) {
-      // Bazı motorlar open() hemen sonrasında play()'i reddeder.
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      if (!_isStale(transition, generation)) await _player.play();
-    }
+    } catch (_) {}
   }
 
   /// AudioBlocked/stream hatasında: bir kez forceDirect, sonra alternatif
@@ -612,6 +620,17 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   Future<void> extendRadio() => _extendRadio();
 
+  /// Kitaplıktan yerel çalma sırasına parça ekler (oda dışı kullanım).
+  Future<void> addToQueue(Track track) async {
+    if (track.id.isEmpty || _queue.length >= _maxQueueLength) return;
+    if (_queue.any((item) => item.id == track.id)) return;
+    final next = List<Track>.from(_queue)..add(track);
+    _queue = List<Track>.unmodifiable(next);
+    _originalQueue = List<Track>.unmodifiable([..._originalQueue, track]);
+    _publishQueue();
+    notifyListeners();
+  }
+
   Future<void> _onPlaybackError(Object error) async {
     if (kDebugMode) debugPrint('CT playback error: $error');
     if (_recovering || _loading || _error != null || current == null) return;
@@ -678,6 +697,10 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   @override
   Future<void> seek(Duration position) => _player.seek(position);
+
+  /// Oda senkronunun mikro kayma düzeltmesi. Normal çalmada 1.0 kalır.
+  @override
+  Future<void> setSpeed(double rate) => _player.setSpeed(rate);
 
   void setRadioMode(bool value) {
     if (_radioMode == value) return;

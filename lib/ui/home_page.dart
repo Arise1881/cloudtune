@@ -852,7 +852,7 @@ class _HomePageState extends State<HomePage> {
             onPressed: () => _onNavTap(SearchNavBar.search),
           ),
           IconButton(
-            tooltip: 'Odalar',
+            tooltip: 'Odalar (Beta)',
             icon: const Icon(Icons.groups_outlined),
             onPressed: () => _openRooms(),
           ),

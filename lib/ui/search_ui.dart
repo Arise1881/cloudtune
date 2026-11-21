@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../core/app_palette.dart';
 import '../core/models.dart';
 import '../core/theme_state.dart';
+import 'cover_image.dart';
 
 /// Müsify benzeri arama ekranının sabitleri ve saf yardımcıları.
 class SearchUi {
@@ -252,18 +253,11 @@ class SearchTrackCard extends StatelessWidget {
             Stack(
               alignment: Alignment.bottomLeft,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: CachedNetworkImage(
-                    imageUrl: track.thumb,
-                    width: 60,
-                    height: 60,
-                    fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) => Container(
-                      color: AppPalette.card,
-                      child: const Icon(Icons.music_note, size: 34),
-                    ),
-                  ),
+                CoverImage(
+                  url: track.thumb,
+                  width: 60,
+                  height: 60,
+                  iconSize: 34,
                 ),
                 Container(
                   margin: const EdgeInsets.only(left: 2, bottom: 2),
@@ -362,56 +356,70 @@ class SearchNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppPalette.surface,
-        border: Border(top: BorderSide(color: AppPalette.divider)),
-      ),
-      child: Row(
-        children: [
-          _item(Icons.home, 'Home', home),
-          _item(Icons.search, 'Search', search),
-          _item(Icons.library_music, 'Library', library),
-          _item(Icons.settings_outlined, 'Settings', settings),
-        ],
+    // SafArea yalnızca altı korur: üstteki içerik zaten kendi SafeArea'sında.
+    // Gesture navigation kullanan cihazlarda viewPadding.bottom=0 olur,
+    // 3 tuşlu cihazlarda ise ikonlar sistem çubuğunun üstüne taşmaz.
+    return SafeArea(
+      top: false,
+      bottom: true,
+      maintainBottomViewPadding: true,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppPalette.surface,
+          border: Border(top: BorderSide(color: AppPalette.divider)),
+        ),
+        child: Row(
+          children: [
+            _item(context, Icons.home, 'Home', home),
+            _item(context, Icons.search, 'Search', search),
+            _item(context, Icons.library_music, 'Library', library),
+            _item(context, Icons.settings_outlined, 'Settings', settings),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _item(IconData icon, String label, int value) {
+  Widget _item(BuildContext context, IconData icon, String label, int value) {
     final active = value == selected;
+    // Dar ekranlarda ikon/yazı küçülür; geniş tabletlerde büyür.
+    final width = MediaQuery.sizeOf(context).width;
+    final compact = width < 360;
+    final wide = width >= 600;
+    final iconSize = compact ? 18.0 : (wide ? 22.0 : 20.0);
+    final labelSize = compact ? 9.0 : (wide ? 11.0 : 10.0);
+    final pillPadding = compact ? 12.0 : (wide ? 20.0 : 17.0);
     return Expanded(
       child: InkWell(
         onTap: () => onTap(value),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 7),
+          padding: EdgeInsets.symmetric(vertical: compact ? 5 : 7),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (active)
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 17,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: pillPadding,
                     vertical: 3,
                   ),
                   decoration: BoxDecoration(
                     color: SearchUi.activeAccent,
                     borderRadius: BorderRadius.circular(18),
                   ),
-                  child:
-                      Icon(icon, size: 20, color: Colors.white),
+                  child: Icon(icon, size: iconSize, color: Colors.white),
                 )
               else
                 SizedBox(
-                  height: 26,
-                  child: Icon(icon, size: 20, color: AppPalette.iconSubtle),
+                  height: iconSize + 6,
+                  child: Icon(icon, size: iconSize, color: AppPalette.iconSubtle),
                 ),
               const SizedBox(height: 2),
               Text(
                 label,
                 style: TextStyle(
                   color: active ? SearchUi.activeAccent : AppPalette.iconSubtle,
-                  fontSize: 10,
+                  fontSize: labelSize,
                   fontWeight: active ? FontWeight.w800 : FontWeight.w500,
                 ),
               ),

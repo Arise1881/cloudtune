@@ -1,7 +1,6 @@
 // ignore_for_file: avoid_dynamic_calls
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:cloudtune/core/app_palette.dart';
 
@@ -9,6 +8,7 @@ import '../core/models.dart';
 import '../core/player_controller.dart';
 import '../core/theme_state.dart';
 import '../core/youtube_service.dart';
+import '../ui/cover_image.dart';
 import '../ui/track_tile.dart';
 import 'artist_page.dart';
 import 'playlist_editor_page.dart';
@@ -237,11 +237,13 @@ class _Header extends StatelessWidget {
               clipBehavior: Clip.antiAlias,
               child: cover == null
                   ? Icon(Icons.queue_music, size: 64, color: accent)
-                  : CachedNetworkImage(
-                      imageUrl: cover!,
+                  : CoverImage(
+                      url: cover!,
+                      width: 168,
+                      height: 168,
+                      borderRadius: 0,
                       fit: BoxFit.cover,
-                      errorWidget: (_, __, ___) =>
-                          Icon(Icons.queue_music, size: 64, color: accent),
+                      iconSize: 64,
                     ),
             ),
           ),

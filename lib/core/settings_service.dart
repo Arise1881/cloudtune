@@ -12,8 +12,9 @@ class SettingsService extends ChangeNotifier {
   SharedPreferences? _prefs;
   bool _ready = false;
 
-  String _audioQuality = 'high';
-  bool _equalizerEnabled = false;
+  // Varsayılanlar: en yüksek ses kalitesi + ekolayzer açık, "normal" önayar.
+  String _audioQuality = 'veryhigh';
+  bool _equalizerEnabled = true;
   String _equalizerPreset = 'normal';
   bool _oledBlack = false;
   ThemeMode _themeMode = ThemeMode.dark;
@@ -102,8 +103,8 @@ class SettingsService extends ChangeNotifier {
     try {
       _prefs = await SharedPreferences.getInstance();
       final prefs = _prefs!;
-      _audioQuality = prefs.getString('ct.audioQuality') ?? 'high';
-      _equalizerEnabled = prefs.getBool('ct.equalizer') ?? false;
+      _audioQuality = prefs.getString('ct.audioQuality') ?? 'veryhigh';
+      _equalizerEnabled = prefs.getBool('ct.equalizer') ?? true;
       _equalizerPreset = prefs.getString('ct.equalizerPreset') ?? 'normal';
       _oledBlack = prefs.getBool('ct.oledBlack') ?? false;
       _themeMode = _decodeThemeMode(prefs.getString('ct.themeMode'));
@@ -210,8 +211,8 @@ class SettingsService extends ChangeNotifier {
     final service = instance;
     service._ready = false;
     service._prefs = null;
-    service._audioQuality = 'high';
-    service._equalizerEnabled = false;
+    service._audioQuality = 'veryhigh';
+    service._equalizerEnabled = true;
     service._equalizerPreset = 'normal';
     service._oledBlack = false;
     service._themeMode = ThemeMode.dark;

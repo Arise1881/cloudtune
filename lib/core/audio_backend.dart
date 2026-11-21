@@ -37,6 +37,9 @@ abstract class AudioBackend {
     Object? tag,
   });
   Future<void> setVolume(double value);
+
+  /// Oda senkronunda küçük konum farklarını yumuşatmak için hız ayarı.
+  Future<void> setSpeed(double value);
   Future<void> play();
   Future<void> pause();
   Future<void> seek(Duration position);
@@ -145,6 +148,9 @@ class JustAudioBackend implements AudioBackend {
 
   @override
   Future<void> setVolume(double value) => _player.setVolume(value);
+
+  @override
+  Future<void> setSpeed(double value) => _player.setSpeed(value);
 
   @override
   Future<void> play() => _player.play();
@@ -287,6 +293,10 @@ class MediaKitAudioBackend implements AudioBackend {
   @override
   Future<void> setVolume(double value) =>
       _player.setVolume(value.clamp(0.0, 1.0).toDouble() * 100);
+
+  @override
+  Future<void> setSpeed(double value) =>
+      _player.setRate(value.clamp(0.5, 2.0).toDouble());
 
   @override
   Future<void> play() => _player.play();

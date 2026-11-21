@@ -11,12 +11,23 @@ import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
+/// Birincil manifest adresi (eski sürümlerin de kullandığı sabit URL).
 const String kUpdateManifestUrl =
     'https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/update.json';
+
+/// Yedek adresler: raw CDN arızalanırsa veya 5 dk'lık cache bayatsa devreye girer.
+const List<String> kUpdateManifestFallbacks = <String>[
+  'https://arise1881.github.io/cloudtune-dist/update.json',
+  'https://cloudtune.app/update.json',
+];
+
 const String kSourceUrl =
     'altstore://source?url=https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/apps.json';
 
-enum UpdatePlatform { android, linux, ios, unknown }
+/// Açık uygulamanın kendiliğinden yeni sürümü fark etmesi için kontrol aralığı.
+const Duration kUpdateCheckInterval = Duration(hours: 6);
+
+enum UpdatePlatform { android, linux, windows, ios, unknown }
 
 class UpdateInfo {
   final String version;
@@ -27,6 +38,7 @@ class UpdateInfo {
   final String? androidX64Url;
   final String? androidUniversalUrl;
   final String? linuxDebUrl;
+  final String? windowsZipUrl;
   final String? iosSourceUrl;
 
   const UpdateInfo({
@@ -38,16 +50,21 @@ class UpdateInfo {
     this.androidX64Url,
     this.androidUniversalUrl,
     this.linuxDebUrl,
+    this.windowsZipUrl,
     this.iosSourceUrl,
   });
 }
 
 /// Fetches the published manifest, compares versions and installs an APK.
-class UpdateService extends ChangeNotifier {
-  UpdateService._();
+class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
+  UpdateService._() {
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   static final UpdateService instance = UpdateService._();
 
+  Timer? _periodicCheck;
+  DateTime? _lastCheck;
   bool _checking = false;
   bool _downloading = false;
   double _downloadProgress = 0;
@@ -56,7 +73,9 @@ class UpdateService extends ChangeNotifier {
   String? _error;
   UpdateInfo? _latest;
   String _installedVersion = '0.0.0';
+  int _installedBuild = 0;
   String? _preparedApkPath;
+  String? _preparedVersion;
 
   bool get checking => _checking;
   bool get downloading => _downloading;
@@ -70,32 +89,75 @@ class UpdateService extends ChangeNotifier {
   UpdatePlatform get platform => switch (Platform.operatingSystem) {
         'android' => UpdatePlatform.android,
         'linux' => UpdatePlatform.linux,
+        'windows' => UpdatePlatform.windows,
         'ios' => UpdatePlatform.ios,
         _ => UpdatePlatform.unknown,
       };
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final last = _lastCheck;
+    // Uygulama uzun süre kapalı kaldıysa açılır açılmaz yeniden bak; aksi
+    // halde son kontrolün üzerinden 6 saatten fazla geçtiyse kontrol et.
+    if (last == null || DateTime.now().difference(last) >= kUpdateCheckInterval) {
+      unawaited(checkForUpdate());
+    }
+  }
 
   Future<void> init() async {
     try {
       final info = await PackageInfo.fromPlatform();
       _installedVersion = info.version;
+      _installedBuild = int.tryParse(info.buildNumber) ?? 0;
     } catch (_) {}
+    _periodicCheck?.cancel();
+    _periodicCheck = Timer.periodic(kUpdateCheckInterval, (_) {
+      unawaited(checkForUpdate());
+    });
     unawaited(checkForUpdate());
   }
 
+  /// Yeni sürüm karşılaştırması hem semver hem build numarasını dikkate alır.
+  /// Eski istemciler yalnızca `version` alanını okur; o alanı daima artırıyoruz.
+  bool _isNewer(UpdateInfo info) {
+    final byVersion = _cmpVersion(info.version, _installedVersion);
+    if (byVersion != 0) return byVersion > 0;
+    if (info.versionCode > 0 && _installedBuild > 0) {
+      return info.versionCode > _installedBuild;
+    }
+    return false;
+  }
+
   Future<void> checkForUpdate({bool force = false}) async {
+    if (_checking) return;
     if (force || !_updateAvailable) {
       _checking = true;
       _error = null;
     }
+    _lastCheck = DateTime.now();
     try {
       final manifest = await _fetchManifest();
       _latest = manifest;
       _latestVersion = manifest.version;
-      _updateAvailable = _cmpVersion(manifest.version, _installedVersion) > 0;
+      _updateAvailable = _isNewer(manifest);
+      // Yeni sürüm geldiyse önceki sürümden kalan APK'yı geçersiz kıl.
+      if (_preparedApkPath != null && _preparedVersion != manifest.version) {
+        final old = File(_preparedApkPath!);
+        _preparedApkPath = null;
+        _preparedVersion = null;
+        try {
+          if (await old.exists()) await old.delete();
+        } catch (_) {}
+      }
+      _error = null;
     } catch (e) {
       // Background failures are stored only; no error text is shown.
       _error = e.toString();
-      _updateAvailable = false;
+      // Son başarılı manifest varsa bayrağı kapatmayalım; geçici CDN hatası
+      // kullanıcıda "güncelleme yok" yanılgısı yaratmasın.
+      final cached = _latest;
+      if (cached != null) _updateAvailable = _isNewer(cached);
     } finally {
       _checking = false;
       notifyListeners();
@@ -103,13 +165,29 @@ class UpdateService extends ChangeNotifier {
   }
 
   Future<UpdateInfo> _fetchManifest() async {
-    final response = await http
-        .get(Uri.parse(kUpdateManifestUrl))
-        .timeout(const Duration(seconds: 15));
-    if (response.statusCode != 200) {
-      throw StateError('update check failed (${response.statusCode})');
+    final urls = <String>[kUpdateManifestUrl, ...kUpdateManifestFallbacks];
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    Object? lastError;
+    for (final base in urls) {
+      try {
+        // Cache-buster: raw GitHub 5 dk, Pages 10 dk önbelleğe alıyor.
+        final uri = Uri.parse(base).replace(
+          queryParameters: <String, String>{'t': '$stamp'},
+        );
+        final response = await http.get(uri).timeout(const Duration(seconds: 12));
+        if (response.statusCode != 200) {
+          throw StateError('update check failed (${response.statusCode})');
+        }
+        return _parseManifest(response.body);
+      } catch (e) {
+        lastError = e;
+      }
     }
-    final data = jsonDecode(response.body);
+    throw lastError ?? StateError('update check failed');
+  }
+
+  static UpdateInfo _parseManifest(String body) {
+    final data = jsonDecode(body);
     if (data is! Map<String, dynamic>) {
       throw const FormatException('invalid update manifest');
     }
@@ -123,6 +201,7 @@ class UpdateService extends ChangeNotifier {
       androidX64Url: platforms['android-x86_64'] as String?,
       androidUniversalUrl: platforms['android-universal'] as String?,
       linuxDebUrl: platforms['linux'] as String?,
+      windowsZipUrl: platforms['windows'] as String?,
       iosSourceUrl: platforms['ios'] as String?,
     );
   }
@@ -154,6 +233,7 @@ class UpdateService extends ChangeNotifier {
     final path = await _download(url, 'cloudtune_update_${info.version}.apk');
     if (path == null) return null;
     _preparedApkPath = path;
+    _preparedVersion = info.version;
     notifyListeners();
     return path;
   }
@@ -162,20 +242,44 @@ class UpdateService extends ChangeNotifier {
     final info = _latest;
     if (info == null) return 'Güncelleme bilgisi yok.';
 
+    if (platform == UpdatePlatform.ios) {
+      // iOS'ta doğrudan APK kurulamaz; AltStore kaynağını açıyoruz.
+      final url = info.iosSourceUrl ?? kSourceUrl;
+      final result = await OpenFilex.open(url);
+      return result.type == ResultType.done
+          ? 'AltStore kaynağı açıldı.'
+          : 'Kaynak açılamadı: $url';
+    }
+
+    final isLinux = platform == UpdatePlatform.linux;
+    final isWindows = platform == UpdatePlatform.windows;
+    final url = isWindows
+        ? info.windowsZipUrl
+        : (isLinux ? info.linuxDebUrl : _androidApkUrl);
+    if (url == null) return 'Bu platform için güncelleme bağlantısı yok.';
+
     var path = _preparedApkPath;
-    if (path == null) {
-      final url = _androidApkUrl;
-      if (url == null) return 'Android için güncelleme bağlantısı yok.';
-      path = await _download(url, 'cloudtune_update.apk');
+    if (path == null || _preparedVersion != info.version) {
+      final name = isWindows
+          ? 'CloudTune-${info.version}-windows.zip'
+          : (isLinux
+              ? 'cloudtune_${info.version}_${info.versionCode}_amd64.deb'
+              : 'cloudtune_update.apk');
+      path = await _download(url, name);
       if (path == null) return 'İndirme başarısız.';
       _preparedApkPath = path;
+      _preparedVersion = info.version;
     }
 
     final result = await OpenFilex.open(path);
     if (result.type != ResultType.done) {
       return 'Kurulum başlatılamadı. Dosya: $path';
     }
-    return 'İndirildi. Kurulum izninizi verin.';
+    return isWindows
+        ? 'Windows paketi indirildi. ZIP içindeki cloudtune.exe ile temiz kurulum yapın.'
+        : (isLinux
+            ? 'Paket indirildi. Kurulumu onaylayın.'
+            : 'İndirildi. Kurulum izninizi verin.');
   }
 
   Future<String?> _download(String url, String fileName) async {
