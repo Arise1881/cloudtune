@@ -27,6 +27,11 @@ const String kSourceUrl =
 /// Açık uygulamanın kendiliğinden yeni sürümü fark etmesi için kontrol aralığı.
 const Duration kUpdateCheckInterval = Duration(hours: 6);
 
+/// Uygulama arka plandan öne döndüğünde manifest'i tekrar sorma eşiği.
+/// 6 saatlik periyodik kontrol, açık kalan cihazda güncellemenin geç
+/// görünmesine yol açıyordu; resume'da 1 dakika yeterli.
+const Duration kResumeCheckInterval = Duration(minutes: 1);
+
 enum UpdatePlatform { android, linux, windows, ios, unknown }
 
 class UpdateInfo {
@@ -98,9 +103,9 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
     final last = _lastCheck;
-    // Uygulama uzun süre kapalı kaldıysa açılır açılmaz yeniden bak; aksi
-    // halde son kontrolün üzerinden 6 saatten fazla geçtiyse kontrol et.
-    if (last == null || DateTime.now().difference(last) >= kUpdateCheckInterval) {
+    // Ön plana her dönüşte (en az 1 dakika arayla) bak: 6 saatlik periyodik
+    // kontrol açık kalan uygulamada güncellemenin geç görünmesine yol açıyordu.
+    if (last == null || DateTime.now().difference(last) >= kResumeCheckInterval) {
       unawaited(checkForUpdate());
     }
   }
