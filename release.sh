@@ -401,15 +401,18 @@ git -c user.name="Arise1881" -c user.email="arise1881@users.noreply.github.com" 
 git push "$(ct_repo_url Arise1881/cloudtune.git)" HEAD 2>&1 | tail -1
 
 # ─── 8c. iOS + Windows CI derlemelerini tetikle ───
+# Kaynak repo özel olduğu için Actions dakikaları faturaya takılıyor. Derleme
+# işleri herkese açık cloudtune-dist deposunda; kaynak kod CT_SOURCE_TOKEN ile
+# checkout edilir, release asset yüklemesi GH_TOKEN ile yapılır.
 echo "── iOS + Windows derlemelerini tetikle ──"
 for wf in ios-build.yml windows-build.yml; do
   CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
     -H "Authorization: token $GH_TOKEN" \
     -H "Accept: application/vnd.github+json" \
-    "https://api.github.com/repos/Arise1881/cloudtune/actions/workflows/$wf/dispatches" \
+    "https://api.github.com/repos/Arise1881/cloudtune-dist/actions/workflows/$wf/dispatches" \
     -d '{"ref":"main"}')
   echo "$wf -> $CODE"
-  [[ "$CODE" =~ ^2 ]] || echo "UYARI: $wf tetiklenemedi (billing olabilir)"
+  [[ "$CODE" =~ ^2 ]] || echo "UYARI: $wf tetiklenemedi"
 done
 
 # ─── 9. Son doğrulama ───
