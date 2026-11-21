@@ -64,6 +64,8 @@ Cihaz üzerinden alınmış güncel görünümler. Büyütmek için görsele tı
 ### Çalma
 - **Doğrudan YouTube** — arama, video/çalma listesi çözümlemesi ve akış cihazda yapılır
 - **Sonsuz radyo** — kuyruk bitmeden ilgili parçalarla genişletilir; tek kaynak düşse de alternatifler denenir
+- **Türkiye radyoları** — radio-browser.info kataloğundaki çalışan istasyonlar; HTTPS/HTTP/HLS akışları, arama, istasyon logoları ve çevrimdışı katalog önbelleği. Ana sayfadaki “Türk radyoları” kartından açılır.
+- **Hızlı dokunma** — görünen kartların ilk saniyesi arka planda tamponlanır; dokunmada hazır motor devreye girer
 - **Tekrar modu** — kapalı / tüm listeyi tekrarla / tek parçayı tekrarla; oynatıcıda döngü ikonuyla değişir
 - **Karışık çal** — kuyruğu karıştırır, ikon anında durumu gösterir
 - **Ses kalitesi** — düşük / orta / yüksek / lossless itag kısıtı; değişimde aktif parça pozisyonu korunarak yeniden açılır
@@ -132,7 +134,7 @@ Loglar yalnızca cihazda `repair_bot_logs.json` dosyasına yazılır; e-posta ve
 ```
 README.md                  Bu dosya: özellikler, kurulum, uyum, güncelleme, gizlilik
 LICENSE                    MIT lisans
-pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.47+248)
+pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.48+249)
 analysis_options.yaml      Dart/Flutter linter kuralları
 .metadata                  Flutter proje metadata
 release.sh                 Build → analyze/test → artifact → GitHub release → push
@@ -263,6 +265,21 @@ flutter build ios --release --no-codesign \
   --obfuscate --split-debug-info=build/ios/symbols  # macOS'ta
 flutter build web --release
 ```
+
+### 3.0.48+249 — Türk radyoları ve anında çalma
+
+- **Tüm Türkiye radyoları:** radio-browser.info canlı kataloğundaki 681
+  çalışan istasyon yüklenir; `lastcheckok` filtresiyle yalnızca erişilebilir
+  istasyonlar gösterilir. Ana sayfadaki “Türk radyoları” kartından aranabilir.
+- **Logo desteği:** katalog favicon'u varsa kullanılır; yoksa istasyon
+  domain favicon'u, o da yoksa katalog logosu gösterilir. Medya bildiriminde
+  ve listede logo görünür.
+- **Akış uyumu:** HTTPS, HTTP ve HLS/M3U8 istasyonları doğrudan akış adresiyle
+  çalınır; Android'de düz metin radyo akışlarına izin verildi.
+- **Dokunma→ses:** görünen parçalar için hazır oynatıcı havuzu (Wi-Fi 10,
+  mobil veri 4) kullanılır. Ölçüm: ilk kart 0,35 sn, üçüncü kart 0,63 sn.
+- Doğrulama: `flutter analyze` 0 issue, `flutter test` 89/89, radio servis
+  testleri 5/5, temiz debug APK derlendi.
 
 ### 3.0.47+248 — oda deneyimi ve ağ optimizasyonu
 

@@ -32,6 +32,13 @@ class AppStrings {
     'playback': 'Çalma',
     'endlessRadio': 'Sonsuz radyo',
     'endlessRadioHint': 'Şarkı bitince benzer parçalarla devam eder.',
+    'turkishRadio': 'Türk radyoları',
+    'turkishRadioHint': 'Tüm Türkiye radyo istasyonları',
+    'radioSearchHint': 'Radyo veya tür ara',
+    'radioRefresh': 'Listeyi yenile',
+    'radioEmpty': 'Radyo bulunamadı.',
+    'radioError': 'Radyo listesi alınamadı.',
+    'radioStations': '{count} istasyon',
     'downloadToDevice': 'Cihaza doğrudan indir',
     'downloadToDeviceHint':
         'İndirilenler Download/CloudTune klasörüne kaydedilir.',
@@ -103,8 +110,16 @@ class AppStrings {
     'playback': 'Playback',
     'endlessRadio': 'Endless radio',
     'endlessRadioHint': 'Keeps playing similar tracks when a song ends.',
+    'turkishRadio': 'Turkish radios',
+    'turkishRadioHint': 'All radio stations in Turkey',
+    'radioSearchHint': 'Search radio or genre',
+    'radioRefresh': 'Refresh list',
+    'radioEmpty': 'No radio stations found.',
+    'radioError': 'Radio list unavailable.',
+    'radioStations': '{count} stations',
     'downloadToDevice': 'Download directly to device',
-    'downloadToDeviceHint': 'Downloads are saved to the Download/CloudTune folder.',
+    'downloadToDeviceHint':
+        'Downloads are saved to the Download/CloudTune folder.',
     'audioQuality': 'Audio quality',
     'qualityLow': 'Low',
     'qualityMedium': 'Medium',
@@ -185,6 +200,14 @@ class AppStrings {
   String get playback => _t('playback');
   String get endlessRadio => _t('endlessRadio');
   String get endlessRadioHint => _t('endlessRadioHint');
+  String get turkishRadio => _t('turkishRadio');
+  String get turkishRadioHint => _t('turkishRadioHint');
+  String get radioSearchHint => _t('radioSearchHint');
+  String get radioRefresh => _t('radioRefresh');
+  String get radioEmpty => _t('radioEmpty');
+  String get radioError => _t('radioError');
+  String radioStations(int count) =>
+      format('radioStations', {'count': '$count'});
   String get downloadToDevice => _t('downloadToDevice');
   String get downloadToDeviceHint => _t('downloadToDeviceHint');
   String get audioQuality => _t('audioQuality');

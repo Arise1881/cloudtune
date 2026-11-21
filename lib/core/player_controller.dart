@@ -121,8 +121,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   /// Kullanıcıya gösterilmeye hazır hata metni. [error] kod olarak kalır;
   /// arayüz bu metni doğrudan gösterebilir.
   String? get errorMessage => switch (_error) {
-        'blocked' =>
-          'YouTube bu parçayı engelliyor. Farklı bir parça deneyin.',
+        'blocked' => 'YouTube bu parçayı engelliyor. Farklı bir parça deneyin.',
         'offline' => 'Bağlantı yok. Parça indirilmediyse çevrimdışı açılamaz.',
         'stream' => 'Ses akışına ulaşılamadı. Tekrar deneyin.',
         _ => null,
@@ -279,7 +278,10 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       _broadcast();
       notifyListeners();
 
-      await _ensurePlaying(transition, generation);
+      // openAndPlay() zaten ilk play()'i gönderdi. Motor PLAYING'e geçmediyse
+      // kısa hazır beklemesiyle ikinci denemeyi yapar; çift play() maliyeti
+      // yalnızca bu nadir yolda oluşur.
+      if (!_player.playing) await _ensurePlaying(transition, generation);
       unawaited(Library.instance.remember(track));
       // İlk tamponun bir kısmı gelir gelmez sonraki parçayı ısıt. 4 sn
       // beklemek radyo geçişinde adresin soğuk kalmasına yol açıyordu;
@@ -313,7 +315,8 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       try {
         await _player.statusStream
             .firstWhere(
-              (s) => s == PlaybackStatus.ready ||
+              (s) =>
+                  s == PlaybackStatus.ready ||
                   s == PlaybackStatus.buffering ||
                   s == PlaybackStatus.completed,
               orElse: () => _player.status,
@@ -412,14 +415,11 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     if (saved != null && File(saved).existsSync()) return Uri.file(saved);
     final direct = track.sourceUrl;
     if (direct != null && direct.isNotEmpty) return Uri.parse(direct);
-    return YoutubeService.instance.audioUri(track.id).timeout(_resolveTimeout);
+    // Prefetch zaten sürüyorsa aynı çözümü bekler; ikinci ağ isteği açılmaz.
+    return YoutubeService.instance.uriFor(track.id).timeout(_resolveTimeout);
   }
 
-  Future<void> _setSource(Uri uri, Duration? resumeAt) async {
-    // Gain'i kaynak değişiminden ÖNCE 1'e sabitle. Oynatma başladıktan sonra
-    // yapılan setVolume() çağrıları bazı cihazlarda AudioTrack'e işlenmiyor;
-    // parça sessiz açılıyor, pause/resume sonrası ses geliyordu.
-    await _player.setVolume(1);
+  Map<String, String> _headersFor(Uri uri) {
     final isYoutube = uri.host.endsWith('googlevideo.com') ||
         uri.host.endsWith('youtube.com');
     // Tarayıcı header'ları yalnızca YouTube hostlarına gönderilir. Doğrudan
@@ -435,14 +435,57 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         'Origin': 'https://www.youtube.com/',
       });
     }
+    return headers;
+  }
+
+  Future<void> _setSource(Uri uri, Duration? resumeAt) async {
+    final headers = _headersFor(uri);
+    // Görünen kartlar arka planda tamponlandıysa dokunmada yalnızca play()
+    // kalır; yeni akışın ilk paketini beklemek 2-3 saniye sürüyordu.
+    if (await _player.openAndPlayIfPrepared(
+      uri,
+      headers: headers,
+      initialPosition: resumeAt,
+      tag: mediaItem.value,
+    )) {
+      return;
+    }
+    // Lazy preparation + play() aynı motor çağrısında: ExoPlayer/AVPlayer
+    // tamponu beklerken medya oturumu zaten PLAYING durumuna geçer.
     await _player
-        .open(
+        .openAndPlay(
           uri,
           headers: headers,
           initialPosition: resumeAt,
           tag: mediaItem.value,
         )
         .timeout(_openTimeout);
+  }
+
+  /// Ana sayfa/arama sonuçlarındaki ilk satırları ses motorunda ısıtır.
+  /// Yalnızca ilk birkaç parça: her hazırlık ek veri ve bellek kullanır.
+  Future<void> prepareVisible(List<Track> tracks) async {
+    if (tracks.isEmpty) return;
+    await _restorePreferences();
+    final limit = YoutubeService.instance.mobileData ? 4 : 10;
+    var prepared = 0;
+    for (final track in tracks) {
+      if (prepared >= limit) break;
+      if (track.id.isEmpty || track.id == current?.id) continue;
+      Uri? uri;
+      try {
+        uri = await _resolveTrack(track);
+      } catch (_) {
+        continue;
+      }
+      unawaited(
+        _player.prepare(
+          uri,
+          headers: _headersFor(uri),
+        ),
+      );
+      prepared++;
+    }
   }
 
   void _onPosition(Duration position) {
@@ -505,9 +548,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         final hasQueuedNext = nextIndex < _queue.length;
         // Radyo önerisi bir ağ isteği; son iki parça kala kuyruğu genişletirken
         // sonraki parçayı bekletme. Yalnızca kuyruk bitmişse beklemek gerekir.
-        if (canExtendRadio &&
-            hasQueuedNext &&
-            nextIndex >= _queue.length - 2) {
+        if (canExtendRadio && hasQueuedNext && nextIndex >= _queue.length - 2) {
           unawaited(_extendRadio());
         }
         if (hasQueuedNext && (_queue[nextIndex].sourceUrl ?? '').isEmpty) {

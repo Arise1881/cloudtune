@@ -97,6 +97,10 @@ class YoutubeService {
   static int invBaseCount({required bool mobileData}) =>
       mobileData ? 2 : _invBases.length;
 
+  /// Arama sonuçları görünürken ısıtılacak adres sayısı. Mobil veride
+  /// istek sayısını sınırlar, Wi-Fi'de dokunma anında çözüm kalmaz.
+  static int prefetchLimit({required bool mobileData}) => mobileData ? 5 : 10;
+
   Duration get searchTtl => searchTtlFor(mobileData: _mobileData);
 
   List<String> get _activeInvBases => _invBases
@@ -109,7 +113,8 @@ class YoutubeService {
       final initial = await connectivity.checkConnectivity();
       _setConnectivity(initial);
       await _connectivitySub?.cancel();
-      _connectivitySub = connectivity.onConnectivityChanged.listen(_setConnectivity);
+      _connectivitySub =
+          connectivity.onConnectivityChanged.listen(_setConnectivity);
     } catch (_) {
       _mobileData = false;
     }
@@ -129,9 +134,15 @@ class YoutubeService {
   final Map<String, Uri> _cache = {};
   final Map<String, DateTime> _cachedAt = {};
   final Map<String, DateTime> _uriCheckedAt = {};
+
+  /// Aynı parça için prefetch ve oynatma tek URI çözümünü paylaşır. Böylece
+  /// dokunma anında prefetch sürüyorsa ikinci ağ isteği açılmaz; oynatma
+  /// doğrudan bekleyen future'a bağlanır.
+  final Map<String, Future<Uri>> _resolving = {};
   final Map<String, String> _playability = {};
   final Map<String, _CachedSearch> _searchCache = {};
   final Map<String, List<Track>> _relatedCache = {};
+
   /// Null ise SettingsService değeri kullanılır; aksi halde kullanıcı
   /// [setQuality] ile servis seviyesinde kaliteyi değiştirmiştir.
   String? _qualityOverride;
@@ -231,9 +242,8 @@ class YoutubeService {
     String? coverUrl;
     final thumbs = m['videoThumbnails'] ?? m['thumbnails'];
     if (thumbs is List) {
-      String urlOf(dynamic t) => t is Map
-          ? (t['url']?.toString() ?? '')
-          : (t is String ? t : '');
+      String urlOf(dynamic t) =>
+          t is Map ? (t['url']?.toString() ?? '') : (t is String ? t : '');
       for (final quality in const ['medium', 'high', 'standard', 'default']) {
         for (final t in thumbs) {
           if (t is! Map || t['quality']?.toString() != quality) continue;
@@ -291,8 +301,7 @@ class YoutubeService {
     final key = q.toLowerCase();
     if (!refresh) {
       final cached = _searchCache[key];
-      if (cached != null &&
-          DateTime.now().difference(cached.at) <= searchTtl) {
+      if (cached != null && DateTime.now().difference(cached.at) <= searchTtl) {
         return cached.results.take(limit).toList();
       }
     }
@@ -456,7 +465,8 @@ class YoutubeService {
       final title = data['title']?.toString().trim() ?? '';
       if (title.isNotEmpty) {
         final author = data['author']?.toString().trim() ?? '';
-        final rawThumb = data['thumbnailUrl'] ?? data['thumbnail'] ?? data['image'];
+        final rawThumb =
+            data['thumbnailUrl'] ?? data['thumbnail'] ?? data['image'];
         String? thumb;
         if (rawThumb is String && rawThumb.isNotEmpty) {
           thumb = rawThumb;
@@ -742,12 +752,10 @@ class YoutubeService {
   Future<bool> _isUriUsable(Uri uri) async {
     if (uri.host.endsWith('googlevideo.com')) return true;
     try {
-      final response = await http
-          .get(
-            uri,
-            headers: const <String, String>{'Range': 'bytes=0-0'},
-          )
-          .timeout(_requestTimeout);
+      final response = await http.get(
+        uri,
+        headers: const <String, String>{'Range': 'bytes=0-0'},
+      ).timeout(_requestTimeout);
       return !_staleUriStatuses.contains(response.statusCode);
     } catch (_) {
       return true;
@@ -761,18 +769,48 @@ class YoutubeService {
     _cache.clear();
     _cachedAt.clear();
     _uriCheckedAt.clear();
+    _resolving.clear();
     _playability.clear();
     clearSearchCache();
+  }
+
+  /// Aynı parçanın çözümünü paylaşır: arka plandaki prefetch ile kullanıcı
+  /// dokunması aynı future'ı bekler. İkinci YouTube isteği açılmaz.
+  Future<Uri> uriFor(String id) {
+    final running = _resolving[id];
+    if (running != null) return running;
+    late final Future<Uri> future;
+    future = audioUri(id).whenComplete(() {
+      if (identical(_resolving[id], future)) _resolving.remove(id);
+    });
+    _resolving[id] = future;
+    return future;
   }
 
   /// Sonraki parçanın adresini arka planda ısıtır.
   Future<void> prefetch(String id) async {
     if (id.isEmpty || _cached(id) != null) return;
     try {
-      await audioUri(id);
+      await uriFor(id);
     } catch (_) {
       // Sessiz: kullanıcıya bağlantı bilgisi gösterilmez.
     }
+  }
+
+  /// Görünen arama/ liste satırlarını sınırlı sayıda ısıtır.
+  Future<void> prefetchVisible(Iterable<String> ids) async {
+    final targets = <String>{};
+    for (final id in ids) {
+      if (id.isEmpty || _cached(id) != null) continue;
+      targets.add(id);
+    }
+    final limit = prefetchLimit(mobileData: mobileData);
+    final selected = targets.take(limit).toList(growable: false);
+    if (selected.isEmpty) return;
+    await Future.wait(
+      selected.map(prefetch),
+      eagerError: false,
+    );
   }
 
   /// Çözülmüş akış adresi. Önbellekte varsa doğrulayıp kullanır,
@@ -949,8 +987,7 @@ class YoutubeService {
       final streaming = data['streamingData'];
       if (streaming is! Map) return null;
       final formats = <Map>[
-        ...(streaming['adaptiveFormats'] as List? ?? const [])
-            .whereType<Map>(),
+        ...(streaming['adaptiveFormats'] as List? ?? const []).whereType<Map>(),
         ...(streaming['formats'] as List? ?? const []).whereType<Map>(),
       ];
       return await _pickAudioUri(formats, spec);

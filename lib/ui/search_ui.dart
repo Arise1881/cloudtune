@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../core/app_palette.dart';
 import '../core/models.dart';
 import '../core/theme_state.dart';
+import '../core/youtube_service.dart';
 import 'cover_image.dart';
 
 /// Müsify benzeri arama ekranının sabitleri ve saf yardımcıları.
@@ -158,8 +161,8 @@ class SearchSectionTitle extends StatelessWidget {
           if (onDownload != null)
             IconButton(
               tooltip: 'Tümünü indir',
-              icon: Icon(Icons.download_for_offline,
-                  color: SearchUi.titleAccent),
+              icon:
+                  Icon(Icons.download_for_offline, color: SearchUi.titleAccent),
               onPressed: onDownload,
             ),
         ],
@@ -244,7 +247,10 @@ class SearchTrackCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Parmak yüzeyden kalkmadan önce adres çözümünü başlat; dokunma→ses
+    // gecikmesindeki en büyük ağ turu bu şekilde gizlenir.
     return InkWell(
+      onTapDown: (_) => unawaited(YoutubeService.instance.prefetch(track.id)),
       onTap: () => onAction('play'),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 6, 6, 6),
@@ -316,7 +322,8 @@ class SearchTrackCard extends StatelessWidget {
               onSelected: onAction,
               itemBuilder: (_) => [
                 const PopupMenuItem(value: 'play', child: Text('Çal')),
-                const PopupMenuItem(value: 'radio', child: Text('Radyo başlat')),
+                const PopupMenuItem(
+                    value: 'radio', child: Text('Radyo başlat')),
                 PopupMenuItem(
                   value: 'like',
                   child: Text(liked ? 'Beğeniyi kaldır' : 'Beğen'),
@@ -412,7 +419,8 @@ class SearchNavBar extends StatelessWidget {
               else
                 SizedBox(
                   height: iconSize + 6,
-                  child: Icon(icon, size: iconSize, color: AppPalette.iconSubtle),
+                  child:
+                      Icon(icon, size: iconSize, color: AppPalette.iconSubtle),
                 ),
               const SizedBox(height: 2),
               Text(

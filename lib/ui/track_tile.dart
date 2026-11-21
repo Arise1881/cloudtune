@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloudtune/core/app_palette.dart';
 
@@ -6,10 +8,12 @@ import '../core/library.dart';
 import '../core/models.dart';
 import '../core/player_controller.dart';
 import '../core/theme_state.dart';
+import '../core/youtube_service.dart';
 import 'cover_image.dart';
 
 List<Track> _artistTracks(List<Track> queue, Track track) {
-  final sameArtist = queue.where((item) => item.artist == track.artist).toList();
+  final sameArtist =
+      queue.where((item) => item.artist == track.artist).toList();
   return sameArtist.isEmpty ? <Track>[track] : sameArtist;
 }
 
@@ -115,8 +119,8 @@ class TrackTile extends StatelessWidget {
             if (context.mounted) {
               messenger?.showSnackBar(
                 SnackBar(
-                  content:
-                      Text('"$name" listesine ${targets.length} parça kaydedildi.'),
+                  content: Text(
+                      '"$name" listesine ${targets.length} parça kaydedildi.'),
                 ),
               );
             }
@@ -136,37 +140,45 @@ class TrackTile extends StatelessWidget {
           }
           if (context.mounted) {
             messenger?.showSnackBar(
-              SnackBar(content: Text('$saved/${targets.length} parça indirildi.')),
+              SnackBar(
+                  content: Text('$saved/${targets.length} parça indirildi.')),
             );
           }
         }
 
-        return ListTile(
-          onTap: () => player.playQueue(queue, index),
-          onLongPress: () => showActions(context),
-          leading: CoverImage(
-            url: track.thumb,
-            width: 52,
-            height: 52,
-            borderRadius: 6,
-            iconSize: 36,
-          ),
-          title: Text(
-            track.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: titleStyle,
-          ),
-          subtitle: onArtistTap == null
-              ? artist
-              : GestureDetector(onTap: onArtistTap, child: artist),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (trailing != null) trailing!,
-              if (trailing == null) _LikeButton(track: track),
-              _MoreButton(onTap: showActions),
-            ],
+        // Dokunma sinyali ListTile'a gitmeden önce adresi ısıt; çözüm ağda
+        // sürerken kullanıcı parmak kaldırana kadar zaman kazanılır.
+        return Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) =>
+              unawaited(YoutubeService.instance.prefetch(track.id)),
+          child: ListTile(
+            onTap: () => player.playQueue(queue, index),
+            onLongPress: () => showActions(context),
+            leading: CoverImage(
+              url: track.thumb,
+              width: 52,
+              height: 52,
+              borderRadius: 6,
+              iconSize: 36,
+            ),
+            title: Text(
+              track.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: titleStyle,
+            ),
+            subtitle: onArtistTap == null
+                ? artist
+                : GestureDetector(onTap: onArtistTap, child: artist),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (trailing != null) trailing!,
+                if (trailing == null) _LikeButton(track: track),
+                _MoreButton(onTap: showActions),
+              ],
+            ),
           ),
         );
       },

@@ -89,4 +89,10 @@ void main() {
     expect(YoutubeService.invBaseCount(mobileData: false), 4);
     expect(YoutubeService.invBaseCount(mobileData: true), 2);
   });
+
+  test('dokunma gecikmesi için görünür adres prefetch sınırı ağa göre ayarlı',
+      () {
+    expect(YoutubeService.prefetchLimit(mobileData: false), 10);
+    expect(YoutubeService.prefetchLimit(mobileData: true), 5);
+  });
 }

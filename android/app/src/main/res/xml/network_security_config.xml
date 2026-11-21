@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Uygulamadaki akış uç noktaları HTTPS/wss; genel düz metin kapalı. -->
-    <base-config cleartextTrafficPermitted="false" />
-    <!-- Yalnızca http davet bağlantısı için istisna. Deep-link dispatch NSC'ye
-         tabi değildir; yine de aynı host üzerinden yapılacak istekler kırılmaz. -->
+    <!-- İnternet radyolarının çoğu hâlâ http akışı kullanıyor. Dinleyebilmek
+         için düz metin akışlara izin verilir; kontrol/API çağrıları HTTPS. -->
+    <base-config cleartextTrafficPermitted="true" />
+    <!-- http davet bağlantısı da aynı host üzerinden sorunsuz açılsın. -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">cloudtune.app</domain>
     </domain-config>

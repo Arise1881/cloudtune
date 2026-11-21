@@ -19,10 +19,12 @@ import '../core/speech_service.dart';
 import '../core/theme_state.dart';
 import '../core/update_service.dart';
 import '../core/youtube_service.dart';
+import '../l10n/app_strings.dart';
 import '../screens/artist_page.dart';
 import '../screens/downloads_page.dart';
 import '../screens/my_playlists_page.dart';
 import '../screens/playlist_page.dart';
+import '../screens/radio_page.dart';
 import '../screens/room_page.dart';
 import '../screens/settings_screen.dart';
 import 'mini_player.dart';
@@ -67,7 +69,8 @@ class _HomePageState extends State<HomePage> {
   bool _showHistory = false;
   // Temiz kurulum deneyimi: uygulama açılınca doğrudan ana sayfa görünür.
   int _tab = SearchNavBar.home;
-  bool _prefetched = false;
+  final Set<String> _prefetchedFeeds = <String>{};
+  static const int _maxPrefetchedFeeds = 2;
   bool _speechReady = false;
   bool _speechBusy = false;
   bool _voiceSubmitDone = false;
@@ -219,7 +222,7 @@ class _HomePageState extends State<HomePage> {
     if (isPlaylist) {
       final saved = Library.instance.getPlaylist(query);
       if (saved.isNotEmpty) {
-        _prefetchOnce(saved.first.id);
+        _prefetchFeed('playlist:$query', saved);
         return saved;
       }
       return YoutubeService.instance.search(
@@ -234,14 +237,29 @@ class _HomePageState extends State<HomePage> {
       limit: 15,
       refresh: refresh,
     );
-    if (tracks.isNotEmpty) _prefetchOnce(tracks.first.id);
+    if (tracks.isNotEmpty) _prefetchFeed('query:$query', tracks);
     return tracks;
   }
 
-  void _prefetchOnce(String id) {
-    if (_prefetched) return;
-    _prefetched = true;
-    unawaited(YoutubeService.instance.prefetch(id));
+  void _prefetchFeed(String key, List<Track> tracks) {
+    if (_prefetchedFeeds.contains(key) ||
+        _prefetchedFeeds.length >= _maxPrefetchedFeeds) {
+      return;
+    }
+    _prefetchedFeeds.add(key);
+    // URI ısıtması tüm feed'lerde ucuz; ses motoru tamponu ise yalnızca
+    // ekranda görünen bölüm için yapılır. Aksi halde ilk feed havuzu doldurup
+    // kullanıcının gördüğü kartlar tamponlanmadan kalıyordu.
+    unawaited(
+      YoutubeService.instance.prefetchVisible(tracks.map((t) => t.id)),
+    );
+  }
+
+  /// Ana sayfadaki yatay kartlar da dokunma anında adres çözümü beklemesin.
+  void _prefetchHomeCards(List<Track> history, List<Track> saved) {
+    final cards = <Track>[...history, ...saved];
+    unawaited(YoutubeService.instance.prefetchVisible(cards.map((t) => t.id)));
+    unawaited(PlayerController.instance.prepareVisible(cards));
   }
 
   String get _greeting {
@@ -307,6 +325,12 @@ class _HomePageState extends State<HomePage> {
       );
       if (!mounted || generation != _searchGeneration) return;
       setState(() => _results = found);
+      // Sonuçlar ekrana gelir gelmez ilk satırların adreslerini ısıt; kullanıcı
+      // hemen dokunduğunda URI çözümü ağ turunda beklemez.
+      unawaited(
+        YoutubeService.instance.prefetchVisible(found.map((t) => t.id)),
+      );
+      unawaited(PlayerController.instance.prepareVisible(found));
       if (found.isEmpty) _toast('Sonuç bulunamadı.');
       await Library.instance.addSearchHistory(value);
 
@@ -574,9 +598,8 @@ class _HomePageState extends State<HomePage> {
     try {
       if (!_speechReady) {
         try {
-          _speechReady = await _speech
-              .initialize()
-              .timeout(const Duration(seconds: 6));
+          _speechReady =
+              await _speech.initialize().timeout(const Duration(seconds: 6));
         } on TimeoutException {
           _voiceError('Sesli arama şu an kullanılamıyor.');
           return;
@@ -949,9 +972,8 @@ class _HomePageState extends State<HomePage> {
                       padding: const EdgeInsets.fromLTRB(4, 10, 12, 10),
                       child: Icon(
                         _listening ? Icons.stop_circle : Icons.mic,
-                        color: _listening
-                            ? SearchUi.titleAccent
-                            : Colors.white70,
+                        color:
+                            _listening ? SearchUi.titleAccent : Colors.white70,
                       ),
                     ),
                   ),
@@ -1102,7 +1124,8 @@ class _HomePageState extends State<HomePage> {
           trailing: recent.isEmpty ? null : '${recent.length}',
           onPlayAll: recent.isEmpty
               ? null
-              : () => PlayerController.instance.playQueue(recent, 0, radio: false),
+              : () =>
+                  PlayerController.instance.playQueue(recent, 0, radio: false),
         ),
         if (recent.isEmpty)
           const Padding(
@@ -1146,8 +1169,8 @@ class _HomePageState extends State<HomePage> {
             trailing: subtitle ?? '${primary.length} parça',
             onPlayAll: primary.isEmpty
                 ? null
-                : () =>
-                    PlayerController.instance.playQueue(primary, 0, radio: false),
+                : () => PlayerController.instance
+                    .playQueue(primary, 0, radio: false),
             onSave: hasArtistTracks ? _saveArtistPlaylist : null,
             onDownload: hasArtistTracks ? _downloadArtistPlaylist : null,
           ),
@@ -1175,7 +1198,8 @@ class _HomePageState extends State<HomePage> {
     return SearchTrackCard(
       track: track,
       liked: Library.instance.isLiked(track.id),
-      onAction: (action) => unawaited(_trackAction(action, track, queue, index)),
+      onAction: (action) =>
+          unawaited(_trackAction(action, track, queue, index)),
     );
   }
 
@@ -1324,8 +1348,39 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _radioDirectoryCard(BuildContext context) {
+    final strings = AppStrings.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Material(
+        color: AppPalette.card,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const RadioPage()),
+          ),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: AppPalette.cardRaised,
+              child: Icon(Icons.radio, color: SearchUi.titleAccent),
+            ),
+            title: Text(
+              strings.turkishRadio,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            subtitle: Text(strings.turkishRadioHint),
+            trailing: const Icon(Icons.chevron_right),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildFeed() {
     final history = Library.instance.history;
+    final saved = DownloadService.instance.savedTracks;
+    _prefetchHomeCards(history, saved);
     return RefreshIndicator(
       onRefresh: _refreshFeed,
       child: ListView(
@@ -1334,11 +1389,12 @@ class _HomePageState extends State<HomePage> {
         padding: const EdgeInsets.only(bottom: 12),
         children: [
           const UpdateBanner(),
+          _radioDirectoryCard(context),
           if (history.isNotEmpty)
             _HistoryStrip(history: history, onArtistTap: _openArtist),
-          if (DownloadService.instance.savedTracks.isNotEmpty)
+          if (saved.isNotEmpty)
             _SavedStrip(
-              tracks: DownloadService.instance.savedTracks,
+              tracks: saved,
               onTrackTap: _playSaved,
               onPlayAll: _playAllSaved,
             ),
@@ -1347,6 +1403,8 @@ class _HomePageState extends State<HomePage> {
               title: source.title,
               future: _feedFutures[source.title] ?? _load(source.query),
               onArtistTap: _openArtist,
+              onTracks: (tracks) =>
+                  unawaited(PlayerController.instance.prepareVisible(tracks)),
             ),
         ],
       ),
@@ -1450,11 +1508,13 @@ class _Section extends StatelessWidget {
     required this.title,
     required this.future,
     required this.onArtistTap,
+    this.onTracks,
   });
 
   final String title;
   final Future<List<Track>> future;
   final ValueChanged<Track> onArtistTap;
+  final ValueChanged<List<Track>>? onTracks;
 
   @override
   Widget build(BuildContext context) {
@@ -1477,6 +1537,9 @@ class _Section extends StatelessWidget {
                       Text('—', style: TextStyle(color: AppPalette.iconFaint)),
                 );
               }
+              // Yalnızca bu bölüm ekrana geldiğinde çalışır; görünmeyen
+              // feed'ler ses motoru tamponunu boşa tüketmesin.
+              onTracks?.call(tracks);
               return ListView.separated(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1516,6 +1579,7 @@ class _ArtCard extends StatelessWidget {
       width: width,
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
+        onTapDown: (_) => unawaited(YoutubeService.instance.prefetch(track.id)),
         onTap: onTap,
         onLongPress: onLongPress,
         child: Column(
