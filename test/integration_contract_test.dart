@@ -35,6 +35,31 @@ void main() {
     expect(prefs.getString('ct.repeatMode'), 'all');
   });
 
+  test('beğeni değişimi dinleyicileri bilgilendirir (bildirim ikonu yenilenir)',
+      () async {
+    final library = Library.instance;
+    await library.init();
+    final track = const Track(
+      id: 'like-test-track',
+      title: 'Test',
+      artist: 'Test',
+    );
+    var notifications = 0;
+    library.addListener(() => notifications++);
+    try {
+      expect(library.isLiked(track.id), isFalse);
+      await library.toggleLike(track);
+      expect(library.isLiked(track.id), isTrue);
+      expect(notifications, greaterThan(0));
+      await library.toggleLike(track);
+      expect(library.isLiked(track.id), isFalse);
+      expect(notifications, greaterThan(1));
+    } finally {
+      // Test parçasını kitaplıktan temizle (son durum ne olursa olsun).
+      if (library.isLiked(track.id)) await library.toggleLike(track);
+    }
+  });
+
   test('gerçek YoutubeService API: cache metotları ve kalite', () {
     final service = YoutubeService.instance;
     service.setQuality('low');

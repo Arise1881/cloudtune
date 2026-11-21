@@ -32,6 +32,9 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     _player.errorStream.listen((error) => unawaited(_onPlaybackError(error)));
     _player.positionStream.listen(_onPosition);
     _player.durationStream.listen((_) => _broadcast());
+    // Beğeni mini player, parça listesi veya bildirimden değişebilir. Bildirim
+    // ikonu her zaman gerçek Library durumunu yansıtmalı.
+    Library.instance.addListener(_onLibraryChanged);
 
     Connectivity().onConnectivityChanged.listen((results) {
       final online = results.any((r) => r != ConnectivityResult.none);
@@ -971,14 +974,21 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     };
   }
 
+  /// Kitaplıktaki beğeni değişirse bildirim kontrolünü yeniden yayınla.
+  void _onLibraryChanged() => _broadcast();
+
   void _broadcast() {
+    final track = current;
+    final liked = track != null && Library.instance.isLiked(track.id);
     final controls = <MediaControl>[
       if (hasPrevious) MediaControl.skipToPrevious,
       if (_player.playing) MediaControl.pause else MediaControl.play,
       if (hasNext) MediaControl.skipToNext,
       MediaControl.custom(
-        androidIcon: 'drawable/ic_favorite',
-        label: 'Beğen',
+        androidIcon: liked
+            ? 'drawable/ic_favorite'
+            : 'drawable/ic_favorite_border',
+        label: liked ? 'Beğeniyi kaldır' : 'Beğen',
         name: 'like',
       ),
     ];
@@ -1052,6 +1062,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     if (name == 'like') {
       final track = current;
       if (track != null) await Library.instance.toggleLike(track);
+      _broadcast();
       return null;
     }
     if (name == 'repeat') {
