@@ -105,7 +105,9 @@ class JustAudioBackend implements AudioBackend {
   final Map<String, AudioPlayer> _pool = <String, AudioPlayer>{};
   final Set<String> _preparing = <String>{};
   final Map<String, int> _tokens = <String, int>{};
-  static const int _maxPrepared = 10;
+  // Ana sayfa, arama ve beslemeler aynı havuzu kullanır. 10 motor dolunca
+  // kaydırılan yeni kartlar hiç ısınmadığı için soğuk açılış oluyordu.
+  static const int _maxPrepared = 16;
   final Map<AudioPlayer, AndroidEqualizer> _equalizers =
       <AudioPlayer, AndroidEqualizer>{};
 
@@ -245,11 +247,18 @@ class JustAudioBackend implements AudioBackend {
   }) async {
     final key = _prepareKey(uri, initialPosition);
     if (_pool.containsKey(key) || _preparing.contains(key)) return;
-    // Havuz dolunca eski hazırlıkları atma: kullanıcı genelde ilk gördüğü
-    // kartlara dokunur, onların tamponunu korumak gecikmeyi asıl düşürüyor.
-    if (_pool.length >= _maxPrepared || _preparing.length >= _maxPrepared) {
-      return;
+    // Havuz dolunca en eski hazırlığı at: ilk kartlar yerine kaydırılarak
+    // görünen kartların tamponu kalsın, dokunma anında soğuk başlatma olmasın.
+    if (_pool.length >= _maxPrepared) {
+      final oldest = _pool.keys.first;
+      final evicted = _pool.remove(oldest);
+      _tokens.remove(oldest);
+      if (evicted != null) {
+        _equalizers.remove(evicted);
+        unawaited(evicted.dispose().catchError((Object _) {}));
+      }
     }
+    if (_preparing.length >= _maxPrepared) return;
     final token = (_tokens[key] ?? 0) + 1;
     _tokens[key] = token;
     _preparing.add(key);
