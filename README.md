@@ -9,10 +9,14 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 | Android armv7 | ✅ | `CloudTune-armv7.apk` |
 | Android x86_64 | ✅ | `CloudTune-x86_64.apk` |
 | Linux x86_64 | ✅ | `CloudTune-linux.deb` (libmpv2 bağımlı), `CloudTune-linux.tar.gz` |
-| Windows 11 | ⚠️ Eski paket | `CloudTune-windows.zip` (3.0.5+206); güncel CI ödeme limiti nedeniyle üretilemedi |
+| Windows 11 | ✅ | `CloudTune-windows.zip` — ZIP'i çıkarıp `cloudtune.exe`'yi çalıştırın (3.0.52+253) |
 | iOS (AltStore / SideStore) | ⚠️ Eski paket | `CloudTune.ipa`; güncel CI ödeme limiti nedeniyle üretilemedi |
 
-> **Windows/iOS:** GitHub Actions job'ları “recent account payments have failed or spending limit needs to be increased” nedeniyle hiç başlamıyor. Billing/spending limiti düzeltildikten sonra `gh workflow run windows-build.yml` ve `gh workflow run ios-build.yml` ile güncel paketler üretilebilir. Android ve Linux paketleri güncel ve doğrulandı.
+> **Windows 11 kurulumu:** Paket self-contained; `flutter_windows.dll`, `app.so` ve Whisper DLL'leri ZIP içinde. Ek SDK/runtime veya yönetici yetkisi gerekmez. SmartScreen uyarısında *Daha fazla bilgi → Yine de çalıştır* seçin. Sesli arama için mikrofon izni; radyo, oda ve sohbet için ek izin gerekmez.
+>
+> **Windows güncellemeleri:** Uygulama Windows'ta ZIP indirmez. Yeni sürüm manifestte göründüğünde varsayılan tarayıcıda GitHub sürüm sayfasını (`cloudtune-latest`) açar. Sürüm numarası, `update.json` manifest'i ve Android/Linux/iOS güncelleme akışı değişmez; kullanıcı ZIP'i GitHub release sayfasından alır.
+>
+> **iOS:** GitHub Actions ödeme limiti nedeniyle IPA eski sürümde kaldı. Android, Linux ve Windows paketleri güncel.
 
 > **Linux ses:** Oynatma motoru `media_kit + libmpv`'dir. `deb` paketi `libmpv2`'ye bağlıdır; `apt` bağımlılığı otomatik kurar. `tar.gz` kullanacaksanız sistemde `libmpv2` bulunmalıdır (`sudo apt install libmpv2`). `just_audio` Linux'ta desteklenmediği için ses motoru platforma göre seçilir.
 
@@ -400,6 +404,11 @@ https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/update.json
 ```
 
 Manifest `version`, `versionCode`, `notes` ve `platforms` alanlarını içerir. Android için `android-arm64`, `android-armv7`, `android-x86_64` ve `android-universal` bağlantıları bulunur. Güncelleme indirilmeden önce cihazın ABI'si belirlenir; uygun paket yoksa evrensel paket kullanılır.
+
+Windows'ta akış farklıdır: `applyUpdate()` paket indirmez, varsayılan tarayıcıda
+`https://github.com/Arise1881/cloudtune-dist/releases/tag/cloudtune-latest`
+adresini açar. Sürüm, `update.json` ve diğer platformların güncelleme akışı
+değişmez; ZIP yalnızca GitHub release sayfasından indirilir.
 
 Aynı manifest GitHub Pages üzerinden de yayınlanır:
 `https://arise1881.github.io/cloudtune-dist/update.json` (CDN önbelleği nedeniyle raw bağlantı her zaman güncel kaynaktır).

@@ -24,6 +24,11 @@ const List<String> kUpdateManifestFallbacks = <String>[
 const String kSourceUrl =
     'altstore://source?url=https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/apps.json';
 
+/// Windows güncellemeleri uygulama içinde kurulmaz; GitHub sürüm sayfasına
+/// yönlendirilir. Sürüm numarası ve update.json manifest'i değişmez.
+const String kWindowsReleasesUrl =
+    'https://github.com/Arise1881/cloudtune-dist/releases/tag/cloudtune-latest';
+
 /// Açık uygulamanın kendiliğinden yeni sürümü fark etmesi için kontrol aralığı.
 const Duration kUpdateCheckInterval = Duration(hours: 6);
 
@@ -229,6 +234,9 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Downloads the APK ahead of time so the dialog can install it instantly.
   Future<String?> prepareDownload() async {
+    // Windows'ta paket indirilmez; applyUpdate() yalnızca sürüm sayfasını açar.
+    // APK hazırlamak gereksiz trafik olur.
+    if (platform == UpdatePlatform.windows) return null;
     final existing = _preparedApkPath;
     if (existing != null) return existing;
     final info = _latest;
@@ -247,6 +255,15 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     final info = _latest;
     if (info == null) return 'Güncelleme bilgisi yok.';
 
+    if (platform == UpdatePlatform.windows) {
+      // Windows ZIP'i uygulama içinde indirip açmıyoruz; kullanıcıyı GitHub
+      // sürüm sayfasına yönlendiriyoruz. Sürüm/manifest değişmez.
+      final result = await OpenFilex.open(kWindowsReleasesUrl);
+      return result.type == ResultType.done
+          ? 'GitHub sürüm sayfası açıldı.'
+          : 'Sayfa açılamadı: $kWindowsReleasesUrl';
+    }
+
     if (platform == UpdatePlatform.ios) {
       // iOS'ta doğrudan APK kurulamaz; AltStore kaynağını açıyoruz.
       final url = info.iosSourceUrl ?? kSourceUrl;
@@ -257,19 +274,14 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     final isLinux = platform == UpdatePlatform.linux;
-    final isWindows = platform == UpdatePlatform.windows;
-    final url = isWindows
-        ? info.windowsZipUrl
-        : (isLinux ? info.linuxDebUrl : _androidApkUrl);
+    final url = isLinux ? info.linuxDebUrl : _androidApkUrl;
     if (url == null) return 'Bu platform için güncelleme bağlantısı yok.';
 
     var path = _preparedApkPath;
     if (path == null || _preparedVersion != info.version) {
-      final name = isWindows
-          ? 'CloudTune-${info.version}-windows.zip'
-          : (isLinux
-              ? 'cloudtune_${info.version}_${info.versionCode}_amd64.deb'
-              : 'cloudtune_update.apk');
+      final name = isLinux
+          ? 'cloudtune_${info.version}_${info.versionCode}_amd64.deb'
+          : 'cloudtune_update.apk';
       path = await _download(url, name);
       if (path == null) return 'İndirme başarısız.';
       _preparedApkPath = path;
@@ -280,11 +292,9 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     if (result.type != ResultType.done) {
       return 'Kurulum başlatılamadı. Dosya: $path';
     }
-    return isWindows
-        ? 'Windows paketi indirildi. ZIP içindeki cloudtune.exe ile temiz kurulum yapın.'
-        : (isLinux
-            ? 'Paket indirildi. Kurulumu onaylayın.'
-            : 'İndirildi. Kurulum izninizi verin.');
+    return isLinux
+        ? 'Paket indirildi. Kurulumu onaylayın.'
+        : 'İndirildi. Kurulum izninizi verin.';
   }
 
   Future<String?> _download(String url, String fileName) async {
