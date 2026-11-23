@@ -1,7 +1,5 @@
 name: Windows Build
 
-# Yayın tetikleyicisi release.sh üzerinden workflow_dispatch'dir; sürüm
-# etiketi oluşturulmadığı için tag trigger'ı istemciyi yanıltıyordu.
 on:
   workflow_dispatch:
 
@@ -35,31 +33,18 @@ jobs:
           Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $Stage | Out-Null
           Copy-Item -Recurse -Force build/windows/x64/runner/Release/* $Stage/
-          # PDB hata ayıklama sembolleri dağıtıma girmez. flutter_windows.dll
-          # ZORUNLU: çalıştırıcı olmadan cloudtune.exe açılmaz.
           Get-ChildItem -Recurse -File -Path $Stage | Where-Object { $_.Extension -eq '.pdb' } | Remove-Item -Force
           Compress-Archive -Path "$Stage/*" -DestinationPath CloudTune-windows.zip -Force
           Get-Item CloudTune-windows.zip | Select-Object Name, Length
 
-      - name: Web release derle
-        run: flutter build web --release
-
-      - name: ZIP paketle (Web)
-        shell: pwsh
-        run: |
-          Compress-Archive -Path build/web/* -DestinationPath CloudTune-web.zip -Force
-          Get-Item CloudTune-web.zip | Select-Object Name, Length
-
       - uses: actions/upload-artifact@v4
         with:
           name: CloudTune-windows
-          path: |
-            CloudTune-windows.zip
-            CloudTune-web.zip
+          path: CloudTune-windows.zip
           retention-days: 30
           compression-level: 6
 
-      - name: GitHub release'e yukle (windows + web)
+      - name: GitHub release'e yukle (windows)
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           TOKEN_OK: ${{ secrets.GH_TOKEN != '' }}
@@ -70,12 +55,10 @@ jobs:
           $Headers = @{ Authorization = "token $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
           $Release = Invoke-RestMethod -Method Get -Headers $Headers -Uri "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/tags/cloudtune-latest"
           foreach ($a in $Release.assets) {
-            if ($a.name -eq "CloudTune-windows.zip" -or $a.name -eq "CloudTune-web.zip") {
+            if ($a.name -eq "CloudTune-windows.zip") {
               Invoke-RestMethod -Method Delete -Headers $Headers -Uri "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/assets/$($a.id)" | Out-Null
             }
           }
           $ZipHeaders = @{ Authorization = "token $env:GH_TOKEN"; "Content-Type" = "application/zip" }
           Invoke-RestMethod -Method Post -Headers $ZipHeaders -InFile "CloudTune-windows.zip" -Uri "https://uploads.github.com/repos/Arise1881/cloudtune-dist/releases/$($Release.id)/assets?name=CloudTune-windows.zip" | Out-Null
           Write-Host "CloudTune-windows.zip -> release eklendi"
-          Invoke-RestMethod -Method Post -Headers $ZipHeaders -InFile "CloudTune-web.zip" -Uri "https://uploads.github.com/repos/Arise1881/cloudtune-dist/releases/$($Release.id)/assets?name=CloudTune-web.zip" | Out-Null
-          Write-Host "CloudTune-web.zip -> release eklendi"
