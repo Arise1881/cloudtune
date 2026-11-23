@@ -1,0 +1,16 @@
+CloudTune, Türk internet radyoları ve çevrimiçi ses akışları için geliştirilmiş ücretsiz ve açık kaynaklı bir müzik oynatıcıdır.
+
+- İstasyon logolarıyla radyo listesini gezin ve çal
+- Çevrimiçi müzik ara, bağlantı aç ve çalma listesi oluştur
+- İki cihazlı odalarda arkadaşınla aynı müziği senkronize dinle
+- İsteğe bağlı şifre korumalı oda davet bağlantıları
+- Ekolayzer, karışık çal, tekrar, uyku zamanlayıcısı ve kuyruk kontrolleri
+- Arka plan çalma, kilit ekranı ve bildirim kontrolleri
+- Mobil veri ve Wi-Fi ayarlarına göre ağ trafiği
+- Kitaplık, geçmiş, çalma listeleri, vurgu rengi ve temalar korunur
+- 28 arayüz dili
+
+Radyo, arama ve kapak görselleri için internet bağlantısı gerekir.
+
+Kaynak kod: https://github.com/Arise1881/cloudtune
+Lisans: MIT

@@ -1,0 +1,16 @@
+CloudTune is a free and open-source music player focused on Turkish internet radio and online audio.
+
+- Browse and play radio stations with station logos
+- Search online music, open links and build playlists
+- Sync playback with a friend in two-device rooms
+- Room invite links with optional password protection
+- Equalizer, shuffle, repeat, sleep timer and queue controls
+- Background playback with lock-screen and notification controls
+- Mobile data and Wi-Fi aware traffic optimization
+- Library, history, playlists, accent colors and themes are preserved
+- 28 interface languages
+
+CloudTune uses public internet radio streams and online metadata services. An internet connection is required for radio, search and cover art.
+
+Source code: https://github.com/Arise1881/cloudtune
+License: MIT

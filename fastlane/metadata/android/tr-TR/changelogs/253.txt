@@ -1,0 +1,1 @@
+Hazır oynatıcı havuzu LRU ile genişletildi (10→16); kaydırılan kartlar da ısınıyor, parça açılışları hızlanıyor. Öne dönünce güncelleme kontrolü 1 dakikaya indirildi.

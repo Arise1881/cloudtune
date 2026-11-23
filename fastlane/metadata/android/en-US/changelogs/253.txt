@@ -1,0 +1,1 @@
+Prepared-player pool now uses LRU and holds 16 players, so swiped cards stay warm and tracks open faster. Resume update check threshold shortened to 1 minute.
