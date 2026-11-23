@@ -3,7 +3,7 @@
 -keep class io.flutter.plugin.** { *; }
 -keep class io.flutter.util.** { *; }
 -keep class io.flutter.view.** { *; }
--keep class io.flutter.** { *; }
+-keep class !io.flutter.embedding.engine.deferredcomponents.**,!io.flutter.embedding.android.FlutterPlayStoreSplitApplication,io.flutter.** { *; }
 -keep class io.flutter.plugins.** { *; }
 -keep class **.GeneratedPluginRegistrant { *; }
 
@@ -11,7 +11,7 @@
 -keep class com.cloudtune.app.MainActivity { *; }
 
 # flutter_whisper_ggml / just_audio / media_kit native metodları JNI ile
-# çağrılır; isimleri R8 değiştirmemeli.
+# çağrılır; isimeri ire R8 değiştirmemeli.
 -keepclasseswithmembernames class * {
     native <methods>;
 }
@@ -24,7 +24,7 @@
 -keep class com.rd.liquorice.** { *; }
 
 # Flutter engine embedding ve Dart VM giriş noktaları.
--keep class io.flutter.embedding.** { *; }
+-keep class !io.flutter.embedding.engine.deferredcomponents.**,!io.flutter.embedding.android.FlutterPlayStoreSplitApplication,io.flutter.embedding.** { *; }
 -keepattributes *Annotation*
 -keepattributes Signature
 -keepattributes SourceFile,LineNumberTable
