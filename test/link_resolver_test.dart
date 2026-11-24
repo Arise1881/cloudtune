@@ -79,6 +79,14 @@ void main() {
               'https://www.youtube.com/watch?v=$id&list=$pl'),
           id);
     });
+    test('music.youtube.com playlist', () {
+      const pl = 'PL1KwwUuGDQDIbpiFK9pdDrgojgCLSsvGZ';
+      const url =
+          'https://music.youtube.com/playlist?list=$pl&si=fh5MEykZZAA59OXT&drli=1';
+      expect(YoutubeLinkResolver.isYoutubeLink(url), true);
+      expect(YoutubeLinkResolver.playlistId(url), pl);
+      expect(YoutubeLinkResolver.videoId(url), isNull);
+    });
     test('izinsiz adreste null', () {
       expect(
           YoutubeLinkResolver.playlistId(

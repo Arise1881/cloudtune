@@ -478,6 +478,10 @@ class YoutubeService {
       }
     }
 
+    if (tracks.isEmpty) {
+      tracks.addAll(await _playlistFromInnerTube(id, limit: limit));
+    }
+
     if (tracks.isEmpty && seed != null) {
       return related(seed, limit: limit);
     }
@@ -526,7 +530,386 @@ class YoutubeService {
         );
       }
     }
+
+    return _playlistInfoFromInnerTube(id);
+  }
+
+  String _playlistBrowseId(String id) {
+    final trimmed = id.trim();
+    if (trimmed.isEmpty) return trimmed;
+    if (trimmed.startsWith('VL')) return trimmed;
+    return 'VL$trimmed';
+  }
+
+  Future<List<Track>> _playlistFromInnerTube(
+    String id, {
+    required int limit,
+  }) async {
+    final browseId = _playlistBrowseId(id);
+    if (browseId.isEmpty) return const <Track>[];
+
+    for (final spec in _clients) {
+      try {
+        final tracks = <Track>[];
+        final seen = <String>{};
+        String? continuation;
+        var pages = 0;
+        while (tracks.length < limit && pages < 5) {
+          pages++;
+          final body = continuation == null
+              ? jsonEncode({
+                  'context': {'client': spec['client']},
+                  'browseId': browseId,
+                })
+              : jsonEncode({
+                  'context': {'client': spec['client']},
+                  'continuation': continuation,
+                });
+          final response = await _innerTubePost(
+            Uri.parse(
+              'https://www.youtube.com/youtubei/v1/browse'
+              '?key=${spec['key']}&prettyPrint=false',
+            ),
+            headers: {
+              'content-type': 'application/json',
+              'accept-language': 'en-US,en;q=0.9',
+              'x-youtube-client-name': '${spec['name']}',
+              'x-youtube-client-version': '${spec['version']}',
+              'user-agent': '${spec['ua']}',
+            },
+            body: body,
+          );
+          if (response.statusCode != 200) break;
+          final data = jsonDecode(response.body);
+          if (data is! Map) break;
+          final next = _collectPlaylistTracksFromBrowse(
+            data,
+            tracks,
+            seen,
+            limit,
+          );
+          if (tracks.isEmpty && next == null) break;
+          continuation = next;
+          if (continuation == null || continuation.isEmpty) break;
+        }
+        if (tracks.isNotEmpty) return tracks;
+      } catch (_) {
+        continue;
+      }
+    }
+    return const <Track>[];
+  }
+
+  String? _collectPlaylistTracksFromBrowse(
+    Map data,
+    List<Track> out,
+    Set<String> seen,
+    int limit,
+  ) {
+    String? continuation;
+    final renderers = <Map>[];
+    _findPlaylistVideoRenderers(data, renderers);
+    for (final renderer in renderers) {
+      if (out.length >= limit) break;
+      final track = _trackFromPlaylistRenderer(renderer);
+      if (track == null) continue;
+      if (seen.add(track.id)) out.add(track);
+    }
+    continuation = _findContinuationToken(data);
+    return continuation;
+  }
+
+  void _findPlaylistVideoRenderers(Object? node, List<Map> out) {
+    if (node is List) {
+      for (final item in node) {
+        _findPlaylistVideoRenderers(item, out);
+      }
+      return;
+    }
+    if (node is! Map) return;
+    final renderer = node['playlistVideoRenderer'];
+    if (renderer is Map) {
+      out.add(renderer);
+    }
+    final compact = node['playlistPanelVideoRenderer'];
+    if (compact is Map) {
+      out.add(compact);
+    }
+    final music = node['musicResponsiveListItemRenderer'];
+    if (music is Map) {
+      out.add(music);
+    }
+    for (final value in node.values) {
+      _findPlaylistVideoRenderers(value, out);
+    }
+  }
+
+  String? _findContinuationToken(Object? node) {
+    if (node is List) {
+      for (final item in node) {
+        final found = _findContinuationToken(item);
+        if (found != null) return found;
+      }
+      return null;
+    }
+    if (node is! Map) return null;
+    final continuationCommand = node['continuationCommand'];
+    if (continuationCommand is Map) {
+      final token = continuationCommand['token']?.toString().trim();
+      if (token != null && token.isNotEmpty) return token;
+    }
+    final nextContinuationData = node['nextContinuationData'];
+    if (nextContinuationData is Map) {
+      final token = nextContinuationData['continuation']?.toString().trim();
+      if (token != null && token.isNotEmpty) return token;
+    }
+    for (final value in node.values) {
+      final found = _findContinuationToken(value);
+      if (found != null) return found;
+    }
     return null;
+  }
+
+  Track? _trackFromPlaylistRenderer(Map renderer) {
+    // musicResponsiveListItemRenderer (YouTube Music)
+    if (renderer['flexColumns'] is List || renderer['playlistItemData'] is Map) {
+      return _trackFromMusicPlaylistRenderer(renderer);
+    }
+
+    final id = renderer['videoId']?.toString().trim() ?? '';
+    final title = _textOf(renderer['title']);
+    if (id.isEmpty || title.isEmpty) return null;
+
+    final author = _textOf(renderer['shortBylineText']).isNotEmpty
+        ? _textOf(renderer['shortBylineText'])
+        : _textOf(renderer['longBylineText']);
+    final lengthText = _textOf(renderer['lengthText']);
+    final lengthSecondsRaw = renderer['lengthSeconds']?.toString();
+    Duration? duration;
+    final seconds = int.tryParse(lengthSecondsRaw ?? '');
+    if (seconds != null && seconds > 0) {
+      duration = Duration(seconds: seconds);
+    } else if (lengthText.isNotEmpty) {
+      duration = _parseDurationText(lengthText);
+    }
+
+    String? coverUrl;
+    final thumbs = renderer['thumbnail']?['thumbnails'];
+    if (thumbs is List && thumbs.isNotEmpty) {
+      final last = thumbs.last;
+      if (last is Map) {
+        final url = last['url']?.toString().trim();
+        if (url != null && url.isNotEmpty) coverUrl = url;
+      }
+    }
+
+    String? artistId;
+    final runs = renderer['shortBylineText'] is Map
+        ? (renderer['shortBylineText']['runs'] as List?)
+        : null;
+    if (runs != null) {
+      for (final run in runs.whereType<Map>()) {
+        final browseId = run['navigationEndpoint']?['browseEndpoint']
+                ?['browseId']
+            ?.toString();
+        if (browseId != null && browseId.startsWith('UC')) {
+          artistId = browseId;
+          break;
+        }
+      }
+    }
+
+    return Track(
+      id: id,
+      title: title,
+      artist: author.isEmpty ? 'Bilinmeyen' : author,
+      duration: duration,
+      artistId: artistId,
+      coverUrl: coverUrl,
+    );
+  }
+
+  Track? _trackFromMusicPlaylistRenderer(Map renderer) {
+    final id = renderer['playlistItemData']?['videoId']?.toString().trim() ??
+        renderer['videoId']?.toString().trim() ??
+        '';
+    if (id.isEmpty) return null;
+
+    String textFromFlex(int index) {
+      final cols = renderer['flexColumns'];
+      if (cols is! List || index >= cols.length) return '';
+      final col = cols[index];
+      if (col is! Map) return '';
+      final text = col['musicResponsiveListItemFlexColumnRenderer']?['text'];
+      return _textOf(text);
+    }
+
+    final title = textFromFlex(0);
+    if (title.isEmpty) return null;
+    final author = textFromFlex(1);
+
+    Duration? duration;
+    final fixedCols = renderer['fixedColumns'];
+    if (fixedCols is List) {
+      for (final col in fixedCols.whereType<Map>()) {
+        final text = col['musicResponsiveListItemFixedColumnRenderer']?['text'];
+        final d = _parseDurationText(_textOf(text));
+        if (d != null) {
+          duration = d;
+          break;
+        }
+      }
+    }
+    duration ??= _parseDurationText(textFromFlex(2));
+
+    String? coverUrl;
+    final thumbs = renderer['thumbnail']?['musicThumbnailRenderer']
+        ?['thumbnail']?['thumbnails'];
+    if (thumbs is List && thumbs.isNotEmpty) {
+      final last = thumbs.last;
+      if (last is Map) {
+        final url = last['url']?.toString().trim();
+        if (url != null && url.isNotEmpty) coverUrl = url;
+      }
+    }
+
+    String? artistId;
+    final cols = renderer['flexColumns'];
+    if (cols is List && cols.length > 1) {
+      final col = cols[1];
+      if (col is Map) {
+        final runs = col['musicResponsiveListItemFlexColumnRenderer']?['text']
+            ?['runs'];
+        if (runs is List) {
+          for (final run in runs.whereType<Map>()) {
+            final browseId = run['navigationEndpoint']?['browseEndpoint']
+                    ?['browseId']
+                ?.toString();
+            if (browseId != null && browseId.startsWith('UC')) {
+              artistId = browseId;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    return Track(
+      id: id,
+      title: title,
+      artist: author.isEmpty ? 'Bilinmeyen' : author,
+      duration: duration,
+      artistId: artistId,
+      coverUrl: coverUrl,
+    );
+  }
+
+  Duration? _parseDurationText(String text) {
+    final parts = text
+        .trim()
+        .split(':')
+        .map((p) => int.tryParse(p.trim()))
+        .toList();
+    if (parts.isEmpty || parts.any((p) => p == null)) return null;
+    final values = parts.cast<int>();
+    if (values.length == 3) {
+      return Duration(hours: values[0], minutes: values[1], seconds: values[2]);
+    }
+    if (values.length == 2) {
+      return Duration(minutes: values[0], seconds: values[1]);
+    }
+    if (values.length == 1) {
+      return Duration(seconds: values[0]);
+    }
+    return null;
+  }
+
+  Future<PlaylistInfo?> _playlistInfoFromInnerTube(String id) async {
+    final browseId = _playlistBrowseId(id);
+    if (browseId.isEmpty) return null;
+    for (final spec in _clients) {
+      try {
+        final response = await _innerTubePost(
+          Uri.parse(
+            'https://www.youtube.com/youtubei/v1/browse'
+            '?key=${spec['key']}&prettyPrint=false',
+          ),
+          headers: {
+            'content-type': 'application/json',
+            'accept-language': 'en-US,en;q=0.9',
+            'x-youtube-client-name': '${spec['name']}',
+            'x-youtube-client-version': '${spec['version']}',
+            'user-agent': '${spec['ua']}',
+          },
+          body: jsonEncode({
+            'context': {'client': spec['client']},
+            'browseId': browseId,
+          }),
+        );
+        if (response.statusCode != 200) continue;
+        final data = jsonDecode(response.body);
+        if (data is! Map) continue;
+        final info = _playlistInfoFromBrowse(data, id);
+        if (info != null) return info;
+      } catch (_) {
+        continue;
+      }
+    }
+    return null;
+  }
+
+  PlaylistInfo? _playlistInfoFromBrowse(Map data, String fallbackId) {
+    final header = data['header'];
+    String title = '';
+    String author = '';
+    String? thumb;
+
+    if (header is Map) {
+      final pageHeader = header['pageHeaderRenderer'];
+      final playlistHeader = header['playlistHeaderRenderer'];
+      if (playlistHeader is Map) {
+        title = _textOf(playlistHeader['title']);
+        author = _textOf(playlistHeader['ownerText']);
+        final thumbList = playlistHeader['playlistHeaderBanner']
+            ?['heroPlaylistThumbnailRenderer']?['thumbnail']?['thumbnails'];
+        if (thumbList is List && thumbList.isNotEmpty) {
+          final last = thumbList.last;
+          if (last is Map) thumb = last['url']?.toString();
+        }
+      } else if (pageHeader is Map) {
+        title = _textOf(pageHeader['pageTitle']);
+        final content = pageHeader['content'];
+        if (content is Map) {
+          final desc = content['pageHeaderViewModel']?['description']
+              ?['descriptionPreviewViewModel']?['description']
+              ?['content'];
+          if (author.isEmpty && desc is String) {
+            // best effort; author often elsewhere
+          }
+        }
+      }
+    }
+
+    if (title.isEmpty) {
+      final micro = data['microformat']?['microformatDataRenderer'];
+      if (micro is Map) {
+        title = micro['title']?.toString().trim() ?? '';
+        thumb ??= (micro['thumbnail']?['thumbnails'] is List &&
+                (micro['thumbnail']['thumbnails'] as List).isNotEmpty)
+            ? ((micro['thumbnail']['thumbnails'] as List).last
+                as Map)['url']
+                ?.toString()
+            : null;
+      }
+    }
+
+    if (title.isEmpty) return null;
+    return PlaylistInfo(
+      id: fallbackId,
+      title: title,
+      author: author.isEmpty ? 'Bilinmeyen' : author,
+      thumbUrl: thumb,
+    );
   }
 
   /// İlgili videolar: youtube_explode, InnerTube `next`, birden fazla

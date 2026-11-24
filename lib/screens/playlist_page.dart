@@ -42,12 +42,16 @@ class _PlaylistPageState extends State<PlaylistPage> {
   }
 
   Future<_PlaylistResults> _load() async {
-    final results = await Future.wait([
-      YoutubeService.instance.playlistInfo(widget.id),
-      YoutubeService.instance.playlist(widget.id, limit: 300),
+    final results = await Future.wait<dynamic>([
+      YoutubeService.instance
+          .playlistInfo(widget.id)
+          .catchError((_) => null),
+      YoutubeService.instance
+          .playlist(widget.id, limit: 300)
+          .catchError((_) => const <Track>[]),
     ]);
     final info = results[0] as PlaylistInfo?;
-    final tracks = results[1] as List<Track>;
+    final tracks = (results[1] as List<Track>? ?? const <Track>[]);
 
     // Sanatçı listesi ikinci planda yüklenir; ana liste bloke olmaz.
     final artistId = tracks.isEmpty ? null : tracks.first.artistId;
@@ -144,9 +148,24 @@ class _PlaylistPageState extends State<PlaylistPage> {
                 );
               }
               if (tracks.isEmpty) {
-                return const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text('Liste boş veya erişilemiyor.'),
+                return Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      const Text('Liste boş veya erişilemiyor.'),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _artist = null;
+                            _future = _load();
+                          });
+                        },
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Tekrar dene'),
+                      ),
+                    ],
+                  ),
                 );
               }
               if (i < baseCount) {

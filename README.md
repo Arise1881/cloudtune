@@ -23,6 +23,7 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 - **Gerçek hata yüzeyi:** Playback açılış/başlatma hataları artık `errorStream` üzerinden yakalanıyor; hata banner’ı gerçek detayı gösteriyor (maskelenmiş "Parça oynatılamadı" yerine tanı detaylı).
 - **Kurtarma:** Yüzeye çıkan hata varken oynat/duraklat/devam/toggle aynı parçada retry dener; bağlantı geri gelince surfaced error durumu da otomatik recovery alır. Ready-not-playing takılmaları stall watch ile yakalanır.
 - **Linux:** 3.0.60+261 deb’e Başlat Menüsü `.desktop` kısayolu, uygulama ikonu ve `/usr/bin/cloudtune` eklendi.
+- **Oynatma listeleri:** YouTube/YouTube Music playlist linkleri (`music.youtube.com/playlist?list=...` dahil) için InnerTube browse fallback ve playlist sayfasında “Tekrar dene” eklendi; playlist açma daha dayanıklı.
 - **Windows 11 güncelleme akışı:** 3.0.60+ kodunda Windows “Güncelle” GitHub sürüm sayfasını açar (manuel indirme). Güncel Windows installer/EXE bu Linux ortamında build edilemedi; Windows assetleri eski kalabilir, CI/billing düzelince yeniden üretilmeli.
 - **Doğrulama:** `flutter analyze` temiz, `flutter test` 105/105 geçti; cihaz/emülatör smoke yapıldı.
 
