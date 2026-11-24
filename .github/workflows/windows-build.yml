@@ -55,7 +55,7 @@ jobs:
           $iscc = @("$pf86\Inno Setup 6\ISCC.exe", "$pf\Inno Setup 6\ISCC.exe") |
             Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { throw "Inno Setup 6 (ISCC.exe) bulunamadı." }
-          & $iscc "/DAppVersion=$version" "installer\cloudtune.iss"
+          & $iscc "/DMyAppVersion=$version" "installer\cloudtune.iss"
           if ($LASTEXITCODE -ne 0) { throw "ISCC.exe hata kodu: $LASTEXITCODE" }
           Copy-Item -Force installer-output\CloudTune-setup.exe CloudTune-setup.exe
           Get-Item CloudTune-setup.exe | Select-Object Name, Length
