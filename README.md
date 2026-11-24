@@ -52,6 +52,7 @@ Cihaz üzerinden alınmış güncel görünümler. Büyütmek için görsele tı
 1. [Son sürüm](https://github.com/Arise1881/cloudtune-dist/releases/tag/cloudtune-latest) sayfasından platformunuza uygun dosyayı indirin.
 2. Android 7.0+ gerekir. **Bilinmeyen kaynaklardan yükleme** iznini verin (Ayarlar → Güvenlik). Paket imzalı olduğu için Google Play koruması uyarı verebilir; devam edin.
 3. APK'yı kurun ve uygulamayı açın. Uygulama doğrudan **ana sayfa** ile açılır; **sonsuz radyo** varsayılan olarak açıktır.
+   - **Android TV / Google TV / Fire TV:** [CloudTune-androidtv.apk](https://github.com/Arise1881/cloudtune-dist/releases/download/cloudtune-latest/CloudTune-androidtv.apk) dosyasını TV’ye USB ile veya dosya yöneticisiyle kurun. Uygulama TV ana ekranında görünür; uzaktan kumanda odağı ve büyütülmüş arayüz otomatik açılır. Medya tuşları (oynat/duraklat, sonraki/önceki) arka planda da çalışır.
 4. İlk açılışta izinler:
    - **Bildirimler** — arka plan çalma ve kilit ekranı kontrolleri için,
    - **Mikrofon** — uygulama açılışta **istemez**; sesli arama düğmesine bastığınızda ister ve yalnızca kayıt süresince aktif kalır,
