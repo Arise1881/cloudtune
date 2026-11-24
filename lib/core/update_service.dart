@@ -515,6 +515,27 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     if (buildA != buildB) return buildA > buildB ? 1 : -1;
     return 0;
   }
+
+  Future<bool> _openExternalUrl(String url) async {
+    try {
+      if (Platform.isWindows) {
+        final result = await Process.run('cmd', ['/c', 'start', '', url]);
+        return result.exitCode == 0;
+      }
+      if (Platform.isLinux) {
+        final result = await Process.run('xdg-open', [url]);
+        return result.exitCode == 0;
+      }
+      if (Platform.isMacOS) {
+        final result = await Process.run('open', [url]);
+        return result.exitCode == 0;
+      }
+      final result = await OpenFilex.open(url);
+      return result.type == ResultType.done;
+    } catch (_) {
+      return false;
+    }
+  }
 }
 
 /// Green home-screen banner that opens the update dialog.
@@ -599,26 +620,5 @@ class UpdateBanner extends StatelessWidget {
     messenger?.showSnackBar(
       SnackBar(content: Text(await update.applyUpdate())),
     );
-  }
-
-  Future<bool> _openExternalUrl(String url) async {
-    try {
-      if (Platform.isWindows) {
-        final result = await Process.run('cmd', ['/c', 'start', '', url]);
-        return result.exitCode == 0;
-      }
-      if (Platform.isLinux) {
-        final result = await Process.run('xdg-open', [url]);
-        return result.exitCode == 0;
-      }
-      if (Platform.isMacOS) {
-        final result = await Process.run('open', [url]);
-        return result.exitCode == 0;
-      }
-      final result = await OpenFilex.open(url);
-      return result.type == ResultType.done;
-    } catch (_) {
-      return false;
-    }
   }
 }
