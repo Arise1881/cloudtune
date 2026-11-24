@@ -358,7 +358,9 @@ class JustAudioBackend implements AudioBackend {
       unawaited(outgoing.pause().catchError((Object _) {}).whenComplete(
           () => unawaited(outgoing.dispose().catchError((Object _) {}))));
       _equalizers.remove(outgoing);
-      unawaited(incoming.play().catchError((Object _) {}));
+      unawaited(incoming.play().catchError((Object e, StackTrace st) {
+        if (!_errors.isClosed) _errors.add(e);
+      }));
       return true;
     } catch (_) {
       _active = outgoing;
@@ -399,9 +401,11 @@ class JustAudioBackend implements AudioBackend {
   @override
   Future<void> play() async {
     // just_audio'da play() Future'ı parça bitene/pause olana kadar tamamlanmaz.
-    // Komutu hemen iletip çalar akışını bloklamayız; hatalar errorStream'den
-    // zaten bildiriliyor.
-    unawaited(_active.play().catchError((Object _) {}));
+    // Komutu hemen iletip çalar akışını bloklamayız; başlatma hatasını
+    // errorStream'e iletiriz ki controller takılı kalmasın.
+    unawaited(_active.play().catchError((Object e, StackTrace st) {
+      if (!_errors.isClosed) _errors.add(e);
+    }));
   }
 
   @override

@@ -112,6 +112,7 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
 
   static final UpdateService instance = UpdateService._();
 
+  bool _disposed = false;
   Timer? _periodicCheck;
   DateTime? _lastCheck;
   bool _checking = false;
@@ -148,7 +149,7 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) return;
+    if (_disposed || state != AppLifecycleState.resumed) return;
     final last = _lastCheck;
     // Uygulama uzun süre kapalı kaldıysa açılır açılmaz yeniden bak; aksi
     // halde son kontrolün üzerinden 6 saatten fazla geçtiyse kontrol et.
@@ -158,6 +159,7 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> init() async {
+    if (_disposed) return;
     try {
       final info = await PackageInfo.fromPlatform();
       _installedVersion = info.version;
@@ -165,9 +167,25 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     } catch (_) {}
     _periodicCheck?.cancel();
     _periodicCheck = Timer.periodic(kUpdateCheckInterval, (_) {
+      if (_disposed) return;
       unawaited(checkForUpdate());
     });
     unawaited(checkForUpdate());
+  }
+
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _periodicCheck?.cancel();
+    _periodicCheck = null;
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   /// Yeni sürüm karşılaştırması hem semver hem build numarasını dikkate alır.

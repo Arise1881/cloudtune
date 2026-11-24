@@ -275,7 +275,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   Future<void> playAt(
     int index, {
     Duration? resumeAt,
-    bool retry = false,
+    bool retry = true,
   }) =>
       _playAt(index, resumeAt: resumeAt, retry: retry);
 
@@ -416,32 +416,78 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     // çağrısını kabul eder. "ready" beklemek 1.5 sn'ye kadar gecikme
     // yaratıyordu; kullanıcı dokunduğunda sesin hemen başlaması için motor
     // hazır sinyalini beklemeden ilk play() yapılır.
+    Object? firstError;
     try {
       await _player.play();
-      return;
-    } catch (_) {
-      // Bazı motorlar open() hemen sonrasında play()'i reddeder.
-    }
-    final status = _player.status;
-    if (status != PlaybackStatus.ready && status != PlaybackStatus.buffering) {
-      try {
-        await _player.statusStream
-            .firstWhere(
-              (s) =>
-                  s == PlaybackStatus.ready ||
-                  s == PlaybackStatus.buffering ||
-                  s == PlaybackStatus.completed,
-              orElse: () => _player.status,
-            )
-            .timeout(_readyTimeout);
-      } catch (_) {
-        // Motor hazır sinyali göndermese de ikinci play() denenmelidir.
-      }
+    } catch (e) {
+      firstError = e;
     }
     if (_isStale(transition, generation)) return;
-    try {
+    if (firstError != null) {
+      final status = _player.status;
+      if (status != PlaybackStatus.ready &&
+          status != PlaybackStatus.buffering &&
+          status != PlaybackStatus.loading) {
+        try {
+          await _player.statusStream
+              .firstWhere(
+                (s) =>
+                    s == PlaybackStatus.ready ||
+                    s == PlaybackStatus.buffering ||
+                    s == PlaybackStatus.loading ||
+                    s == PlaybackStatus.completed,
+              )
+              .timeout(_readyTimeout);
+        } catch (_) {
+          // Motor hazır sinyali göndermese de ikinci play() denenmelidir.
+        }
+      }
+      if (_isStale(transition, generation)) return;
       await _player.play();
-    } catch (_) {}
+      return;
+    }
+
+    // play() komutu kabul edildi ama motor ready-not-playing'de takılabilir.
+    // Kısa bir pencere içinde playing/buffering/loading görülmezse hata ver
+    // ki _tryOpen başarısız sayıp kurtarma yoluna girsin.
+    final ok = await _waitUntilPlaybackActive(
+      transition: transition,
+      generation: generation,
+      timeout: const Duration(seconds: 4),
+    );
+    if (!ok && !_isStale(transition, generation)) {
+      await _player.play();
+      final ok2 = await _waitUntilPlaybackActive(
+        transition: transition,
+        generation: generation,
+        timeout: const Duration(seconds: 2),
+      );
+      if (!ok2 && !_isStale(transition, generation)) {
+        throw StateError('Playback did not start');
+      }
+    }
+  }
+
+  Future<bool> _waitUntilPlaybackActive({
+    required int transition,
+    required int generation,
+    required Duration timeout,
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      if (_isStale(transition, generation)) return true;
+      if (_player.playing) return true;
+      final status = _player.status;
+      if (status == PlaybackStatus.buffering ||
+          status == PlaybackStatus.loading) {
+        return true;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    if (_isStale(transition, generation)) return true;
+    return _player.playing ||
+        _player.status == PlaybackStatus.buffering ||
+        _player.status == PlaybackStatus.loading;
   }
 
   /// AudioBlocked/stream hatasında taze oturumla bir kez dener, sonra aynı
@@ -636,14 +682,15 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         lastBuffered: lastBuffered,
         duration: duration,
       );
+      final isRadioLike = trackId.startsWith('radio:');
       final liveZeroStuck = _player.playing &&
           position == Duration.zero &&
           lastPosition == Duration.zero &&
           buffered <= lastBuffered + const Duration(milliseconds: 500) &&
-          (duration == null || duration == Duration.zero);
+          (duration == null || duration == Duration.zero || isRadioLike);
       lastPosition = position;
       lastBuffered = buffered;
-      if (progressed) {
+      if (progressed || liveZeroStuck) {
         stalledSince = DateTime.now();
         if (!liveZeroStuck) {
           liveZeroSince = DateTime.now();
@@ -902,7 +949,14 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   Future<void> _onPlaybackError(Object error) async {
     if (kDebugMode) debugPrint('CT playback error: $error');
-    if (_recovering || _loading || _error != null || current == null) return;
+    if (_recovering ||
+        _loading ||
+        _opening ||
+        _advancing ||
+        _error != null ||
+        current == null) {
+      return;
+    }
     final now = DateTime.now();
     if (now.difference(_lastRecovery) < const Duration(seconds: 4)) return;
     _lastRecovery = now;
@@ -915,10 +969,11 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     }
   }
 
-  Future<void> retry() {
-    // Aynı parçada kullanıcı tekrar denedi: onarıcının geri çekilme sayacı
-    // sıfırlanır, fakat otomatik denemeler yeniden başlamaz.
-    RepairBot.instance.notifyPlaybackUserAction();
+  Future<void> retry({bool userInitiated = true}) {
+    // Kullanıcı tetiklediğinde onarıcının geri çekilme sayacı sıfırlanır.
+    // Otomatik onarım yolu sayaçları sıfırlamamalı; aksi halde backoff/max
+    // attempts çalışmaz ve aynı parça her taramada tekrar denenir.
+    if (userInitiated) RepairBot.instance.notifyPlaybackUserAction();
     _stallRetries = 0;
     _stallTrackId = current?.id;
     return _playAt(_index, retry: true);

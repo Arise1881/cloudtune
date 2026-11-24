@@ -910,12 +910,37 @@ class YoutubeService {
       _remember(id, uri);
       return uri;
     }
+    // InnerTube başarısızsa youtube_explode fallback dener.
+    final ytUri = await _resolveViaYoutubeExplode(id);
+    if (ytUri != null) {
+      _remember(id, ytUri);
+      return ytUri;
+    }
     final status = _playability[id];
     if (status != null && status.isNotEmpty && status != 'OK') {
       throw AudioBlocked(id, status);
     }
     throw StateError(
         'Ses akışına ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.');
+  }
+
+  Future<Uri?> _resolveViaYoutubeExplode(String id) async {
+    try {
+      final manifest = await _yt.videos.streamsClient
+          .getManifest(id)
+          .timeout(_resolveTimeout);
+      final audios = manifest.audioOnly.toList();
+      if (audios.isEmpty) return null;
+      // Kalite tercihini kaba eşle: low en düşük, diğerleri en yüksek bitrate.
+      audios.sort((a, b) => quality == 'low'
+          ? a.bitrate.bitsPerSecond.compareTo(b.bitrate.bitsPerSecond)
+          : b.bitrate.bitsPerSecond.compareTo(a.bitrate.bitsPerSecond));
+      for (final s in audios) {
+        final u = Uri.tryParse(s.url.toString());
+        if (u != null && await _isUriUsable(u)) return u;
+      }
+    } catch (_) {}
+    return null;
   }
 
   Future<http.Response> _innerTubePost(

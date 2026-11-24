@@ -1807,7 +1807,11 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
       notifyListeners();
       return true;
     } catch (error) {
+      final sub = _discoverySub;
+      _discoverySub = null;
+      await sub?.cancel();
       if (client != null) _disposeDiscoveryClient(client);
+      if (_discoveryClient == client) _discoveryClient = null;
       _discoveryError = 'Oda listesi alınamadı: ${_shortError(error)}';
       _scheduleDiscoveryRetry();
       notifyListeners();

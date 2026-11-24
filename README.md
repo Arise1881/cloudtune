@@ -18,11 +18,11 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 > **Hangi APK?** Cihazınızın mimarisini bilmiyorsanız `CloudTune-universal.apk`'yı indirin. Uygulama içi güncelleyici cihazın ABI'sini algılar (`Abi.current`) ve doğru paketi seçer; uygun paket yoksa evrensel APK'ya düşer.
 
-## Son güncelleme (3.0.58+259)
+## Son güncelleme (3.0.59+260)
 
-- **Uzun süre dinleme / "Parça oynatılamadı" düzeltmesi:** Stall tespiti güçlendirildi; `playing` bildirimi tek başına ilerleme sayılmıyor. On-demand parçada konum 0'da takılma gerçek stall olarak yakalanır, canlı/radyo 0-konum akışları için 25 sn güvenlik zaman aşımı eklendi.
-- **Ses süresi takibi:** AudioBackend'e `duration` getter eklendi; stall watchdog bilinen süreye göre canlı/on-demand ayrımı yapıyor.
-- **Tam denetim:** GitHub açık issue yok; analyze temiz, 105 test geçti.
+- **"Parça oynatılamadı" için ek dayanıklılık:** InnerTube akış çözümlemesi başarısız olursa `youtube_explode` audio manifest fallback’i devreye girer; doğrudan URL bulunamadığında alternatif akış denenir.
+- **Stall tespiti (3.0.58 tabanı):** `playing` tek başına ilerleme sayılmaz; on-demand 0’da takılma stall, canlı/radyo 0-konum için 25 sn güvenlik zaman aşımı.
+- **Doğrulama:** GitHub açık issue yok; `flutter analyze` temiz, `flutter test` 105/105 geçti; emülatör smoke’ta playback PLAYING.
 
 ---
 
