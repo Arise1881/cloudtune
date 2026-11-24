@@ -37,6 +37,14 @@ jobs:
           Compress-Archive -Path "$Stage/*" -DestinationPath CloudTune-windows.zip -Force
           Get-Item CloudTune-windows.zip | Select-Object Name, Length
 
+      - name: Inno Setup 6 kur
+        shell: pwsh
+        run: |
+          $choco = "$env:ProgramData\chocolatey\bin\choco.exe"
+          if (-not (Test-Path $choco)) { $choco = "choco" }
+          & $choco install innosetup -y --no-progress --limit-output
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup kurulumu başarısız: $LASTEXITCODE" }
+
       - name: Setup.exe üret (Inno Setup)
         shell: pwsh
         run: |
