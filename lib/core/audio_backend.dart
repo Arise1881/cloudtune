@@ -26,6 +26,7 @@ abstract class AudioBackend {
   bool get playing;
   Duration get position;
   Duration get buffered;
+  Duration? get duration;
   double get speed;
   double get volume;
   PlaybackStatus get status;
@@ -122,6 +123,7 @@ class JustAudioBackend implements AudioBackend {
   final StreamController<PlaybackStatus> _status =
       StreamController<PlaybackStatus>.broadcast();
   final StreamController<Object> _errors = StreamController<Object>.broadcast();
+  Duration? _currentDuration;
 
   JustAudioBackend() {
     _active = _newPlayer();
@@ -166,7 +168,10 @@ class JustAudioBackend implements AudioBackend {
       if (identical(player, _active)) _position.add(value);
     });
     player.durationStream.listen((value) {
-      if (identical(player, _active)) _duration.add(value);
+      if (identical(player, _active)) {
+        _currentDuration = value;
+        _duration.add(value);
+      }
     });
     player.playerStateStream.listen((state) {
       if (identical(player, _active)) _status.add(_mapState(state));
@@ -205,6 +210,9 @@ class JustAudioBackend implements AudioBackend {
 
   @override
   Duration get buffered => _active.bufferedPosition;
+
+  @override
+  Duration? get duration => _currentDuration;
 
   @override
   double get speed => _active.speed;
@@ -345,6 +353,8 @@ class JustAudioBackend implements AudioBackend {
       // Referansı önce değiştir: yeni motordan gelecek ilk olaylar arayüze
       // doğru aktif motor olarak yansır.
       _active = incoming;
+      _currentDuration = incoming.duration;
+      _duration.add(_currentDuration);
       unawaited(outgoing.pause().catchError((Object _) {}).whenComplete(
           () => unawaited(outgoing.dispose().catchError((Object _) {}))));
       _equalizers.remove(outgoing);
@@ -352,6 +362,7 @@ class JustAudioBackend implements AudioBackend {
       return true;
     } catch (_) {
       _active = outgoing;
+      _currentDuration = outgoing.duration;
       _pool[key] = incoming;
       _preparedAt[key] = preparedAt;
       return false;
@@ -502,6 +513,9 @@ class MediaKitAudioBackend implements AudioBackend {
 
   @override
   Duration get buffered => _player.state.buffer;
+
+  @override
+  Duration? get duration => _player.state.duration;
 
   @override
   double get speed => _player.state.rate;

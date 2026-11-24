@@ -44,20 +44,29 @@ bool shouldAutoAdvanceOnCompleted({
   return seen + const Duration(seconds: 2) >= duration;
 }
 
-/// Motor "PLAYING" bildirimi veriyor ama konum ilerlemiyorsa ses gerçekten
-/// gelmiyor demektir. Canlı akışlarda konum 0'da kalabilir;tampon büyümesi
-/// veya oynatma durumu ilerleme sayılır.
+/// İlerleme: konum veya tampon büyümesi. PLAYING tek başına yeterli değil;
+/// duraklı akışta playing raporlanabilir. Canlı/radyo (süre bilinmiyor/0)
+/// akışlarda konum 0'da kalabildiği için position==0->0 durumu ilerleme sayılır.
+/// On-demand (süre>0) parçada 0'da takılma gerçek staldır.
 bool playbackHasProgressed({
   required Duration position,
   required Duration buffered,
   required bool playing,
   required Duration? lastPosition,
   required Duration? lastBuffered,
+  Duration? duration,
 }) {
-  if (playing) return true;
   if (lastPosition == null || lastBuffered == null) return true;
   if (position > lastPosition) return true;
-  return buffered > lastBuffered + const Duration(milliseconds: 500);
+  if (buffered > lastBuffered + const Duration(milliseconds: 500)) return true;
+  final knownOnDemand = duration != null && duration > Duration.zero;
+  if (playing && position == Duration.zero && lastPosition == Duration.zero) {
+    // Canlı/radyo: konum 0'da kalabilir, false-positive olmasın.
+    if (!knownOnDemand) return true;
+    // On-demand: başlangıçta 0'da takılı kaldıysa stall.
+    return false;
+  }
+  return false;
 }
 
 /// Aynı parçadaki ikinci duraklama kullanıcıyı daha fazla oyalmaz: hata aynı
@@ -593,6 +602,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     var lastPosition = _player.position;
     var lastBuffered = _player.buffered;
     var stalledSince = DateTime.now();
+    var liveZeroSince = DateTime.now();
     _stallTimer = Timer.periodic(_stallPoll, (_) {
       if (_isStale(transition, generation) || current?.id != trackId) {
         _stopStallWatch();
@@ -600,6 +610,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       }
       if (_error != null || _loading || _opening || _advancing || _recovering) {
         stalledSince = DateTime.now();
+        liveZeroSince = DateTime.now();
         lastPosition = _player.position;
         lastBuffered = _player.buffered;
         return;
@@ -609,25 +620,45 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
           status != PlaybackStatus.buffering &&
           status != PlaybackStatus.loading) {
         stalledSince = DateTime.now();
+        liveZeroSince = DateTime.now();
         lastPosition = _player.position;
         lastBuffered = _player.buffered;
         return;
       }
       final position = _player.position;
       final buffered = _player.buffered;
+      final duration = _player.duration;
       final progressed = playbackHasProgressed(
         position: position,
         buffered: buffered,
         playing: _player.playing,
         lastPosition: lastPosition,
         lastBuffered: lastBuffered,
+        duration: duration,
       );
+      final liveZeroStuck = _player.playing &&
+          position == Duration.zero &&
+          lastPosition == Duration.zero &&
+          buffered <= lastBuffered + const Duration(milliseconds: 500) &&
+          (duration == null || duration == Duration.zero);
       lastPosition = position;
       lastBuffered = buffered;
       if (progressed) {
         stalledSince = DateTime.now();
+        if (!liveZeroStuck) {
+          liveZeroSince = DateTime.now();
+        } else if (DateTime.now().difference(liveZeroSince) >=
+            const Duration(seconds: 25)) {
+          _stopStallWatch();
+          unawaited(_handleStalledPlayback(
+            trackId,
+            transition: transition,
+            generation: generation,
+          ));
+        }
         return;
       }
+      liveZeroSince = DateTime.now();
       if (DateTime.now().difference(stalledSince) < _stallTimeout) return;
       _stopStallWatch();
       unawaited(_handleStalledPlayback(

@@ -18,12 +18,11 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 > **Hangi APK?** Cihazınızın mimarisini bilmiyorsanız `CloudTune-universal.apk`'yı indirin. Uygulama içi güncelleyici cihazın ABI'sini algılar (`Abi.current`) ve doğru paketi seçer; uygun paket yoksa evrensel APK'ya düşer.
 
-## Son güncelleme (3.0.57+258)
+## Son güncelleme (3.0.58+259)
 
-- **Tam kod tarama/onarım:** Playback, radyo, indirme, güncelleme, oda ve servis yaşam döngüsü kritik yolları tarandı; yüksek güvenilirlikli düzeltmeler uygulandı.
-- **Oda servis kararlılığı:** `RoomService` dispose sonrası async/timer `notifyListeners` crash riski guard ile kapatıldı.
-- **İndirme/Güncelleme güvenilirliği:** İndirme ve OTA akışlarına 45 sn chunk-timeout eklendi; indirme hata yolunda `IOSink` kapatma düzeltildi.
-- **Radyo dizini:** radio-browser mirror listesi güncellendi (`de1`, `de2`, `all.api.radio-browser.info`); oda tepki sayacı tek hesaplanır hale getirildi.
+- **Uzun süre dinleme / "Parça oynatılamadı" düzeltmesi:** Stall tespiti güçlendirildi; `playing` bildirimi tek başına ilerleme sayılmıyor. On-demand parçada konum 0'da takılma gerçek stall olarak yakalanır, canlı/radyo 0-konum akışları için 25 sn güvenlik zaman aşımı eklendi.
+- **Ses süresi takibi:** AudioBackend'e `duration` getter eklendi; stall watchdog bilinen süreye göre canlı/on-demand ayrımı yapıyor.
+- **Tam denetim:** GitHub açık issue yok; analyze temiz, 105 test geçti.
 
 ---
 

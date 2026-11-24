@@ -242,7 +242,7 @@ class TurkishRadioService extends ChangeNotifier {
         final response = await http.get(
           uri,
           headers: <String, String>{
-            'User-Agent': 'CloudTune/3.0.57 (TurkishRadioDirectory)',
+            'User-Agent': 'CloudTune/3.0.58 (TurkishRadioDirectory)',
             'Accept': 'application/json',
           },
         ).timeout(const Duration(seconds: 20));
@@ -282,7 +282,7 @@ class TurkishRadioService extends ChangeNotifier {
           .get(
             uri,
             headers: <String, String>{
-              'User-Agent': 'CloudTune/3.0.57 (TurkishRadioDirectory)',
+              'User-Agent': 'CloudTune/3.0.58 (TurkishRadioDirectory)',
             },
           )
           .timeout(const Duration(seconds: 5))

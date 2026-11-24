@@ -132,6 +132,41 @@ void main() {
         ),
         isFalse,
       );
+      // Canlı/radyo: konum 0'da kalabilir, false-positive olmasın.
+      expect(
+        playbackHasProgressed(
+          position: Duration.zero,
+          buffered: const Duration(seconds: 2),
+          playing: true,
+          lastPosition: Duration.zero,
+          lastBuffered: const Duration(seconds: 2),
+        ),
+        isTrue,
+      );
+      // On-demand: bilinen süre varken 0'da takılma stall sayılır.
+      expect(
+        playbackHasProgressed(
+          position: Duration.zero,
+          buffered: const Duration(seconds: 2),
+          playing: true,
+          lastPosition: Duration.zero,
+          lastBuffered: const Duration(seconds: 2),
+          duration: const Duration(minutes: 3),
+        ),
+        isFalse,
+      );
+      // On-demand: konum > 0 ve ilerleme yoksa takılma sayılır.
+      expect(
+        playbackHasProgressed(
+          position: const Duration(seconds: 5),
+          buffered: const Duration(seconds: 20),
+          playing: true,
+          lastPosition: const Duration(seconds: 5),
+          lastBuffered: const Duration(seconds: 20),
+          duration: const Duration(minutes: 3),
+        ),
+        isFalse,
+      );
     });
 
     test('stalled playback retries once per track then errors on same track', () {
