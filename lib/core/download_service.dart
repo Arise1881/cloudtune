@@ -260,6 +260,7 @@ class DownloadService extends ChangeNotifier {
 
     File? temp;
     http.Client? client;
+    IOSink? sink;
     try {
       Uri uri;
       final source = track.sourceUrl;
@@ -301,9 +302,11 @@ class DownloadService extends ChangeNotifier {
       temp = File('${directory.path}/ct_${track.id}$extension');
 
       final total = response.contentLength ?? 0;
-      final sink = temp.openWrite();
+      sink = temp.openWrite();
       var received = 0;
-      await for (final chunk in response.stream) {
+      await for (final chunk in response.stream.timeout(
+        const Duration(seconds: 45),
+      )) {
         sink.add(chunk);
         received += chunk.length;
         if (total > 0) {
@@ -312,6 +315,7 @@ class DownloadService extends ChangeNotifier {
         }
       }
       await sink.close();
+      sink = null;
 
       if (received <= 0) throw StateError('download-empty');
 
@@ -333,6 +337,11 @@ class DownloadService extends ChangeNotifier {
       notifyListeners();
       return null;
     } finally {
+      if (sink != null) {
+        try {
+          await sink.close();
+        } catch (_) {}
+      }
       client?.close();
       _progress.remove(track.id);
       notifyListeners();

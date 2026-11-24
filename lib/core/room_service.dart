@@ -233,6 +233,7 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
   bool _remoteDataAllowed = false;
   String _avatarDataUrl = '';
   int _avatarVersion = 0;
+  bool _disposed = false;
 
   final Map<String, RoomMember> _members = {};
   final List<RoomMessage> _chat = [];
@@ -2176,7 +2177,14 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
   }
 
   @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
+  @override
   void dispose() {
+    _disposed = true;
     unawaited(_detach(publishBye: false));
     stopDiscovery();
     super.dispose();

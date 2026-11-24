@@ -423,7 +423,9 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
       final total = response.contentLength ?? 0;
       sink = target.openWrite();
       var received = 0;
-      await for (final chunk in response.stream) {
+      await for (final chunk in response.stream.timeout(
+        const Duration(seconds: 45),
+      )) {
         sink.add(chunk);
         received += chunk.length;
         if (total > 0) _downloadProgress = received / total;

@@ -1166,23 +1166,21 @@ class _RoomPageState extends State<RoomPage>
                 scrollDirection: Axis.horizontal,
                 children: [
                   for (final emoji in ['❤️', '🔥', '👏', '😂'])
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ActionChip(
-                        label: Text(
-                          reactions
-                                      .firstWhere(
-                                        (entry) => entry.key == emoji,
-                                        orElse: () => MapEntry(emoji, 0),
-                                      )
-                                      .value ==
-                                  0
-                              ? emoji
-                              : '$emoji ${reactions.firstWhere((entry) => entry.key == emoji).value}',
+                    () {
+                      final count = reactions
+                          .firstWhere(
+                            (entry) => entry.key == emoji,
+                            orElse: () => MapEntry(emoji, 0),
+                          )
+                          .value;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ActionChip(
+                          label: Text(count == 0 ? emoji : '$emoji $count'),
+                          onPressed: () => room.react(emoji),
                         ),
-                        onPressed: () => room.react(emoji),
-                      ),
-                    ),
+                      );
+                    }(),
                 ],
               ),
             ),

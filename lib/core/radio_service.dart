@@ -136,8 +136,8 @@ class TurkishRadioService extends ChangeNotifier {
   static const int _pageSize = 1000;
   static const List<String> _mirrors = <String>[
     'https://de1.api.radio-browser.info',
-    'https://fi1.api.radio-browser.info',
-    'https://nl1.api.radio-browser.info',
+    'https://de2.api.radio-browser.info',
+    'https://all.api.radio-browser.info',
   ];
 
   List<RadioStation> _all = <RadioStation>[];
@@ -242,7 +242,7 @@ class TurkishRadioService extends ChangeNotifier {
         final response = await http.get(
           uri,
           headers: <String, String>{
-            'User-Agent': 'CloudTune/3.0.48 (TurkishRadioDirectory)',
+            'User-Agent': 'CloudTune/3.0.57 (TurkishRadioDirectory)',
             'Accept': 'application/json',
           },
         ).timeout(const Duration(seconds: 20));
@@ -282,7 +282,7 @@ class TurkishRadioService extends ChangeNotifier {
           .get(
             uri,
             headers: <String, String>{
-              'User-Agent': 'CloudTune/3.0.48 (TurkishRadioDirectory)',
+              'User-Agent': 'CloudTune/3.0.57 (TurkishRadioDirectory)',
             },
           )
           .timeout(const Duration(seconds: 5))
