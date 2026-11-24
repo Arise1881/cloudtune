@@ -20,9 +20,12 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 ## Son güncelleme (3.0.59+260)
 
-- **"Parça oynatılamadı" için ek dayanıklılık:** InnerTube akış çözümlemesi başarısız olursa `youtube_explode` audio manifest fallback’i devreye girer; doğrudan URL bulunamadığında alternatif akış denenir.
-- **Stall tespiti (3.0.58 tabanı):** `playing` tek başına ilerleme sayılmaz; on-demand 0’da takılma stall, canlı/radyo 0-konum için 25 sn güvenlik zaman aşımı.
-- **Doğrulama:** GitHub açık issue yok; `flutter analyze` temiz, `flutter test` 105/105 geçti; emülatör smoke’ta playback PLAYING.
+- **Çözümleme fallback:** InnerTube akış çözümlemesi başarısız olursa `youtube_explode` audio manifest fallback’i devreye girer.
+- **Onarım döngüsü düzeltmesi:** RepairBot otomatik denemesi kendi backoff/max-attempt sayacını sıfırlamıyordu; artık `userInitiated:false` ile sayar, kullanıcı tekrar denemesi sayacı sıfırlar.
+- **Takılma/başlatma dayanıklılığı:** ready-not-playing durumu yakalanır; `play()` başlatma hatası errorStream’e iletilir; `_onPlaybackError` opening/advancing sırasında yarışmaz; radio/live zero-position 25 sn grace.
+- **Kurtarma yolu:** `playAt` varsayılan olarak forceDirect recovery yolunu kullanır. Offline aynı parçada hata görünür, otomatik atlama yok; ağ geri gelince recovery denenir.
+- **Servis yaşam döngüsü:** Room discovery partial-connect abonelik sızıntısı ve UpdateService dispose/notify guard düzeltildi.
+- **Doğrulama:** `flutter analyze` temiz, `flutter test` 105/105 geçti; emülatör smoke: play/next, background/foreground, offline aynı parça hata+no auto-skip, ağ geri gelince recovery.
 
 ---
 
