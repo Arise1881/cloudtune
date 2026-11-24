@@ -348,8 +348,12 @@ class JustAudioBackend implements AudioBackend {
       return false;
     }
     final outgoing = _active;
+    final speed = outgoing.speed;
     try {
       await incoming.setVolume(1).timeout(_switchTimeout);
+      if ((speed - 1.0).abs() > 0.001) {
+        await incoming.setSpeed(speed).timeout(_switchTimeout);
+      }
       // Referansı önce değiştir: yeni motordan gelecek ilk olaylar arayüze
       // doğru aktif motor olarak yansır.
       _active = incoming;

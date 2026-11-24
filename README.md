@@ -18,14 +18,12 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 > **Hangi APK?** Cihazınızın mimarisini bilmiyorsanız `CloudTune-universal.apk`'yı indirin. Uygulama içi güncelleyici cihazın ABI'sini algılar (`Abi.current`) ve doğru paketi seçer; uygun paket yoksa evrensel APK'ya düşer.
 
-## Son güncelleme (3.0.59+260)
+## Son güncelleme (3.0.60+261)
 
-- **Çözümleme fallback:** InnerTube akış çözümlemesi başarısız olursa `youtube_explode` audio manifest fallback’i devreye girer.
-- **Onarım döngüsü düzeltmesi:** RepairBot otomatik denemesi kendi backoff/max-attempt sayacını sıfırlamıyordu; artık `userInitiated:false` ile sayar, kullanıcı tekrar denemesi sayacı sıfırlar.
-- **Takılma/başlatma dayanıklılığı:** ready-not-playing durumu yakalanır; `play()` başlatma hatası errorStream’e iletilir; `_onPlaybackError` opening/advancing sırasında yarışmaz; radio/live zero-position 25 sn grace.
-- **Kurtarma yolu:** `playAt` varsayılan olarak forceDirect recovery yolunu kullanır. Offline aynı parçada hata görünür, otomatik atlama yok; ağ geri gelince recovery denenir.
-- **Servis yaşam döngüsü:** Room discovery partial-connect abonelik sızıntısı ve UpdateService dispose/notify guard düzeltildi.
-- **Doğrulama:** `flutter analyze` temiz, `flutter test` 105/105 geçti; emülatör smoke: play/next, background/foreground, offline aynı parça hata+no auto-skip, ağ geri gelince recovery.
+- **Gerçek hata yüzeyi:** Playback açılış/başlatma hataları artık `errorStream` üzerinden yakalanıyor; hata banner’ı gerçek detayı gösteriyor (maskelenmiş "Parça oynatılamadı" yerine tanı detaylı).
+- **Kurtarma:** Yüzeye çıkan hata varken oynat/duraklat/devam/toggle aynı parçada retry dener; bağlantı geri gelince surfaced error durumu da otomatik recovery alır. Ready-not-playing takılmaları stall watch ile yakalanır.
+- **Stabilite guard’ları:** Prepared swap sonrası hız tekrar uygulanır; RepairBot track değişiminde retry sayacı sıfırlanır; radio extend stale-queue guard; Room discovery disposed/wanted guard.
+- **Doğrulama:** `flutter analyze` temiz, `flutter test` 105/105 geçti; gerçek cihaz + emülatör smoke testi yapıldı.
 
 ---
 

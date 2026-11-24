@@ -65,10 +65,10 @@ class MiniPlayer extends StatelessWidget {
                         const Icon(Icons.error_outline,
                             size: 16, color: Colors.redAccent),
                         const SizedBox(width: 8),
-                        const Expanded(
+                        Expanded(
                           child: Text(
-                            'Parça oynatılamadı · atlanmadı',
-                            style: TextStyle(fontSize: 11),
+                            player.errorMessage ?? 'Parça oynatılamadı · atlanmadı',
+                            style: const TextStyle(fontSize: 11),
                           ),
                         ),
                         TextButton(

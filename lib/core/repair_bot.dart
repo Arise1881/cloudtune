@@ -458,6 +458,11 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
+    if (_playbackRetryTrackId != track.id) {
+      _playbackAttempts = 0;
+      _nextPlaybackRetryAt = null;
+      _lastPlaybackUnrecoverableAt = null;
+    }
     _playbackRetryTrackId = track.id;
     _playbackAttempts++;
     _nextPlaybackRetryAt = now.add(playbackRetryDelay(_playbackAttempts));

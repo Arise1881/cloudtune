@@ -288,6 +288,7 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
   Timer? _discoveryRetryTimer;
   int _discoveryFailures = 0;
   bool _discoveryStarting = false;
+  bool _discoveryWanted = false;
   String _discoveryError = '';
 
   String? get roomId => _roomId;
@@ -1741,12 +1742,15 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
   /// Keşif kanalına bağlanır ve aktif oda listesini dinlemeye başlar.
   /// Birden çok kez çağrılabilir; yalnızca ilki bağlantı kurar.
   Future<bool> startDiscovery() async {
+    _discoveryWanted = true;
+    if (_disposed) return false;
     if (_discoveryClient != null && _discoverySub != null) return true;
     if (_discoveryStarting) return false;
     _discoveryStarting = true;
     MqttServerClient? client;
     try {
       await init();
+      if (_disposed) return false;
       // Keşif uygulama açılır açılmaz başlar; ağ türü oda dışındayken de
       // bilinmeli ki ilk yayın doğru periyotla yapılsın.
       unawaited(_watchConnectivity());
@@ -1779,6 +1783,10 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
       final status = await client
           .connect()
           .timeout(const Duration(seconds: 15), onTimeout: () => null);
+      if (_disposed) {
+        _disposeDiscoveryClient(client);
+        return false;
+      }
       final refused = status?.returnCode;
       if (refused != null &&
           refused != MqttConnectReturnCode.connectionAccepted) {
@@ -1797,6 +1805,10 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
       }
 
       client.subscribe(RoomRelay.discoveryTopic, MqttQos.atLeastOnce);
+      if (_disposed) {
+        _disposeDiscoveryClient(client);
+        return false;
+      }
       _discoverySub = client.updates?.listen(_onDiscoveryMessages);
       _discoveryClient = client;
       _discoveryFailures = 0;
@@ -1830,7 +1842,12 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
   /// İlk açılışta relay down olsa bile oda listesi kendiliğinden geri gelir.
   /// Üstel geri çekilme ile 5 sn'den 2 dk'ya kadar seyreltilir.
   void _scheduleDiscoveryRetry() {
-    if (!_online || _discoveryRetryTimer?.isActive == true) return;
+    if (_disposed ||
+        !_discoveryWanted ||
+        !_online ||
+        _discoveryRetryTimer?.isActive == true) {
+      return;
+    }
     _discoveryFailures++;
     var seconds = 5;
     for (var i = 1; i < _discoveryFailures && seconds < 120; i++) {
@@ -1839,7 +1856,13 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
     if (seconds > 120) seconds = 120;
     _discoveryRetryTimer = Timer(Duration(seconds: seconds), () {
       _discoveryRetryTimer = null;
-      if (_discoveryStarting || _discoveryClient != null) return;
+      if (_disposed ||
+          !_discoveryWanted ||
+          _discoveryStarting ||
+          _discoveryClient != null ||
+          _discoverySub != null) {
+        return;
+      }
       unawaited(startDiscovery());
     });
   }
@@ -1857,6 +1880,7 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
   }
 
   void stopDiscovery() {
+    _discoveryWanted = false;
     _discoveryTimer?.cancel();
     _discoveryTimer = null;
     _discoveryRetryTimer?.cancel();
