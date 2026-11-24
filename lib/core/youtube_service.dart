@@ -67,7 +67,8 @@ class YoutubeService {
   static const Duration _requestTimeout = Duration(seconds: 6);
   static const Duration _invTimeout = Duration(seconds: 6);
   static const Duration _playlistTimeout = Duration(seconds: 15);
-  static const Duration _resolveTimeout = Duration(seconds: 20);
+  static const Duration _resolveTimeout = Duration(seconds: 8);
+  static const Duration _visitorTtl = Duration(minutes: 10);
   static const Duration _cacheTtl = Duration(minutes: 15);
   static const Duration _searchTtlWifi = Duration(minutes: 10);
   static const Duration _searchTtlMobile = Duration(minutes: 30);
@@ -86,6 +87,12 @@ class YoutubeService {
 
   bool _mobileData = false;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+
+  /// InnerTube oturum kimliği. YouTube sayfası açılmaz; değer yalnızca
+  /// resmî veri uç noktasının yanıtından alınır ve süreç içinde saklanır.
+  String? _visitorData;
+  DateTime? _visitorDataAt;
+  Future<String?>? _visitorFuture;
 
   /// Mobil veride arama/öneri yanıtları daha uzun önbellekte tutulur ve daha
   /// az yedek sunucuya başvurulur. Ses çözümlemesi kaliteyi düşürmez.
@@ -833,13 +840,15 @@ class YoutubeService {
   /// Eski çağrılar için uyumluluk takma adı.
   Future<Uri> fastUri(String id) => audioUri(id);
 
-  /// Önbelleği atlayıp doğrudan çözümü farklı yollarla yeniden dener.
+  /// Önbelleği atlayıp taze InnerTube oturumuyla bir kez yeniden dener.
+  /// Zincirleme yedekler parça açılışını 20+ saniye geciktiriyordu; hata
+  /// durumunda aynı parçada kalıp kullanıcıya tek seferde hata gösterilir.
   Future<Uri?> forceDirect(String id) async {
     if (id.isEmpty) return null;
     _dropUri(id);
     _playability.remove(id);
-
-    // 1) Tüm InnerTube istemcileri + Invidious ile taze çözüm.
+    _visitorData = null;
+    _visitorDataAt = null;
     try {
       final uri = await _resolve(id).timeout(_resolveTimeout);
       if (await _isUriUsable(uri)) {
@@ -848,44 +857,6 @@ class YoutubeService {
       }
       _dropUri(id);
     } catch (_) {}
-
-    // 2) Playability durumu sıfırlanmış ikinci geçiş.
-    _playability.remove(id);
-    try {
-      final uri = await innerTube(id).timeout(_resolveTimeout);
-      if (uri != null && await _isUriUsable(uri)) {
-        _remember(id, uri);
-        return uri;
-      }
-    } catch (_) {}
-
-    // 3) youtube_explode manifest yedeği (kaliteye göre itag seçimi).
-    try {
-      final manifest = await _yt.videos.streamsClient
-          .getManifest(id)
-          .timeout(_resolveTimeout);
-      final streams = manifest.audioOnly.toList();
-      final itags = _qualitySpec[quality]!.itags;
-      for (final itag in itags) {
-        for (final stream in streams) {
-          if (stream.tag != itag) continue;
-          if (await _isUriUsable(stream.url)) {
-            _remember(id, stream.url);
-            return stream.url;
-          }
-        }
-      }
-      streams.sort((a, b) => quality == 'low'
-          ? a.bitrate.compareTo(b.bitrate)
-          : b.bitrate.compareTo(a.bitrate));
-      for (final stream in streams) {
-        if (await _isUriUsable(stream.url)) {
-          _remember(id, stream.url);
-          return stream.url;
-        }
-      }
-    } catch (_) {}
-
     return null;
   }
 
@@ -910,34 +881,108 @@ class YoutubeService {
   }) =>
       http.post(url, headers: headers, body: body).timeout(_requestTimeout);
 
+  /// InnerTube oturum kimliğini resmî veri uç noktasından alır.
+  /// YouTube sayfası açılmaz; cookie/giriş kullanılmaz. İlk istekte oturum
+  /// kimliği yanıtta döner, sonraki isteklerde gövdeye eklenir.
+  Future<String?> _visitorDataFor(String id) {
+    final cached = _visitorData;
+    final at = _visitorDataAt;
+    if (cached != null &&
+        cached.isNotEmpty &&
+        at != null &&
+        DateTime.now().difference(at) < _visitorTtl) {
+      return Future<String?>.value(cached);
+    }
+    final running = _visitorFuture;
+    if (running != null) return running;
+    late final Future<String?> future;
+    future = _fetchVisitorData(id).whenComplete(() {
+      if (identical(_visitorFuture, future)) _visitorFuture = null;
+    });
+    _visitorFuture = future;
+    return future;
+  }
+
+  Future<String?> _fetchVisitorData(String id) async {
+    try {
+      final response = await _innerTubePost(
+        Uri.parse(
+          'https://www.youtube-nocookie.com/youtubei/v1/player'
+          '?key=${_visionosClient['key']}&prettyPrint=false',
+        ),
+        headers: _playerHeaders(_visionosClient),
+        body: _playerBody(id, _visionosClient, null),
+      );
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body);
+      if (data is! Map) return null;
+      final value = _visitorFrom(data);
+      if (value != null) {
+        _visitorData = value;
+        _visitorDataAt = DateTime.now();
+      }
+      return value;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String? _visitorFrom(Map data) {
+    final context = data['responseContext'];
+    if (context is! Map) return null;
+    final value = context['visitorData']?.toString() ?? '';
+    return value.isEmpty ? null : value;
+  }
+
+  Map<String, String> _playerHeaders(Map<String, dynamic> client) =>
+      <String, String>{
+        'content-type': 'application/json',
+        'accept-language': 'en-US,en;q=0.9',
+        'x-youtube-client-name': '${client['name']}',
+        'x-youtube-client-version': '${client['version']}',
+        'user-agent': '${client['ua']}',
+        'origin': 'https://www.youtube-nocookie.com',
+      };
+
+  String _playerBody(
+    String id,
+    Map<String, dynamic> client,
+    String? visitor,
+  ) {
+    final requestClient = Map<String, dynamic>.from(client['client'] as Map);
+    if (visitor != null && visitor.isNotEmpty) {
+      requestClient['visitorData'] = visitor;
+    }
+    return jsonEncode(<String, dynamic>{
+      'context': <String, dynamic>{
+        'client': requestClient,
+        'thirdParty': <String, String>{'embedUrl': 'https://www.youtube.com'},
+      },
+      'videoId': id,
+      'contentCheckOk': true,
+      'racyCheckOk': true,
+      // Gömülü oynatma bağlamı; hiçbir YouTube arayüzü açılmaz.
+      'playbackContext': <String, dynamic>{
+        'contentPlaybackContext': <String, String>{
+          'html5Preference': 'HTML5_PREF_WANTS',
+        },
+      },
+      'thirdParty': <String, String>{'embedUrl': 'https://www.youtube.com'},
+    });
+  }
+
   /// Doğrudan InnerTube isteğiyle oynatılabilir ses adresini bulur.
-  /// İstemciler eşzamanlı başlatılır; ilk çalışan yanıt kullanılır. Sıralı
-  /// denemede ilk istemci 6 sn takıldığında parça açılışı 30 sn'ye çıkıyordu.
+  /// İstemciler eşzamanlı başlatılır; ilk çalışan yanıt kullanılır. Ölü
+  /// Invidious aynalarını beklemek hata durumunda parçayı 6 sn daha geciktiriyordu.
   Future<Uri?> innerTube(String id) async {
-    final quality = this.quality;
     final spec = _qualitySpec[quality] ?? _qualitySpec['high']!;
 
     _playability.remove(id);
-    final uri = await firstSuccess<Uri>([
-      for (final client in _clients) _innerTubeClient(client, id, spec),
+    final visitor = await _visitorDataFor(id);
+    return firstSuccess<Uri>([
+      for (final client in _clients)
+        _innerTubeClient(client, id, spec, visitor: visitor),
     ]);
-    if (uri != null) return uri;
-
-    // Son çare: birden fazla Invidious örneğinden local=true akış adresleri.
-    final inv = await _invGet(
-      '/api/v1/videos/${Uri.encodeComponent(id)}?local=true',
-    );
-    if (inv is Map) {
-      final formats = <Map>[
-        ...(inv['formatStreams'] as List? ?? const []).whereType<Map>(),
-        ...(inv['adaptiveFormats'] as List? ?? const []).whereType<Map>(),
-      ];
-      final picked = await _pickAudioUri(formats, spec);
-      if (picked != null) return picked;
-    }
-
-    // Çözülemezse null: oynatıcı aynı parçada hata gösterir, atlama yapmaz.
-    return null;
   }
 
   /// Tek InnerTube istemcisi. Hata/engel durumunda null döner; diğer
@@ -945,30 +990,20 @@ class YoutubeService {
   Future<Uri?> _innerTubeClient(
     Map<String, dynamic> client,
     String id,
-    _QualitySpec spec,
-  ) async {
+    _QualitySpec spec, {
+    String? visitor,
+    bool allowVisitorRefresh = true,
+  }) async {
     try {
       final response = await _innerTubePost(
         Uri.parse(
-          'https://www.youtube.com/youtubei/v1/player'
+          // youtube-nocookie.com yalnızca veri uç noktasıdır; arayüzde
+          // hiçbir YouTube sayfası açılmaz, giriş/oturum kullanılmaz.
+          'https://www.youtube-nocookie.com/youtubei/v1/player'
           '?key=${client['key']}&prettyPrint=false',
         ),
-        headers: {
-          'content-type': 'application/json',
-          'accept-language': 'en-US,en;q=0.9',
-          'x-youtube-client-name': client['name'],
-          'x-youtube-client-version': client['version'],
-          'user-agent': client['ua'],
-        },
-        body: jsonEncode({
-          'context': {
-            'client': client['client'],
-            'thirdParty': {'embedUrl': 'https://www.youtube.com'},
-          },
-          'videoId': id,
-          'contentCheckOk': true,
-          'racyCheckOk': true,
-        }),
+        headers: _playerHeaders(client),
+        body: _playerBody(id, client, visitor),
       );
 
       if (response.statusCode != 200) return null;
@@ -980,6 +1015,19 @@ class YoutubeService {
         final value = status['status'] as String;
         if (value != 'OK') {
           _playability[id] = value;
+          // Oturum kimliği bayatsa yanıttaki yeni kimlikle bir kez tekrarla.
+          final fresh = _visitorFrom(data);
+          if (allowVisitorRefresh && fresh != null && fresh != visitor) {
+            _visitorData = fresh;
+            _visitorDataAt = DateTime.now();
+            return await _innerTubeClient(
+              client,
+              id,
+              spec,
+              visitor: fresh,
+              allowVisitorRefresh: false,
+            );
+          }
           return null;
         }
       }
@@ -1044,7 +1092,33 @@ class YoutubeService {
     return null;
   }
 
+  /// Resmî veri uç noktasında "not a bot" doğrulamasına düşmeyen tek profil.
+  /// Oturum kimliğiyle birlikte kullanılır; arayüz/giriş içermez.
+  static const Map<String, dynamic> _visionosClient = {
+    'key': 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',
+    'name': 'VISIONOS',
+    'version': '1.02',
+    'client': {
+      'clientName': 'VISIONOS',
+      'clientVersion': '1.02',
+      'deviceMake': 'Apple',
+      'deviceModel': 'RealityDevice17,1',
+      'userAgent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) '
+          'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 '
+          'Safari/605.1.15',
+      'osName': 'visionOS',
+      'osVersion': '26.5.23O471',
+      'hl': 'en',
+      'timeZone': 'UTC',
+      'utcOffsetMinutes': 0,
+    },
+    'ua': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) '
+        'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 '
+        'Safari/605.1.15',
+  };
+
   static const List<Map<String, dynamic>> _clients = [
+    _visionosClient,
     {
       'key': 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
       'name': 'ANDROID_VR',
@@ -1064,14 +1138,15 @@ class YoutubeService {
     {
       'key': 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
       'name': 'ANDROID',
-      'version': '19.09.37',
+      'version': '20.10.38',
       'client': {
         'clientName': 'ANDROID',
-        'clientVersion': '19.09.37',
-        'androidSdkVersion': 30,
+        'clientVersion': '20.10.38',
+        'androidSdkVersion': 35,
         'osName': 'Android',
+        'osVersion': '15',
       },
-      'ua': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+      'ua': 'com.google.android.youtube/20.10.38 (Linux; U; Android 15) gzip',
     },
     {
       'key': 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',

@@ -44,17 +44,14 @@ void main() {
       expect(station?.streamUrl, 'http://stream.test/radio');
     });
 
-    test(
-        'favicon yoksa domain logosu, homepage yoksa katalog logosu kullanılır',
-        () {
+    test('favicon yoksa katalog logosu kullanılır', () {
       final withHome = RadioStation(
         id: 'logo-1',
         name: 'Logo Radyo',
         streamUrl: 'https://live.test/stream',
         homepage: 'https://radyo.example.com/',
       );
-      expect(withHome.logoUrl,
-          'https://www.google.com/s2/favicons?domain=radyo.example.com&sz=128');
+      expect(withHome.logoUrl, 'https://www.radio-browser.info/favicon.ico');
       expect(withHome.toTrack().coverUrl, withHome.logoUrl);
 
       final noHome = RadioStation(

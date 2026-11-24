@@ -134,7 +134,7 @@ Loglar yalnızca cihazda `repair_bot_logs.json` dosyasına yazılır; e-posta ve
 ```
 README.md                  Bu dosya: özellikler, kurulum, uyum, güncelleme, gizlilik
 LICENSE                    MIT lisans
-pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.49+250)
+pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.53+254)
 analysis_options.yaml      Dart/Flutter linter kuralları
 .metadata                  Flutter proje metadata
 release.sh                 Build → analyze/test → artifact → GitHub release → push
@@ -265,6 +265,24 @@ flutter build ios --release --no-codesign \
   --obfuscate --split-debug-info=build/ios/symbols  # macOS'ta
 flutter build web --release
 ```
+
+### 3.0.53+254 — akış çözümleme ve kapak yenileme
+
+- **Daha hızlı parça açılışı:** YouTube ses adresi, resmî InnerTube
+  `VISIONOS` istemcisi ve oturum kimliğiyle çözülüyor; ölü yansıma sunucuları
+  beklenmiyor. Ölçüm: `9WY6g8nGmPE` 483 ms, `3bfkyXtuIXk` 196 ms.
+- **Otomatik atlama yok:** akış/otorite hatasında parça aynı sırada kalıyor,
+  kullanıcıya Türkçe hata gösteriliyor; radyo modu da hata durumunda başka
+  parçaya geçmiyor.
+- **Ana sayfa kapakları:** `CoverImage` artık iki CDN yolunu deniyor, görüntülenen
+  boyuta göre decode ediyor ve pull-to-refresh sonrası yeni cache nesliyle
+  kapakları taze indiriyor. Emülatörde yenileme sonrası 8 yeni 320×180 JPEG
+  doğrulandı.
+- **Radyo korundu:** Türk radyoları listesi, logo/arama/HTTPS/HTTP/HLS akışları
+  ve beş desteklenen YouTube bağlantı biçimi aynı.
+- Doğrulama: `flutter analyze` 0 issue, `flutter test` 91/91; emülatörde
+  `PLAYING` + ilerleyen pozisyon, radyo çalma, kapak yenileme, YouTube
+  aktivitesi/WebView olmadığı kontrol edildi.
 
 ### 3.0.48+249 — Türk radyoları ve anında çalma
 

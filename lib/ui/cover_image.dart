@@ -13,7 +13,14 @@ class CoverImage extends StatelessWidget {
     this.borderRadius = 8,
     this.fit = BoxFit.cover,
     this.iconSize = 34,
+    this.cacheKey,
   });
+
+  /// Kapak yenileme nesli. Pull-to-refresh sonrası aynı URL yeniden indirilir;
+  /// aksi halde CachedNetworkImage eski dosyayı sonsuza kadar gösterir.
+  static int _epoch = 0;
+
+  static void refresh() => _epoch++;
 
   final String url;
   final double width;
@@ -21,6 +28,7 @@ class CoverImage extends StatelessWidget {
   final double borderRadius;
   final BoxFit fit;
   final double iconSize;
+  final String? cacheKey;
 
   String? _fallbackUrl() {
     final uri = Uri.tryParse(url);
@@ -55,10 +63,13 @@ class CoverImage extends StatelessWidget {
     final ratio = MediaQuery.devicePixelRatioOf(context).clamp(1.0, 2.0);
     final cacheWidth = width.isFinite ? (width * ratio).round() : null;
     final cacheHeight = height.isFinite ? (height * ratio).round() : null;
+    final primaryKey = cacheKey ?? '$url#$_epoch';
+    final fallbackKey = fallback == null ? null : '$fallback#$_epoch';
     return ClipRRect(
       borderRadius: BorderRadius.circular(borderRadius),
       child: CachedNetworkImage(
         imageUrl: url,
+        cacheKey: primaryKey,
         width: width,
         height: height,
         memCacheWidth: cacheWidth,
@@ -66,15 +77,18 @@ class CoverImage extends StatelessWidget {
         fit: fit,
         placeholder: (_, __) => _placeholder(),
         errorWidget: (_, __, ___) {
-          if (fallback == null) return _error(Icons.music_note);
-          return Image.network(
-            fallback,
+          if (fallback == null || fallbackKey == null) {
+            return _error(Icons.music_note);
+          }
+          return CachedNetworkImage(
+            imageUrl: fallback,
+            cacheKey: fallbackKey,
             width: width,
             height: height,
-            cacheWidth: cacheWidth,
-            cacheHeight: cacheHeight,
+            memCacheWidth: cacheWidth,
+            memCacheHeight: cacheHeight,
             fit: fit,
-            errorBuilder: (_, __, ___) => _error(Icons.music_note),
+            errorWidget: (_, __, ___) => _error(Icons.music_note),
           );
         },
       ),

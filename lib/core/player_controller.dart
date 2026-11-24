@@ -105,10 +105,10 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   static const Duration _radioTimeout = Duration(seconds: 10);
   static const int _maxQueueLength = 50;
 
-  /// Yavaş ağlarda adres çözümü/akış açılışı için önceki 5/9 sn limitleri
-  /// "bazı parçalar hiç açılmıyordu" şikayetine yol açıyordu.
-  static const Duration _resolveTimeout = Duration(seconds: 20);
-  static const Duration _openTimeout = Duration(seconds: 20);
+  /// Adres çözümü artık tek taze InnerTube isteği; 20 sn beklemek gerekmiyor.
+  /// Hata durumunda parça aynı yerde kalır, kullanıcı tekrar dener.
+  static const Duration _resolveTimeout = Duration(seconds: 8);
+  static const Duration _openTimeout = Duration(seconds: 10);
   // Motor "ready" sinyali göndermeden de play() çoğu zaman çalışır. 5 sn
   // beklemek her parçada gereksiz gecikmeydi; kısa süre sonra play() yine
   // denenir (bkz. _ensurePlaying).
@@ -335,8 +335,8 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     } catch (_) {}
   }
 
-  /// AudioBlocked/stream hatasında: bir kez forceDirect, sonra alternatif
-  /// kaynak, sonra kullanıcıya anlaşılır hata.
+  /// AudioBlocked/stream hatasında taze oturumla bir kez dener, sonra aynı
+  /// parçada hata gösterir. Otomatik sonraki parçaya geçiş kaldırıldı.
   Future<void> _failOrRecover({
     required Track track,
     required Duration? resumeAt,
@@ -363,27 +363,6 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         );
         if (failure == null || _isStale(transition, generation)) return;
       }
-
-      // Alternatif kaynak: cache tamamen temizlenip servisin Invidious
-      // dahil tüm çözüm yolları sıfırdan denenir.
-      YoutubeService.instance.clearCache();
-      Uri? alternative;
-      try {
-        alternative = await YoutubeService.instance
-            .audioUri(track.id)
-            .timeout(_resolveTimeout);
-      } catch (_) {}
-      if (_isStale(transition, generation)) return;
-      if (alternative != null) {
-        final failure = await _tryOpen(
-          alternative,
-          track: track,
-          resumeAt: resumeAt,
-          transition: transition,
-          generation: generation,
-        );
-        if (failure == null || _isStale(transition, generation)) return;
-      }
     }
 
     if (_isStale(transition, generation)) return;
@@ -394,23 +373,15 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         code = 'offline';
       }
     } catch (_) {}
-    // Radyo modunda hata "completed" üretmediği için kuyruk duruyordu.
-    // Tekrar ve radyo açıksa sessiz kalmak yerine sonraki parçaya geç.
-    final skipForRadio = _radioUsable &&
-        _repeatMode == RepeatMode.off &&
-        _queue.length > 1 &&
-        !_isStale(transition, generation);
     _loading = false;
-    _error = skipForRadio ? null : code;
+    _error = code;
     unawaited(RepairBot.instance.reportEvent('playback_alternative_failed', {
       'video_id': track.id,
       'blocked': blocked,
       'code': code,
-      'radio_skip': skipForRadio,
     }));
     _broadcast();
     notifyListeners();
-    if (skipForRadio) unawaited(_advance(auto: true));
   }
 
   Future<Uri> _resolveTrack(Track track) async {

@@ -41,15 +41,10 @@ class RadioStation {
   final int clickCount;
   final bool hls;
 
-  /// Katalog logosu yoksa istasyon domain favicon'u, o da yoksa radyo
-  /// kataloğunun kendi logosu kullanılır. Böylece listede ve medya
-  /// bildiriminde her istasyonun bir görseli olur.
+  /// Katalog logosu yoksa radyo kataloğunun kendi logosu kullanılır.
+  /// Google favicon servisine istek gönderilmez.
   String get logoUrl {
     if (favicon.isNotEmpty) return favicon;
-    final host = Uri.tryParse(homepage)?.host;
-    if (host != null && host.isNotEmpty) {
-      return 'https://www.google.com/s2/favicons?domain=$host&sz=128';
-    }
     return 'https://www.radio-browser.info/favicon.ico';
   }
 

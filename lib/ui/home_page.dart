@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:cloudtune/core/app_palette.dart';
 
@@ -27,6 +26,7 @@ import '../screens/playlist_page.dart';
 import '../screens/radio_page.dart';
 import '../screens/room_page.dart';
 import '../screens/settings_screen.dart';
+import 'cover_image.dart';
 import 'mini_player.dart';
 import 'search_ui.dart';
 
@@ -194,6 +194,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _refreshFeed() async {
+    // Aynı kapak URL'si cache'de kaldığı için yeni arama gelse bile eski
+    // görsel görünüyordu. Yeni nesil anahtar tüm kartları taze indirir.
+    CoverImage.refresh();
     setState(() => _prepareFeed(refresh: true));
     try {
       await Future.wait(_feedFutures.values, eagerError: false)
@@ -1587,16 +1590,12 @@ class _ArtCard extends StatelessWidget {
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
-              child: CachedNetworkImage(
-                imageUrl: track.thumb,
+              child: CoverImage(
+                url: track.thumb,
                 width: width,
                 height: width,
-                fit: BoxFit.cover,
-                placeholder: (_, __) => Container(color: AppPalette.card),
-                errorWidget: (_, __, ___) => Container(
-                  color: AppPalette.card,
-                  child: const Icon(Icons.music_note, size: 40),
-                ),
+                borderRadius: 10,
+                iconSize: 40,
               ),
             ),
             const SizedBox(height: 6),
