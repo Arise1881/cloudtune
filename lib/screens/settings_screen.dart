@@ -441,11 +441,16 @@ class SettingsScreen extends StatelessWidget {
 
   Future<void> _installUpdate(BuildContext context) async {
     final update = UpdateService.instance;
-    // Windows'ta indirilecek paket yok: applyUpdate() GitHub sayfasını açar.
-    if (update.platform != UpdatePlatform.windows) {
-      final path = await update.prepareDownload();
-      if (path == null || !context.mounted) return;
+    if (update.platform == UpdatePlatform.windows) {
+      final message = await update.applyUpdate();
+      if (!context.mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+      return;
     }
+    final path = await update.prepareDownload();
+    if (path == null || !context.mounted) return;
     final message = await update.applyUpdate();
     if (!context.mounted) return;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(

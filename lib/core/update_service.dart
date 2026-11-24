@@ -24,20 +24,62 @@ const List<String> kUpdateManifestFallbacks = <String>[
 const String kSourceUrl =
     'altstore://source?url=https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/apps.json';
 
-/// Windows güncellemeleri uygulama içinde kurulmaz; GitHub sürüm sayfasına
-/// yönlendirilir. Sürüm numarası ve update.json manifest'i değişmez.
-const String kWindowsReleasesUrl =
+const String kReleasePageUrl =
     'https://github.com/Arise1881/cloudtune-dist/releases/tag/cloudtune-latest';
 
 /// Açık uygulamanın kendiliğinden yeni sürümü fark etmesi için kontrol aralığı.
 const Duration kUpdateCheckInterval = Duration(hours: 6);
 
-/// Uygulama arka plandan öne döndüğünde manifest'i tekrar sorma eşiği.
-/// 6 saatlik periyodik kontrol, açık kalan cihazda güncellemenin geç
-/// görünmesine yol açıyordu; resume'da 1 dakika yeterli.
-const Duration kResumeCheckInterval = Duration(minutes: 1);
-
 enum UpdatePlatform { android, linux, windows, ios, unknown }
+
+/// Platform/ABI için doğru güncelleme dosyasını seçer.
+///
+/// Eski sürümlerde her platform Android APK'sını indiriyordu; Linux/Windows
+/// kullanıcısı kurulum yerine APK dosyasını açmaya çalışıyordu. Saf fonksiyon
+/// olduğu için test edilebilir; indirme yolu tek kaynaktan belirlenir.
+String? updateAssetUrl({
+  required UpdateInfo info,
+  required UpdatePlatform platform,
+  required ffi.Abi abi,
+}) {
+  switch (platform) {
+    case UpdatePlatform.android:
+      final specific = switch (abi) {
+        ffi.Abi.androidArm64 => info.androidArm64Url,
+        ffi.Abi.androidArm => info.androidArmv7Url,
+        ffi.Abi.androidX64 => info.androidX64Url,
+        ffi.Abi.androidIA32 => info.androidUniversalUrl,
+        _ => null,
+      };
+      return specific ?? info.androidUniversalUrl ?? info.androidArm64Url;
+    case UpdatePlatform.linux:
+      return info.linuxDebUrl;
+    case UpdatePlatform.windows:
+      return info.windowsZipUrl;
+    case UpdatePlatform.ios:
+    case UpdatePlatform.unknown:
+      return null;
+  }
+}
+
+/// Seçilen dosyanın yerel adı. Aynı ad, hazırlanmış dosyanın doğrulanması
+/// için de kullanılır; eski sürümden kalan yanlış uzantılı dosya asla kurulmaz.
+String updateAssetFileName({
+  required UpdateInfo info,
+  required UpdatePlatform platform,
+  required ffi.Abi abi,
+}) {
+  final version = info.version;
+  return switch (platform) {
+    UpdatePlatform.android => 'cloudtune_update_$version.apk',
+    UpdatePlatform.linux =>
+      'cloudtune_${version}_${info.versionCode}_amd64.deb',
+    UpdatePlatform.windows => 'CloudTune-$version-windows.zip',
+    UpdatePlatform.ios ||
+    UpdatePlatform.unknown =>
+      'cloudtune_update_$version.bin',
+  };
+}
 
 class UpdateInfo {
   final String version;
@@ -73,6 +115,7 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
 
   static final UpdateService instance = UpdateService._();
 
+  bool _disposed = false;
   Timer? _periodicCheck;
   DateTime? _lastCheck;
   bool _checking = false;
@@ -84,8 +127,11 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
   UpdateInfo? _latest;
   String _installedVersion = '0.0.0';
   int _installedBuild = 0;
+  Future<String?>? _downloadFuture;
+  String? _downloadKey;
   String? _preparedApkPath;
   String? _preparedVersion;
+  String? _preparedAssetName;
 
   bool get checking => _checking;
   bool get downloading => _downloading;
@@ -106,16 +152,17 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) return;
+    if (_disposed || state != AppLifecycleState.resumed) return;
     final last = _lastCheck;
-    // Ön plana her dönüşte (en az 1 dakika arayla) bak: 6 saatlik periyodik
-    // kontrol açık kalan uygulamada güncellemenin geç görünmesine yol açıyordu.
-    if (last == null || DateTime.now().difference(last) >= kResumeCheckInterval) {
+    // Uygulama uzun süre kapalı kaldıysa açılır açılmaz yeniden bak; aksi
+    // halde son kontrolün üzerinden 6 saatten fazla geçtiyse kontrol et.
+    if (last == null || DateTime.now().difference(last) >= kUpdateCheckInterval) {
       unawaited(checkForUpdate());
     }
   }
 
   Future<void> init() async {
+    if (_disposed) return;
     try {
       final info = await PackageInfo.fromPlatform();
       _installedVersion = info.version;
@@ -123,9 +170,25 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     } catch (_) {}
     _periodicCheck?.cancel();
     _periodicCheck = Timer.periodic(kUpdateCheckInterval, (_) {
+      if (_disposed) return;
       unawaited(checkForUpdate());
     });
     unawaited(checkForUpdate());
+  }
+
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _periodicCheck?.cancel();
+    _periodicCheck = null;
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   /// Yeni sürüm karşılaştırması hem semver hem build numarasını dikkate alır.
@@ -140,25 +203,20 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> checkForUpdate({bool force = false}) async {
+    // Daha önce "güncelleme var" bayrağı açıkken koruma atlanıyordu; periyodik
+    // ve elle kontrol aynı anda manifest işleyip hazırlanmış dosyayı silebiliyordu.
     if (_checking) return;
-    if (force || !_updateAvailable) {
-      _checking = true;
-      _error = null;
-    }
+    _checking = true;
+    _error = null;
     _lastCheck = DateTime.now();
     try {
       final manifest = await _fetchManifest();
       _latest = manifest;
       _latestVersion = manifest.version;
       _updateAvailable = _isNewer(manifest);
-      // Yeni sürüm geldiyse önceki sürümden kalan APK'yı geçersiz kıl.
+      // Yeni sürüm geldiyse önceki sürümden kalan dosyayı geçersiz kıl.
       if (_preparedApkPath != null && _preparedVersion != manifest.version) {
-        final old = File(_preparedApkPath!);
-        _preparedApkPath = null;
-        _preparedVersion = null;
-        try {
-          if (await old.exists()) await old.delete();
-        } catch (_) {}
+        await _invalidatePrepared();
       }
       _error = null;
     } catch (e) {
@@ -172,6 +230,20 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
       _checking = false;
       notifyListeners();
     }
+  }
+
+  Future<void> _invalidatePrepared() async {
+    final old = _preparedApkPath;
+    _preparedApkPath = null;
+    _preparedVersion = null;
+    _preparedAssetName = null;
+    // İndirme sürüyorsa dosya üzerinde yazma tamamlanmadan silmeyiz; indirme
+    // bitince zaten yeni sürüm kontrolü yapılır.
+    if (old == null || _downloadFuture != null) return;
+    try {
+      final file = File(old);
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
   }
 
   Future<UpdateInfo> _fetchManifest() async {
@@ -216,37 +288,49 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  /// Cihazın ABI'sine uygun APK'yı seçer. Evrensel paket her cihazda
-  /// çalıştığı için son çare olarak kullanılır; eski/x86 cihazlara yanlış
-  /// arm64 paketinin inmesini engeller.
-  String? get _androidApkUrl {
+  String? get _assetUrl {
     final info = _latest;
     if (info == null) return null;
-    final specific = switch (ffi.Abi.current()) {
-      ffi.Abi.androidArm64 => info.androidArm64Url,
-      ffi.Abi.androidArm => info.androidArmv7Url,
-      ffi.Abi.androidX64 => info.androidX64Url,
-      ffi.Abi.androidIA32 => info.androidUniversalUrl,
-      _ => null,
-    };
-    return specific ?? info.androidUniversalUrl ?? info.androidArm64Url;
+    return updateAssetUrl(
+      info: info,
+      platform: platform,
+      abi: ffi.Abi.current(),
+    );
   }
 
-  /// Downloads the APK ahead of time so the dialog can install it instantly.
+  String? get _assetFileName {
+    final info = _latest;
+    if (info == null) return null;
+    return updateAssetFileName(
+      info: info,
+      platform: platform,
+      abi: ffi.Abi.current(),
+    );
+  }
+
+  /// Platforma uygun dosyayı önceden indirir; iOS doğrudan kurulum
+  /// desteklemediği için yalnızca kaynak bağlantısı açılır.
   Future<String?> prepareDownload() async {
-    // Windows'ta paket indirilmez; applyUpdate() yalnızca sürüm sayfasını açar.
-    // APK hazırlamak gereksiz trafik olur.
-    if (platform == UpdatePlatform.windows) return null;
     final existing = _preparedApkPath;
     if (existing != null) return existing;
     final info = _latest;
-    if (info == null) return null;
-    final url = _androidApkUrl;
-    if (url == null) return null;
-    final path = await _download(url, 'cloudtune_update_${info.version}.apk');
+    final url = _assetUrl;
+    final name = _assetFileName;
+    if (info == null || url == null || name == null) return null;
+    final path = await _download(url, name);
     if (path == null) return null;
+    // İndirme sürerken yeni manifest gelebilir; eski sürüm dosyasını hazır
+    // olarak işaretlemeyiz.
+    if (!identical(_latest, info)) {
+      try {
+        final file = File(path);
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+      return null;
+    }
     _preparedApkPath = path;
     _preparedVersion = info.version;
+    _preparedAssetName = name;
     notifyListeners();
     return path;
   }
@@ -255,17 +339,8 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     final info = _latest;
     if (info == null) return 'Güncelleme bilgisi yok.';
 
-    if (platform == UpdatePlatform.windows) {
-      // Windows ZIP'i uygulama içinde indirip açmıyoruz; kullanıcıyı GitHub
-      // sürüm sayfasına yönlendiriyoruz. Sürüm/manifest değişmez.
-      final result = await OpenFilex.open(kWindowsReleasesUrl);
-      return result.type == ResultType.done
-          ? 'GitHub sürüm sayfası açıldı.'
-          : 'Sayfa açılamadı: $kWindowsReleasesUrl';
-    }
-
     if (platform == UpdatePlatform.ios) {
-      // iOS'ta doğrudan APK kurulamaz; AltStore kaynağını açıyoruz.
+      // iOS'ta doğrudan paket kurulamaz; AltStore kaynağını açıyoruz.
       final url = info.iosSourceUrl ?? kSourceUrl;
       final result = await OpenFilex.open(url);
       return result.type == ResultType.done
@@ -273,41 +348,100 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
           : 'Kaynak açılamadı: $url';
     }
 
-    final isLinux = platform == UpdatePlatform.linux;
-    final url = isLinux ? info.linuxDebUrl : _androidApkUrl;
-    if (url == null) return 'Bu platform için güncelleme bağlantısı yok.';
+    if (platform == UpdatePlatform.windows) {
+      final ok = await _openExternalUrl(kReleasePageUrl);
+      return ok
+          ? 'GitHub sürüm sayfası açıldı. En güncel Windows kurulum dosyasını indirip kurabilirsiniz.'
+          : 'Sürüm sayfası açılamadı: $kReleasePageUrl';
+    }
+
+    final url = _assetUrl;
+    final name = _assetFileName;
+    if (url == null || name == null) {
+      return 'Bu platform için güncelleme bağlantısı yok.';
+    }
 
     var path = _preparedApkPath;
-    if (path == null || _preparedVersion != info.version) {
-      final name = isLinux
-          ? 'cloudtune_${info.version}_${info.versionCode}_amd64.deb'
-          : 'cloudtune_update.apk';
+    if (path == null ||
+        _preparedVersion != info.version ||
+        _preparedAssetName != name) {
+      await _invalidatePrepared();
       path = await _download(url, name);
       if (path == null) return 'İndirme başarısız.';
+      if (!identical(_latest, info)) {
+        try {
+          final file = File(path);
+          if (await file.exists()) await file.delete();
+        } catch (_) {}
+        return 'Güncelleme değişti. Lütfen tekrar deneyin.';
+      }
       _preparedApkPath = path;
       _preparedVersion = info.version;
+      _preparedAssetName = name;
     }
 
     final result = await OpenFilex.open(path);
     if (result.type != ResultType.done) {
       return 'Kurulum başlatılamadı. Dosya: $path';
     }
-    return isLinux
-        ? 'Paket indirildi. Kurulumu onaylayın.'
-        : 'İndirildi. Kurulum izninizi verin.';
+    return switch (platform) {
+      UpdatePlatform.windows =>
+        'Windows paketi indirildi. ZIP içindeki cloudtune.exe ile temiz kurulum yapın.',
+      UpdatePlatform.linux => 'Paket indirildi. Kurulumu onaylayın.',
+      _ => 'İndirildi. Kurulum izninizi verin.',
+    };
   }
 
-  Future<String?> _download(String url, String fileName) async {
+  /// Aynı dosya için eşzamanlı indirmeleri birleştirir; farklı dosyalar
+  /// sırayla indirilir. Yarım kalan dosya hata durumunda silinir.
+  Future<String?> _download(String url, String fileName) {
+    final key = '$url|$fileName';
+    final active = _downloadFuture;
+    if (active != null) {
+      if (_downloadKey == key) return active;
+      return _downloadAfter(active, url, fileName);
+    }
+    return _startDownload(url, fileName, key);
+  }
+
+  Future<String?> _downloadAfter(
+    Future<String?> active,
+    String url,
+    String fileName,
+  ) async {
+    try {
+      await active;
+    } catch (_) {}
+    final next = _downloadFuture;
+    if (next != null) return _downloadAfter(next, url, fileName);
+    return _download(url, fileName);
+  }
+
+  Future<String?> _startDownload(String url, String fileName, String key) {
+    late final Future<String?> future;
+    future = _performDownload(url, fileName).whenComplete(() {
+      if (identical(_downloadFuture, future)) {
+        _downloadFuture = null;
+        _downloadKey = null;
+      }
+    });
+    _downloadFuture = future;
+    _downloadKey = key;
+    return future;
+  }
+
+  Future<String?> _performDownload(String url, String fileName) async {
     _downloading = true;
     _downloadProgress = 0;
     notifyListeners();
 
     final client = http.Client();
     IOSink? sink;
+    File? target;
     try {
       final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/$fileName');
-      if (await file.exists()) await file.delete();
+      target = File('${dir.path}/$fileName');
+      if (await target.exists()) await target.delete();
 
       final response = await client.send(http.Request('GET', Uri.parse(url)));
       if (response.statusCode != 200) {
@@ -315,9 +449,11 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
       }
 
       final total = response.contentLength ?? 0;
-      sink = file.openWrite();
+      sink = target.openWrite();
       var received = 0;
-      await for (final chunk in response.stream) {
+      await for (final chunk in response.stream.timeout(
+        const Duration(seconds: 45),
+      )) {
         sink.add(chunk);
         received += chunk.length;
         if (total > 0) _downloadProgress = received / total;
@@ -326,8 +462,19 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
       await sink.close();
       sink = null;
       _downloadProgress = 1;
-      return file.path;
+      return target.path;
     } catch (_) {
+      if (sink != null) {
+        try {
+          await sink.close();
+        } catch (_) {}
+        sink = null;
+      }
+      if (target != null) {
+        try {
+          if (await target.exists()) await target.delete();
+        } catch (_) {}
+      }
       return null;
     } finally {
       if (sink != null) {
@@ -452,5 +599,26 @@ class UpdateBanner extends StatelessWidget {
     messenger?.showSnackBar(
       SnackBar(content: Text(await update.applyUpdate())),
     );
+  }
+
+  Future<bool> _openExternalUrl(String url) async {
+    try {
+      if (Platform.isWindows) {
+        final result = await Process.run('cmd', ['/c', 'start', '', url]);
+        return result.exitCode == 0;
+      }
+      if (Platform.isLinux) {
+        final result = await Process.run('xdg-open', [url]);
+        return result.exitCode == 0;
+      }
+      if (Platform.isMacOS) {
+        final result = await Process.run('open', [url]);
+        return result.exitCode == 0;
+      }
+      final result = await OpenFilex.open(url);
+      return result.type == ResultType.done;
+    } catch (_) {
+      return false;
+    }
   }
 }

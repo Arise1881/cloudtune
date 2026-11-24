@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=CloudTune
+Comment=Open source, ad-free music player
+Exec=/opt/cloudtune/cloudtune %U
+Icon=cloudtune
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Player;
+Keywords=music;youtube;player;audio;
+StartupWMClass=cloudtune
+MimeType=x-scheme-handler/cloudtune;
