@@ -144,6 +144,8 @@ class TurkishRadioService extends ChangeNotifier {
   bool _loading = false;
   String? _error;
   Future<List<RadioStation>>? _future;
+  Timer? _retryTimer;
+  int _retryFailures = 0;
 
   List<RadioStation> get stations => List<RadioStation>.unmodifiable(_all);
   bool get loading => _loading;
@@ -151,6 +153,13 @@ class TurkishRadioService extends ChangeNotifier {
 
   Future<List<RadioStation>> load({bool refresh = false}) {
     if (!refresh && _all.isNotEmpty) {
+      // Önbellek varken eski hata yapışmasın. Liste kullanılabilir durumda;
+      // tazeleme arka planda geri çekilme ile denenir.
+      if (_error != null) {
+        _error = null;
+        notifyListeners();
+        _scheduleRetry();
+      }
       return Future<List<RadioStation>>.value(stations);
     }
     final running = _future;
@@ -179,6 +188,9 @@ class TurkishRadioService extends ChangeNotifier {
       if (fetched.isEmpty) throw const FormatException('Radyo listesi boş.');
       _all = fetched;
       await _writeCache(fetched);
+      _retryFailures = 0;
+      _retryTimer?.cancel();
+      _retryTimer = null;
       return stations;
     } catch (error) {
       _error = 'Radyo listesi alınamadı.';
@@ -188,11 +200,28 @@ class TurkishRadioService extends ChangeNotifier {
         _all = cached;
         if (cached.isNotEmpty) _error = null;
       }
+      if (_all.isNotEmpty) _scheduleRetry();
       return stations;
     } finally {
       _loading = false;
       notifyListeners();
     }
+  }
+
+  /// Geçici radio-browser hatası listeyi kalıcı olarak bozmasın. Başarılı
+  /// yanıta veya elle yenilemeye kadar geri çekilme ile tekrar dener.
+  void _scheduleRetry() {
+    if (_retryTimer?.isActive == true || _future != null) return;
+    _retryFailures++;
+    var minutes = 1;
+    for (var i = 1; i < _retryFailures && minutes < 15; i++) {
+      minutes *= 2;
+    }
+    if (minutes > 15) minutes = 15;
+    _retryTimer = Timer(Duration(minutes: minutes), () {
+      _retryTimer = null;
+      unawaited(load(refresh: true));
+    });
   }
 
   Future<List<RadioStation>> _fetchAll() async {

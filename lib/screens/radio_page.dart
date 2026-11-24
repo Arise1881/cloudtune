@@ -110,7 +110,7 @@ class _RadioPageState extends State<RadioPage> {
                   ],
                 ),
               ),
-              if (_service.error != null && list.isNotEmpty)
+              if (_service.error != null)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                   child: Text(

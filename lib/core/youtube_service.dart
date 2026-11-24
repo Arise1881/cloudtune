@@ -76,6 +76,8 @@ class YoutubeService {
 
   static const int _maxSearchResults = 50;
   static const int _maxSearchEntries = 40;
+  static const int _maxUriEntries = 120;
+  static const int _maxPlayabilityEntries = 120;
 
   /// Sırayla denen herkese açık Invidious örnekleri.
   static const List<String> _invBases = [
@@ -746,9 +748,51 @@ class YoutubeService {
   }
 
   void _remember(String id, Uri uri) {
+    final now = DateTime.now();
     _cache[id] = uri;
-    _cachedAt[id] = DateTime.now();
+    _cachedAt[id] = now;
+    _uriCheckedAt[id] = now;
+    _trimUriCaches();
+  }
+
+  void _touchUri(String id) {
     _uriCheckedAt[id] = DateTime.now();
+    _trimUriCaches();
+  }
+
+  /// TTL yalnızca anahtar tekrar okununca işliyordu. Bir oturumda binlerce
+  /// farklı parça aranırsa adres/zaman/playability haritaları sürekli büyüyordu.
+  /// Her yazımda en eski kayıtlar atılır; sınır bellek kullanımını sabit tutar.
+  void _trimUriCaches() {
+    if (_cache.length > _maxUriEntries) {
+      final excess = _cache.keys
+          .take(_cache.length - _maxUriEntries)
+          .toList(growable: false);
+      for (final id in excess) {
+        _dropUri(id);
+      }
+    }
+    if (_uriCheckedAt.length > _maxUriEntries) {
+      final excess = _uriCheckedAt.keys
+          .take(_uriCheckedAt.length - _maxUriEntries)
+          .toList(growable: false);
+      for (final id in excess) {
+        _uriCheckedAt.remove(id);
+      }
+    }
+    if (_playability.length > _maxPlayabilityEntries) {
+      final excess = _playability.keys
+          .take(_playability.length - _maxPlayabilityEntries)
+          .toList(growable: false);
+      for (final id in excess) {
+        _playability.remove(id);
+      }
+    }
+  }
+
+  void _setPlayability(String id, String value) {
+    _playability[id] = value;
+    _trimUriCaches();
   }
 
   /// İmzalı URI'nin hâlâ geçerli olup olmadığını kontrol eder.
@@ -829,7 +873,7 @@ class YoutubeService {
       final needsCheck = checked == null ||
           DateTime.now().difference(checked) > _uriValidationTtl;
       if (!needsCheck || await _isUriUsable(cached)) {
-        _uriCheckedAt[id] = DateTime.now();
+        _touchUri(id);
         return cached;
       }
       _dropUri(id);
@@ -844,7 +888,7 @@ class YoutubeService {
   /// Zincirleme yedekler parça açılışını 20+ saniye geciktiriyordu; hata
   /// durumunda aynı parçada kalıp kullanıcıya tek seferde hata gösterilir.
   Future<Uri?> forceDirect(String id) async {
-    if (id.isEmpty) return null;
+    if (id.isEmpty || id.startsWith('radio:')) return null;
     _dropUri(id);
     _playability.remove(id);
     _visitorData = null;
@@ -1014,7 +1058,7 @@ class YoutubeService {
       if (status is Map && status['status'] is String) {
         final value = status['status'] as String;
         if (value != 'OK') {
-          _playability[id] = value;
+          _setPlayability(id, value);
           // Oturum kimliği bayatsa yanıttaki yeni kimlikle bir kez tekrarla.
           final fresh = _visitorFrom(data);
           if (allowVisitorRefresh && fresh != null && fresh != visitor) {

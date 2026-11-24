@@ -66,6 +66,31 @@ void main() {
       expect(local.thumb, 'https://example.com/cover.jpg');
     });
 
+    test('Invidious görece kapak adresleri mutlak hale gelir', () {
+      const relative = Track(
+        id: 'abc',
+        title: 'Test',
+        artist: 'Test',
+        coverUrl: '/vi/abc/hqdefault.jpg',
+      );
+      expect(relative.thumb, 'https://i.ytimg.com/vi/abc/mqdefault.jpg');
+      expect(
+        relative.artwork,
+        'https://i.ytimg.com/vi/abc/hqdefault.jpg',
+      );
+
+      const protocolRelative = PlaylistInfo(
+        id: 'pl',
+        title: 'Liste',
+        author: 'Test',
+        thumbUrl: '//img.youtube.com/vi/xyz/hqdefault.jpg',
+      );
+      expect(
+        protocolRelative.thumb,
+        'https://img.youtube.com/vi/xyz/mqdefault.jpg',
+      );
+    });
+
     test('çalma listesi kapak dağıtımı URL küçültür', () {
       const playlist = PlaylistInfo(
         id: 'pl',

@@ -105,7 +105,9 @@ class JustAudioBackend implements AudioBackend {
   final Map<String, AudioPlayer> _pool = <String, AudioPlayer>{};
   final Set<String> _preparing = <String>{};
   final Map<String, int> _tokens = <String, int>{};
+  final Map<String, DateTime> _preparedAt = <String, DateTime>{};
   static const int _maxPrepared = 10;
+  static const Duration _preparedTtl = Duration(minutes: 10);
   final Map<AudioPlayer, AndroidEqualizer> _equalizers =
       <AudioPlayer, AndroidEqualizer>{};
 
@@ -234,6 +236,13 @@ class JustAudioBackend implements AudioBackend {
 
   bool _current(String key, int token) => _tokens[key] == token;
 
+  void _dropPrepared(String key, AudioPlayer player) {
+    _pool.remove(key);
+    _preparedAt.remove(key);
+    _equalizers.remove(player);
+    unawaited(player.dispose().catchError((Object _) {}));
+  }
+
   /// Görünen parçanın ilk saniyesini ayrı bir motorla arka planda tamponlar.
   /// Mikrofon sessiz tutulur; kullanıcı dokunana kadar duyulmaz.
   @override
@@ -245,6 +254,16 @@ class JustAudioBackend implements AudioBackend {
   }) async {
     final key = _prepareKey(uri, initialPosition);
     if (_pool.containsKey(key) || _preparing.contains(key)) return;
+    final now = DateTime.now();
+    for (final entry in _preparedAt.entries.toList(growable: false)) {
+      if (now.difference(entry.value) <= _preparedTtl) continue;
+      final stale = _pool[entry.key];
+      if (stale != null) {
+        _dropPrepared(entry.key, stale);
+      } else {
+        _preparedAt.remove(entry.key);
+      }
+    }
     // Havuz dolunca eski hazırlıkları atma: kullanıcı genelde ilk gördüğü
     // kartlara dokunur, onların tamponunu korumak gecikmeyi asıl düşürüyor.
     if (_pool.length >= _maxPrepared || _preparing.length >= _maxPrepared) {
@@ -281,12 +300,14 @@ class JustAudioBackend implements AudioBackend {
       await player.pause();
       if (_current(key, token)) {
         _pool[key] = player;
+        _preparedAt[key] = DateTime.now();
       }
     } catch (_) {
     } finally {
       _preparing.remove(key);
       if (_tokens[key] == token) _tokens.remove(key);
       if (!_pool.containsKey(key)) {
+        _preparedAt.remove(key);
         _equalizers.remove(player);
         unawaited(player.dispose().catchError((Object _) {}));
       }
@@ -302,17 +323,20 @@ class JustAudioBackend implements AudioBackend {
   }) async {
     final key = _prepareKey(uri, initialPosition);
     final incoming = _pool.remove(key);
+    final preparedAt = _preparedAt.remove(key);
+    _tokens.remove(key);
     if (incoming == null) return false;
     // Havuzdayken kaynak hata veren/sonlanan bir motor `completed` durumunda
     // kalabilir. Aktif motora yükseltilirse bu bayat sinyal otomatik parça
-    // geçişi tetikler. Böyle bir motoru kullanmayıp normal açılışa düş.
-    if (_mapState(incoming.playerState) == PlaybackStatus.completed) {
+    // geçişi tetikler. Süresi dolan imzalı URI'nin tamponu da bayattır.
+    final expired = preparedAt == null ||
+        DateTime.now().difference(preparedAt) > _preparedTtl;
+    if (expired || _mapState(incoming.playerState) == PlaybackStatus.completed) {
       _equalizers.remove(incoming);
       unawaited(incoming.dispose().catchError((Object _) {}));
       return false;
     }
     final outgoing = _active;
-    _tokens[key] = (_tokens[key] ?? 0) + 1;
     try {
       await incoming.setVolume(1);
       // Referansı önce değiştir: yeni motordan gelecek ilk olaylar arayüze
@@ -326,6 +350,7 @@ class JustAudioBackend implements AudioBackend {
     } catch (_) {
       _active = outgoing;
       _pool[key] = incoming;
+      _preparedAt[key] = preparedAt;
       return false;
     }
   }

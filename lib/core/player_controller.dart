@@ -64,7 +64,11 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
     Connectivity().onConnectivityChanged.listen((results) {
       final online = results.any((r) => r != ConnectivityResult.none);
-      if (online && _recovering && current != null) {
+      if (!online) return;
+      // Ağ geri geldiyse onarıcının tüketilmiş deneme sayacını sıfırla;
+      // aksi halde tek hata sonsuza dek sessiz retry üretiyordu.
+      RepairBot.instance.notifyConnectivityRestored();
+      if (_recovering && current != null) {
         unawaited(_playAt(_index, resumeAt: _player.position, retry: true));
       }
     });
@@ -95,6 +99,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   bool _loading = false;
   bool _opening = false;
+  Future<void>? _sourceChange;
   bool _advancing = false;
   bool _recovering = false;
   bool _extending = false;
@@ -293,6 +298,24 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     );
   }
 
+  /// Kaynak değişimlerini sıraya sokar. Eski açılış çözümü yeni parçadan
+  /// sonra biterse motor yanlış parçada kalıyordu.
+  Future<void> _runSourceChange(Future<void> Function() action) async {
+    final previous = _sourceChange;
+    if (previous != null) {
+      try {
+        await previous;
+      } catch (_) {}
+    }
+    final current = action();
+    _sourceChange = current;
+    try {
+      await current;
+    } finally {
+      if (identical(_sourceChange, current)) _sourceChange = null;
+    }
+  }
+
   /// Kaynağı açar, hazır olana kadar bekler ve `play()`'i tam bir kez garanti
   /// eder. Hata döner; başarı/stale durumda null döner.
   Future<Object?> _tryOpen(
@@ -304,7 +327,15 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   }) async {
     _opening = true;
     try {
-      await _setSource(uri, resumeAt);
+      if (_isStale(transition, generation)) return null;
+      await _runSourceChange(
+        () => _setSource(
+          uri,
+          resumeAt,
+          transition: transition,
+          generation: generation,
+        ),
+      );
       if (_isStale(transition, generation)) return null;
 
       _loading = false;
@@ -376,7 +407,11 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     required int transition,
     required int generation,
   }) async {
-    if (retry) {
+    final directSource = track.sourceUrl != null && track.sourceUrl!.isNotEmpty;
+    final radioStation = track.id.startsWith('radio:');
+    // Radyo akışının URL'si zaten biliniyor; bozuk "radio:..." kimliğini
+    // YouTube'da çözümlemeye çalışmak 8 sn gereksiz gecikme yaratıyordu.
+    if (retry && !directSource && !radioStation) {
       Uri? direct;
       try {
         direct = await YoutubeService.instance
@@ -404,6 +439,9 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         code = 'offline';
       }
     } catch (_) {}
+    // Bağlantı kontrolü sırasında kullanıcı başka parçaya geçebilir. Bayat
+    // hata yeni parçanın üzerine yazılmasın.
+    if (_isStale(transition, generation)) return;
     _loading = false;
     _error = code;
     unawaited(RepairBot.instance.reportEvent('playback_alternative_failed', {
@@ -443,18 +481,23 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     return headers;
   }
 
-  Future<void> _setSource(Uri uri, Duration? resumeAt) async {
+  Future<void> _setSource(
+    Uri uri,
+    Duration? resumeAt, {
+    required int transition,
+    required int generation,
+  }) async {
+    if (_isStale(transition, generation)) return;
     final headers = _headersFor(uri);
     // Görünen kartlar arka planda tamponlandıysa dokunmada yalnızca play()
     // kalır; yeni akışın ilk paketini beklemek 2-3 saniye sürüyordu.
-    if (await _player.openAndPlayIfPrepared(
+    final promoted = await _player.openAndPlayIfPrepared(
       uri,
       headers: headers,
       initialPosition: resumeAt,
       tag: mediaItem.value,
-    )) {
-      return;
-    }
+    );
+    if (promoted || _isStale(transition, generation)) return;
     // Lazy preparation + play() aynı motor çağrısında: ExoPlayer/AVPlayer
     // tamponu beklerken medya oturumu zaten PLAYING durumuna geçer.
     await _player
@@ -703,7 +746,12 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     }
   }
 
-  Future<void> retry() => _playAt(_index, retry: true);
+  Future<void> retry() {
+    // Aynı parçada kullanıcı tekrar denedi: onarıcının geri çekilme sayacı
+    // sıfırlanır, fakat otomatik denemeler yeniden başlamaz.
+    RepairBot.instance.notifyPlaybackUserAction();
+    return _playAt(_index, retry: true);
+  }
 
   /// [minutes] 0 veya daha küçükse zamanlayıcı iptal edilir.
   Future<void> setSleepTimer(int minutes) async {

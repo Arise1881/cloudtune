@@ -1,12 +1,28 @@
+/// Invidious gibi kaynaklar kapağı `/vi/<id>/mqdefault.jpg` olarak döndürür.
+/// Böyle bir adres doğrudan `Image`/`CachedNetworkImage` için geçersizdir;
+/// YouTube kapak CDN'ine göre mutlak hale getirilir.
+String normalizeCoverUrl(String url) {
+  final value = url.trim();
+  if (value.isEmpty) return value;
+  if (value.startsWith('//')) return 'https:$value';
+  final uri = Uri.tryParse(value);
+  if (uri == null || uri.hasScheme || uri.host.isNotEmpty) return value;
+  if (value.startsWith('/')) {
+    return Uri.parse('https://i.ytimg.com$value').toString();
+  }
+  return value;
+}
+
 /// YouTube kapaklarını listeler için küçük varyanta indirger.
 /// `hqdefault`/`maxresdefault` gibi dosyalar 480–1280 px; 48–64 px'lik
 /// tile'larda aynı görsel `mqdefault` (320x180) ile yüklenir. Mobil veride
 /// kapak trafiği belirgin düşer, Wi-Fi'de de gereksiz indirme olmaz.
 String compactThumbnailUrl(String url) {
-  final uri = Uri.tryParse(url);
+  final absolute = normalizeCoverUrl(url);
+  final uri = Uri.tryParse(absolute);
   final youtubeThumbHost = uri?.host.endsWith('ytimg.com') == true ||
       uri?.host.endsWith('youtube.com') == true;
-  if (uri == null || !youtubeThumbHost) return url;
+  if (uri == null || !youtubeThumbHost) return absolute;
   final segments = uri.pathSegments;
   if (segments.length < 3 || segments[segments.length - 3] != 'vi') return url;
   if (segments.last == 'mqdefault.jpg') return uri.toString();
@@ -49,7 +65,9 @@ class Track {
       );
 
   /// Büyük kapak gerektiren yerler için orijinal URL korunur.
-  String get artwork => coverUrl ?? 'https://i.ytimg.com/vi/$id/hqdefault.jpg';
+  String get artwork => normalizeCoverUrl(
+        coverUrl ?? 'https://i.ytimg.com/vi/$id/hqdefault.jpg',
+      );
 
   String get watchUrl => 'https://www.youtube.com/watch?v=$id';
 

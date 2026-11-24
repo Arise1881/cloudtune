@@ -273,6 +273,7 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
   final List<Map<String, dynamic>> _queuedPublishes = [];
 
   bool _mobileData = false;
+  bool _online = true;
   bool _avatarDirty = false;
   int _presenceParity = 0;
   int _stateParity = 0;
@@ -283,6 +284,8 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
   MqttServerClient? _discoveryClient;
   StreamSubscription<List<MqttReceivedMessage<MqttMessage>>>? _discoverySub;
   Timer? _discoveryTimer;
+  Timer? _discoveryRetryTimer;
+  int _discoveryFailures = 0;
   bool _discoveryStarting = false;
   String _discoveryError = '';
 
@@ -787,10 +790,11 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
   }
 
   Future<bool> _attach() async {
+    MqttServerClient? client;
     try {
       // Yeniden bağlanmada suffix değişmesin: aynı istemci kimliği korunur.
       final id = 'ct_$_clientId';
-      final client = MqttServerClient.withPort(
+      client = MqttServerClient.withPort(
         RoomRelay.host,
         id,
         RoomRelay.port,
@@ -871,6 +875,17 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
       _client = client;
       return true;
     } catch (error) {
+      // connect() sonrası bir istisna autoReconnect'li istemciyi referanssız
+      // bırakıyordu; her başarısız katılım bir soket/zamanlayıcı sızdırıyordu.
+      if (client != null) {
+        try {
+          client.disconnect();
+        } catch (_) {}
+      }
+      if (_client == null) {
+        await _messageSub?.cancel();
+        _messageSub = null;
+      }
       _error = 'Bağlantı hatası: ${_shortError(error)}';
       return false;
     }
@@ -1598,7 +1613,18 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
     final hasWifi = results.contains(ConnectivityResult.wifi) ||
         results.contains(ConnectivityResult.ethernet);
     final next = hasMobile && !hasWifi;
-    if (next == _mobileData) return;
+    final online = hasMobile || hasWifi || results.contains(ConnectivityResult.other);
+    final wasOnline = _online;
+    _online = online;
+    // Açılışta relay'e ulaşılamadıysa ağ geri gelene kadar oda listesi
+    // ölü kalıyordu. Yeniden bağlanmayı ağ değişimine bağlayarak kurtarırız.
+    if (online && !wasOnline && _discoveryClient == null) {
+      unawaited(startDiscovery());
+    }
+    if (next == _mobileData) {
+      if (online != wasOnline) notifyListeners();
+      return;
+    }
     _mobileData = next;
     if (inRoom) _startStateTimer();
     // Keşif, odada olmasa bile açık kalır. Ağ değişince periyodu da
@@ -1717,6 +1743,7 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
     if (_discoveryClient != null && _discoverySub != null) return true;
     if (_discoveryStarting) return false;
     _discoveryStarting = true;
+    MqttServerClient? client;
     try {
       await init();
       // Keşif uygulama açılır açılmaz başlar; ağ türü oda dışındayken de
@@ -1725,7 +1752,7 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
       // Oda kanalından ayrı, sabit bir istemci kimliği: self-filter ve
       // oda katılımı birbirini etkilemesin.
       final id = 'ct_${_clientId}_disc';
-      final client = MqttServerClient.withPort(
+      client = MqttServerClient.withPort(
         RoomRelay.host,
         id,
         RoomRelay.port,
@@ -1754,14 +1781,16 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
       final refused = status?.returnCode;
       if (refused != null &&
           refused != MqttConnectReturnCode.connectionAccepted) {
-        client.disconnect();
+        _disposeDiscoveryClient(client);
         _discoveryError = _connectionMessage(refused);
+        _scheduleDiscoveryRetry();
         notifyListeners();
         return false;
       }
       if (client.connectionStatus?.state != MqttConnectionState.connected) {
-        client.disconnect();
+        _disposeDiscoveryClient(client);
         _discoveryError = 'Oda listesi alınamadı: relay sunucusuna ulaşılamadı.';
+        _scheduleDiscoveryRetry();
         notifyListeners();
         return false;
       }
@@ -1769,17 +1798,45 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
       client.subscribe(RoomRelay.discoveryTopic, MqttQos.atLeastOnce);
       _discoverySub = client.updates?.listen(_onDiscoveryMessages);
       _discoveryClient = client;
+      _discoveryFailures = 0;
+      _discoveryRetryTimer?.cancel();
+      _discoveryRetryTimer = null;
       _startDiscoveryTimer();
       _publishDiscovery();
       notifyListeners();
       return true;
     } catch (error) {
+      if (client != null) _disposeDiscoveryClient(client);
       _discoveryError = 'Oda listesi alınamadı: ${_shortError(error)}';
+      _scheduleDiscoveryRetry();
       notifyListeners();
       return false;
     } finally {
       _discoveryStarting = false;
     }
+  }
+
+  void _disposeDiscoveryClient(MqttServerClient client) {
+    try {
+      client.disconnect();
+    } catch (_) {}
+  }
+
+  /// İlk açılışta relay down olsa bile oda listesi kendiliğinden geri gelir.
+  /// Üstel geri çekilme ile 5 sn'den 2 dk'ya kadar seyreltilir.
+  void _scheduleDiscoveryRetry() {
+    if (!_online || _discoveryRetryTimer?.isActive == true) return;
+    _discoveryFailures++;
+    var seconds = 5;
+    for (var i = 1; i < _discoveryFailures && seconds < 120; i++) {
+      seconds *= 2;
+    }
+    if (seconds > 120) seconds = 120;
+    _discoveryRetryTimer = Timer(Duration(seconds: seconds), () {
+      _discoveryRetryTimer = null;
+      if (_discoveryStarting || _discoveryClient != null) return;
+      unawaited(startDiscovery());
+    });
   }
 
   /// Keşif yayınını ağ türüne göre ayarlar. Wi-Fi'de 5 sn, mobil veride 10 sn.
@@ -1797,6 +1854,9 @@ class RoomService extends ChangeNotifier with flutter.WidgetsBindingObserver {
   void stopDiscovery() {
     _discoveryTimer?.cancel();
     _discoveryTimer = null;
+    _discoveryRetryTimer?.cancel();
+    _discoveryRetryTimer = null;
+    _discoveryFailures = 0;
     _discoverySub?.cancel();
     _discoverySub = null;
     final client = _discoveryClient;

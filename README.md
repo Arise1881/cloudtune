@@ -134,7 +134,7 @@ Loglar yalnızca cihazda `repair_bot_logs.json` dosyasına yazılır; e-posta ve
 ```
 README.md                  Bu dosya: özellikler, kurulum, uyum, güncelleme, gizlilik
 LICENSE                    MIT lisans
-pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.54+255)
+pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.55+256)
 analysis_options.yaml      Dart/Flutter linter kuralları
 .metadata                  Flutter proje metadata
 release.sh                 Build → analyze/test → artifact → GitHub release → push
@@ -265,6 +265,25 @@ flutter build ios --release --no-codesign \
   --obfuscate --split-debug-info=build/ios/symbols  # macOS'ta
 flutter build web --release
 ```
+
+### 3.0.55+256 — uzun süreli kullanım güvenilirliği
+
+- OTA artık platforma uygun dosyayı indiriyor; Linux `.deb`, Windows `.zip`,
+  Android ABI'sine özel APK alıyor. Yanlış dosya hazırlanıp kurulumun
+  bozulması engellendi.
+- Eşzamanlı güncelleme kontrolü/indirmesi tek isteğe indirgendi; yarım kalan
+  dosya siliniyor, hazırlanmış dosya sürüm ve dosya adıyla doğrulanıyor.
+- Hızlı parça geçişlerinde kaynak açılışları sıraya alındı ve her adımda
+  geçiş kimliği kontrol edildi. Bayat hata yeni parçanın üzerine yazmıyor.
+- Onarıcı aynı parçada üstel geri çekilme kullanıyor; üç denemeden sonra yalnızca
+  kullanıcı eylemi veya bağlantı düzelmesi yeniden deniyor. Radyo akışları için
+  geçersiz YouTube çözümlemesi atlandı.
+- Hazırlanmış oynatıcı havuzu, URI/playability önbelleği ve oda keşfi sınırlı/
+  süresli tutuldu; başarısız oda keşfi ve radyo listesi kendiliğinden yeniden
+  deneniyor. Bağlantı kopan MQTT istemcisi artık sızmıyor.
+- Invidious kaynaklı `/vi/...` göreli kapak adresleri YouTube CDN'ine bağlanarak
+  mutlak hale getirildi; ana sayfa ve bildirim kapakları artık yükleniyor.
+- `flutter analyze` 0 issue, `flutter test` 103/103.
 
 ### 3.0.54+255 — hata sonrası parça atlama düzeltmesi
 
