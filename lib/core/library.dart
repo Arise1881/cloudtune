@@ -335,7 +335,10 @@ class Library extends ChangeNotifier {
 
   Future<void> clearHistory() async {
     if (_history.isEmpty) return;
-    _history.clear();
+    final last = _history.first;
+    _history
+      ..clear()
+      ..add(last);
     notifyListeners();
     await _saveTracks('ct.history', _history);
   }

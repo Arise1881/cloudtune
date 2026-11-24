@@ -83,6 +83,10 @@ abstract class AudioBackend {
   Future<void> pause();
   Future<void> seek(Duration position);
   Future<void> applyEqualizer(bool enabled, String preset);
+
+  /// Android equalizer efekt motoru bazı cihazlarda açılamaz; bu durumda
+  /// etkisiz modda devam etmek için equalizer'ı kalıcı kapat.
+  Future<void> disableEqualizerEffects() async {}
 }
 
 AudioBackend createAudioBackend() =>
@@ -114,6 +118,7 @@ class JustAudioBackend implements AudioBackend {
   static const Duration _switchTimeout = Duration(seconds: 8);
   final Map<AudioPlayer, AndroidEqualizer> _equalizers =
       <AudioPlayer, AndroidEqualizer>{};
+  bool _equalizerBroken = false;
 
   final StreamController<bool> _playing = StreamController<bool>.broadcast();
   final StreamController<Duration> _position =
@@ -132,7 +137,7 @@ class JustAudioBackend implements AudioBackend {
 
   AudioPlayer _newPlayer() {
     AndroidEqualizer? equalizer;
-    final player = Platform.isAndroid
+    final player = Platform.isAndroid && !_equalizerBroken
         ? () {
             // Ekolayzer yalnızca Android zincirine eklenir; kapalıyken efekt
             // takılırsa bazı cihazlarda çizirti/underrun oluşuyordu.
@@ -437,6 +442,27 @@ class JustAudioBackend implements AudioBackend {
       } catch (_) {}
     }
   }
+
+  @override
+  Future<void> disableEqualizerEffects() async {
+    if (_equalizerBroken) return;
+    _equalizerBroken = true;
+    _equalizers.clear();
+    // Havuzdaki motorlar equalizer içeriyor olabilir; temizle.
+    for (final entry in _pool.entries.toList(growable: false)) {
+      final player = entry.value;
+      _pool.remove(entry.key);
+      _preparedAt.remove(entry.key);
+      _preparing.remove(entry.key);
+      unawaited(player.dispose().catchError((Object _) {}));
+    }
+    // Aktif motoru equalizer'sız yeniden oluştur. Kaynak PlayerController
+    // tarafından retry/open yoluyla tekrar kurulur.
+    final old = _active;
+    _active = _newPlayer();
+    _bind(_active);
+    unawaited(old.dispose().catchError((Object _) {}));
+  }
 }
 
 /// Linux ses motoru. `media_kit_libs_linux` paketi libmpv binary'sini
@@ -635,4 +661,7 @@ class MediaKitAudioBackend implements AudioBackend {
       } catch (_) {}
     }
   }
+
+  @override
+  Future<void> disableEqualizerEffects() async {}
 }

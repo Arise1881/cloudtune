@@ -332,7 +332,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     if (_isStale(transition, generation)) return;
 
     if (uri != null) {
-      final failure = await _tryOpen(
+      var failure = await _tryOpen(
         uri,
         track: track,
         resumeAt: resumeAt,
@@ -340,6 +340,23 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         generation: generation,
       );
       if (failure == null || _isStale(transition, generation)) return;
+      // Bazı Android cihazlarda fresh install/ilk oturumda equalizer efekt
+      // motoru açılamıyor (Cannot initialize effect engine). Equalizer'ı
+      // kapatıp aynı kaynağı bir kez daha dene.
+      final msg = failure.toString();
+      if (msg.contains('Cannot initialize effect engine') ||
+          msg.contains('AudioEffect')) {
+        await _player.disableEqualizerEffects();
+        if (_isStale(transition, generation)) return;
+        failure = await _tryOpen(
+          uri,
+          track: track,
+          resumeAt: resumeAt,
+          transition: transition,
+          generation: generation,
+        );
+        if (failure == null || _isStale(transition, generation)) return;
+      }
       resolveError = failure;
     }
 
