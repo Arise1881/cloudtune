@@ -18,6 +18,32 @@ import 'youtube_service.dart';
 /// üzerinden MediaSession/Android Auto'ya da yayınlanır.
 enum RepeatMode { off, all, one }
 
+/// Motor `completed` sinyali verdiğinde gerçekten sonraki parçaya geçilip
+/// geçilmeyeceğini belirler.
+///
+/// just_audio/ExoPlayer bazı hata ve boş tampon durumlarında `completed`
+/// üretebiliyor. Bu durumda parçanın kendi konumu şarkı sonuna gelmiş olmaz.
+/// Ayrıca hazırlanmış bir motor aktif motora yükseltildiğinde bayat
+/// `completed` durumu taşınabilir. Otomatik geçiş yalnızca bilinen bir
+/// sürenin sonuna gelindiyse yapılır; hata/yeniden deneme/hazırlıkta asla
+/// yapılmaz.
+bool shouldAutoAdvanceOnCompleted({
+  required bool opening,
+  required bool loading,
+  required bool advancing,
+  required bool recovering,
+  required bool hasError,
+  required Duration? duration,
+  required Duration position,
+  required Duration? lastActivePosition,
+}) {
+  if (opening || loading || advancing || recovering || hasError) return false;
+  if (duration == null || duration <= Duration.zero) return false;
+  final seen = position > Duration.zero ? position : lastActivePosition;
+  if (seen == null) return false;
+  return seen + const Duration(seconds: 2) >= duration;
+}
+
 /// Merkezi çalar. Bildirim, kilit ekranı, Bluetooth ve Android Auto
 /// `audio_service` üzerinden bu sınıfa bağlanır.
 ///
@@ -76,6 +102,10 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   String? _error;
   int _lastBroadcastSecond = -1;
   DateTime _lastRecovery = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Son "çalıyor" konumu. Motor hata sonrası konumu sıfırlayıp `completed`
+  /// sinyali verirse gerçek şarkı sonunu ayırt etmek için kullanılır.
+  Duration? _lastActivePosition;
 
   Timer? _sleepTimer;
   DateTime? _sleepEndsAt;
@@ -214,6 +244,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     _index = index;
     _loading = true;
     _error = null;
+    _lastActivePosition = null;
     _publishMediaItem(_queue[index]);
     _broadcast();
     notifyListeners();
@@ -463,6 +494,9 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   }
 
   void _onPosition(Duration position) {
+    if (_player.playing && position > Duration.zero) {
+      _lastActivePosition = position;
+    }
     // Bildirim/media session 1 sn'de bir güncellenince bazı cihazlarda ses
     // yolunda mikro kesintiler oluyordu. Arayüz kendi positionStream'ini
     // kullandığı için 3 sn'lik kova yeterli.
@@ -497,13 +531,22 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   void _onPlayerState(PlaybackStatus status) {
     _broadcast();
-    if (status == PlaybackStatus.completed && !_opening && !_loading) {
+    if (shouldAutoAdvanceOnCompleted(
+      opening: _opening,
+      loading: _loading,
+      advancing: _advancing,
+      recovering: _recovering,
+      hasError: _error != null,
+      duration: mediaItem.value?.duration,
+      position: _player.position,
+      lastActivePosition: _lastActivePosition,
+    )) {
       unawaited(_advance(auto: true));
     }
   }
 
   Future<void> _advance({bool auto = false}) async {
-    if (_advancing || _shuffleBusy || _loading) return;
+    if (_advancing || _shuffleBusy || _loading || (auto && _recovering)) return;
     _advancing = true;
     try {
       final generation = _generation;

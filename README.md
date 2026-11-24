@@ -134,7 +134,7 @@ Loglar yalnızca cihazda `repair_bot_logs.json` dosyasına yazılır; e-posta ve
 ```
 README.md                  Bu dosya: özellikler, kurulum, uyum, güncelleme, gizlilik
 LICENSE                    MIT lisans
-pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.53+254)
+pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.54+255)
 analysis_options.yaml      Dart/Flutter linter kuralları
 .metadata                  Flutter proje metadata
 release.sh                 Build → analyze/test → artifact → GitHub release → push
@@ -265,6 +265,16 @@ flutter build ios --release --no-codesign \
   --obfuscate --split-debug-info=build/ios/symbols  # macOS'ta
 flutter build web --release
 ```
+
+### 3.0.54+255 — hata sonrası parça atlama düzeltmesi
+
+- ExoPlayer'ın ağ hatasında ürettiği bayat `completed` sinyali artık otomatik
+  parça geçişi tetiklemiyor. Geçiş yalnızca parçanın bilinen süresinin sonuna
+  gelindiyse yapılıyor; hata/kurtarma/açılış durumlarında asla yapılmıyor.
+- Hazırlanmış motor havuzunda hata veren/sonlanan bir oynatıcı aktif motora
+  yükseltilmeden önce atılıyor.
+- Emülatörde ağ kesilerek hata tetiklendi: parça aynı sırada kaldı, başka
+  müziğe atlanmadı. `flutter analyze` 0 issue, `flutter test` 96/96.
 
 ### 3.0.53+254 — akış çözümleme ve kapak yenileme
 

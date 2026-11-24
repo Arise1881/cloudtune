@@ -303,6 +303,14 @@ class JustAudioBackend implements AudioBackend {
     final key = _prepareKey(uri, initialPosition);
     final incoming = _pool.remove(key);
     if (incoming == null) return false;
+    // Havuzdayken kaynak hata veren/sonlanan bir motor `completed` durumunda
+    // kalabilir. Aktif motora yükseltilirse bu bayat sinyal otomatik parça
+    // geçişi tetikler. Böyle bir motoru kullanmayıp normal açılışa düş.
+    if (_mapState(incoming.playerState) == PlaybackStatus.completed) {
+      _equalizers.remove(incoming);
+      unawaited(incoming.dispose().catchError((Object _) {}));
+      return false;
+    }
     final outgoing = _active;
     _tokens[key] = (_tokens[key] ?? 0) + 1;
     try {
