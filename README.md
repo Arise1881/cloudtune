@@ -18,10 +18,10 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 > **Hangi APK?** Cihazınızın mimarisini bilmiyorsanız `CloudTune-universal.apk`'yı indirin. Uygulama içi güncelleyici cihazın ABI'sini algılar (`Abi.current`) ve doğru paketi seçer; uygun paket yoksa evrensel APK'ya düşer.
 
-## Son güncelleme (3.0.62+263)
+## Son güncelleme (3.0.63+264)
 
-- **Uygulama simgesi:** Android’de Ayarlar > Görünüm’den başlatıcı simgesi seçilebilir (Varsayılan/Mavi/Mor/Turuncu/Siyah-Beyaz). Varsayılan simge ve mevcut davranış korunur.
-- **Dinleme geçmişi:** Ayarlar’dan dinleme geçmişi temizlenebilir.
+- **Dinleme geçmişi düzeltmesi:** Dinleme geçmişi temizlenince ana sayfadaki geçmişten türeyen öneri bölümleri/sanatçı adı da sıfırlanır.
+- **3.0.62 hattı:** Android uygulama simgesi varyantları ve dinleme geçmişi temizleme korunur.
 - **Önceki hatlar:** 3.0.61 playlist açma dayanıklılığı ve 3.0.60 playback/Linux/Windows iyileştirmeleri korunur.
 - **Doğrulama:** `flutter analyze` temiz, `flutter test` 106/106 geçti.
 

@@ -83,6 +83,7 @@ class _HomePageState extends State<HomePage> {
   DateTime? _voicePressAt;
   String _lastQuery = '';
   Track? _lastTrack;
+  int _lastHistoryLength = 0;
 
   @override
   void initState() {
@@ -92,6 +93,7 @@ class _HomePageState extends State<HomePage> {
     // Model indirme ilerlemesi ve hata mesajları arama çubuğunda gösterilir.
     _speechStatusSub = _speech.status.listen(_onSpeechStatus);
     _voiceResultSub = _speech.partialResults.listen(_onVoiceResult);
+    _lastHistoryLength = Library.instance.history.length;
     _prepareFeed();
   }
 
@@ -184,13 +186,21 @@ class _HomePageState extends State<HomePage> {
 
   /// Çalma geçmişi/beğeni değişimi feed'i yeniden aratmaz. Kullanıcı içerik
   /// güncellemesini yalnızca yukarıdan aşağıya kaydırarak ister.
+  /// İstisna: dinleme geçmişi temizlendiğinde ana sayfa önerileri sıfırlanır.
   void _onLibraryChanged() {
     if (!mounted) return;
+    final historyLen = Library.instance.history.length;
+    final historyCleared = _lastHistoryLength > 0 && historyLen == 0;
+    _lastHistoryLength = historyLen;
     if (_tab == SearchNavBar.search) {
       setState(() {});
       return;
     }
     if (_results != null) return;
+    if (historyCleared) {
+      setState(_prepareFeed);
+      return;
+    }
     _syncPlaylistSources();
   }
 
