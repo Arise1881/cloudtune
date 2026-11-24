@@ -24,6 +24,9 @@ const List<String> kUpdateManifestFallbacks = <String>[
 const String kSourceUrl =
     'altstore://source?url=https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/apps.json';
 
+const String kReleasePageUrl =
+    'https://github.com/Arise1881/cloudtune-dist/releases/tag/cloudtune-latest';
+
 /// Açık uygulamanın kendiliğinden yeni sürümü fark etmesi için kontrol aralığı.
 const Duration kUpdateCheckInterval = Duration(hours: 6);
 
@@ -345,6 +348,13 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
           : 'Kaynak açılamadı: $url';
     }
 
+    if (platform == UpdatePlatform.windows) {
+      final ok = await _openExternalUrl(kReleasePageUrl);
+      return ok
+          ? 'GitHub sürüm sayfası açıldı. En güncel Windows kurulum dosyasını indirip kurabilirsiniz.'
+          : 'Sürüm sayfası açılamadı: $kReleasePageUrl';
+    }
+
     final url = _assetUrl;
     final name = _assetFileName;
     if (url == null || name == null) {
@@ -589,5 +599,26 @@ class UpdateBanner extends StatelessWidget {
     messenger?.showSnackBar(
       SnackBar(content: Text(await update.applyUpdate())),
     );
+  }
+
+  Future<bool> _openExternalUrl(String url) async {
+    try {
+      if (Platform.isWindows) {
+        final result = await Process.run('cmd', ['/c', 'start', '', url]);
+        return result.exitCode == 0;
+      }
+      if (Platform.isLinux) {
+        final result = await Process.run('xdg-open', [url]);
+        return result.exitCode == 0;
+      }
+      if (Platform.isMacOS) {
+        final result = await Process.run('open', [url]);
+        return result.exitCode == 0;
+      }
+      final result = await OpenFilex.open(url);
+      return result.type == ResultType.done;
+    } catch (_) {
+      return false;
+    }
   }
 }
