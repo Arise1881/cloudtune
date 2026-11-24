@@ -192,15 +192,16 @@ class _HomePageState extends State<HomePage> {
     final historyLen = Library.instance.history.length;
     final historyCleared = _lastHistoryLength > 0 && historyLen == 0;
     _lastHistoryLength = historyLen;
+    if (historyCleared) {
+      _prefetchedFeeds.clear();
+      setState(_prepareFeed);
+      return;
+    }
     if (_tab == SearchNavBar.search) {
       setState(() {});
       return;
     }
     if (_results != null) return;
-    if (historyCleared) {
-      setState(_prepareFeed);
-      return;
-    }
     _syncPlaylistSources();
   }
 
