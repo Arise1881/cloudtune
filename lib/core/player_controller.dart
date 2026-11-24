@@ -44,6 +44,34 @@ bool shouldAutoAdvanceOnCompleted({
   return seen + const Duration(seconds: 2) >= duration;
 }
 
+/// Motor "PLAYING" bildirimi veriyor ama konum ilerlemiyorsa ses gerçekten
+/// gelmiyor demektir. Canlı akışlarda konum 0'da kalabilir;tampon büyümesi
+/// veya oynatma durumu ilerleme sayılır.
+bool playbackHasProgressed({
+  required Duration position,
+  required Duration buffered,
+  required bool playing,
+  required Duration? lastPosition,
+  required Duration? lastBuffered,
+}) {
+  if (playing) return true;
+  if (lastPosition == null || lastBuffered == null) return true;
+  if (position > lastPosition) return true;
+  return buffered > lastBuffered + const Duration(milliseconds: 500);
+}
+
+/// Aynı parçadaki ikinci duraklama kullanıcıyı daha fazla oyalmaz: hata aynı
+/// parçada gösterilir, otomatik atlama yapılmaz.
+bool shouldRetryStalledPlayback({
+  required String trackId,
+  required String? lastTrackId,
+  required int attempts,
+  required int maxRetries,
+}) {
+  if (lastTrackId != trackId) return true;
+  return attempts < maxRetries;
+}
+
 /// Merkezi çalar. Bildirim, kilit ekranı, Bluetooth ve Android Auto
 /// `audio_service` üzerinden bu sınıfa bağlanır.
 ///
@@ -100,6 +128,9 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   bool _loading = false;
   bool _opening = false;
   Future<void>? _sourceChange;
+  Timer? _stallTimer;
+  String? _stallTrackId;
+  int _stallRetries = 0;
   bool _advancing = false;
   bool _recovering = false;
   bool _extending = false;
@@ -143,7 +174,11 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   /// Adres çözümü artık tek taze InnerTube isteği; 20 sn beklemek gerekmiyor.
   /// Hata durumunda parça aynı yerde kalır, kullanıcı tekrar dener.
   static const Duration _resolveTimeout = Duration(seconds: 8);
-  static const Duration _openTimeout = Duration(seconds: 10);
+  static const Duration _openTimeout = Duration(seconds: 12);
+  static const Duration _sourceChangeTimeout = Duration(seconds: 20);
+  static const Duration _stallTimeout = Duration(seconds: 14);
+  static const Duration _stallPoll = Duration(seconds: 2);
+  static const int _maxStallRetries = 1;
   // Motor "ready" sinyali göndermeden de play() çoğu zaman çalışır. 5 sn
   // beklemek her parçada gereksiz gecikmeydi; kısa süre sonra play() yine
   // denenir (bkz. _ensurePlaying).
@@ -250,6 +285,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     _loading = true;
     _error = null;
     _lastActivePosition = null;
+    _resetStallWatch(_queue[index].id);
     _publishMediaItem(_queue[index]);
     _broadcast();
     notifyListeners();
@@ -299,18 +335,19 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   }
 
   /// Kaynak değişimlerini sıraya sokar. Eski açılış çözümü yeni parçadan
-  /// sonra biterse motor yanlış parçada kalıyordu.
+  /// sonra biterse motor yanlış parçada kalıyordu. Önceki işlem takılırsa
+  /// yalnızca bekleyeni serbest bırakırız; yeni istek kuyrukta kilitlenmez.
   Future<void> _runSourceChange(Future<void> Function() action) async {
     final previous = _sourceChange;
     if (previous != null) {
       try {
-        await previous;
+        await previous.timeout(_sourceChangeTimeout);
       } catch (_) {}
     }
     final current = action();
     _sourceChange = current;
     try {
-      await current;
+      await current.timeout(_sourceChangeTimeout);
     } finally {
       if (identical(_sourceChange, current)) _sourceChange = null;
     }
@@ -354,6 +391,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       Timer(const Duration(milliseconds: 1200), () {
         if (!_isStale(transition, generation)) unawaited(_preloadUpcoming());
       });
+      _startStallWatch(track.id, transition, generation);
       return null;
     } catch (error) {
       if (_isStale(transition, generation)) return null;
@@ -432,6 +470,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     }
 
     if (_isStale(transition, generation)) return;
+    _stopStallWatch();
     var code = blocked ? 'blocked' : 'stream';
     try {
       final connections = await Connectivity().checkConnectivity();
@@ -534,6 +573,103 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       );
       prepared++;
     }
+  }
+
+  void _stopStallWatch() {
+    _stallTimer?.cancel();
+    _stallTimer = null;
+  }
+
+  void _resetStallWatch(String trackId) {
+    _stopStallWatch();
+    if (_stallTrackId != trackId) {
+      _stallTrackId = trackId;
+      _stallRetries = 0;
+    }
+  }
+
+  void _startStallWatch(String trackId, int transition, int generation) {
+    _resetStallWatch(trackId);
+    var lastPosition = _player.position;
+    var lastBuffered = _player.buffered;
+    var stalledSince = DateTime.now();
+    _stallTimer = Timer.periodic(_stallPoll, (_) {
+      if (_isStale(transition, generation) || current?.id != trackId) {
+        _stopStallWatch();
+        return;
+      }
+      if (_error != null || _loading || _opening || _advancing || _recovering) {
+        stalledSince = DateTime.now();
+        lastPosition = _player.position;
+        lastBuffered = _player.buffered;
+        return;
+      }
+      final status = _player.status;
+      if (!_player.playing &&
+          status != PlaybackStatus.buffering &&
+          status != PlaybackStatus.loading) {
+        stalledSince = DateTime.now();
+        lastPosition = _player.position;
+        lastBuffered = _player.buffered;
+        return;
+      }
+      final position = _player.position;
+      final buffered = _player.buffered;
+      final progressed = playbackHasProgressed(
+        position: position,
+        buffered: buffered,
+        playing: _player.playing,
+        lastPosition: lastPosition,
+        lastBuffered: lastBuffered,
+      );
+      lastPosition = position;
+      lastBuffered = buffered;
+      if (progressed) {
+        stalledSince = DateTime.now();
+        return;
+      }
+      if (DateTime.now().difference(stalledSince) < _stallTimeout) return;
+      _stopStallWatch();
+      unawaited(_handleStalledPlayback(
+        trackId,
+        transition: transition,
+        generation: generation,
+      ));
+    });
+  }
+
+  Future<void> _handleStalledPlayback(
+    String trackId, {
+    required int transition,
+    required int generation,
+  }) async {
+    if (_isStale(transition, generation)) return;
+    final track = current;
+    if (track == null || track.id != trackId) return;
+    if (shouldRetryStalledPlayback(
+      trackId: trackId,
+      lastTrackId: _stallTrackId,
+      attempts: _stallRetries,
+      maxRetries: _maxStallRetries,
+    )) {
+      _stallTrackId = trackId;
+      _stallRetries++;
+      final resumeAt = _lastActivePosition ?? _player.position;
+      unawaited(RepairBot.instance.reportEvent('playback_stall_retry', {
+        'video_id': trackId,
+        'attempt': _stallRetries,
+      }));
+      await _playAt(_index, resumeAt: resumeAt, retry: true);
+      return;
+    }
+    _loading = false;
+    _error = 'stream';
+    unawaited(RepairBot.instance.reportEvent('playback_stall_failed', {
+      'video_id': trackId,
+      'attempts': _stallRetries,
+    }));
+    _broadcast();
+    notifyListeners();
   }
 
   void _onPosition(Duration position) {
@@ -646,6 +782,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
       // repeat off + radyo kapalı: otomatik geçişte dur.
       if (auto && _queue.isNotEmpty) {
+        _stopStallWatch();
         await _player.pause();
         await _player.seek(Duration.zero);
         _broadcast();
@@ -738,6 +875,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     final now = DateTime.now();
     if (now.difference(_lastRecovery) < const Duration(seconds: 4)) return;
     _lastRecovery = now;
+    _stopStallWatch();
     _recovering = true;
     try {
       await _playAt(_index, resumeAt: _player.position, retry: true);
@@ -750,6 +888,8 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     // Aynı parçada kullanıcı tekrar denedi: onarıcının geri çekilme sayacı
     // sıfırlanır, fakat otomatik denemeler yeniden başlamaz.
     RepairBot.instance.notifyPlaybackUserAction();
+    _stallRetries = 0;
+    _stallTrackId = current?.id;
     return _playAt(_index, retry: true);
   }
 

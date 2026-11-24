@@ -1,5 +1,6 @@
 import 'dart:ffi' as ffi;
 
+import 'package:cloudtune/core/player_controller.dart';
 import 'package:cloudtune/core/repair_bot.dart';
 import 'package:cloudtune/core/update_service.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -85,6 +86,81 @@ void main() {
           abi: ffi.Abi.current(),
         ),
         isNull,
+      );
+    });
+  });
+
+  group('playback stall guards', () {
+    test('progress counts position or buffered growth', () {
+      expect(
+        playbackHasProgressed(
+          position: Duration.zero,
+          buffered: const Duration(seconds: 2),
+          playing: true,
+          lastPosition: Duration.zero,
+          lastBuffered: Duration.zero,
+        ),
+        isTrue,
+      );
+      expect(
+        playbackHasProgressed(
+          position: const Duration(seconds: 1),
+          buffered: const Duration(seconds: 2),
+          playing: false,
+          lastPosition: Duration.zero,
+          lastBuffered: const Duration(seconds: 2),
+        ),
+        isTrue,
+      );
+      expect(
+        playbackHasProgressed(
+          position: Duration.zero,
+          buffered: const Duration(seconds: 3),
+          playing: false,
+          lastPosition: Duration.zero,
+          lastBuffered: const Duration(seconds: 2),
+        ),
+        isTrue,
+      );
+      expect(
+        playbackHasProgressed(
+          position: Duration.zero,
+          buffered: const Duration(seconds: 2),
+          playing: false,
+          lastPosition: Duration.zero,
+          lastBuffered: const Duration(seconds: 2),
+        ),
+        isFalse,
+      );
+    });
+
+    test('stalled playback retries once per track then errors on same track', () {
+      expect(
+        shouldRetryStalledPlayback(
+          trackId: 'a',
+          lastTrackId: 'b',
+          attempts: 5,
+          maxRetries: 1,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldRetryStalledPlayback(
+          trackId: 'a',
+          lastTrackId: 'a',
+          attempts: 0,
+          maxRetries: 1,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldRetryStalledPlayback(
+          trackId: 'a',
+          lastTrackId: 'a',
+          attempts: 1,
+          maxRetries: 1,
+        ),
+        isFalse,
       );
     });
   });

@@ -108,6 +108,9 @@ class JustAudioBackend implements AudioBackend {
   final Map<String, DateTime> _preparedAt = <String, DateTime>{};
   static const int _maxPrepared = 10;
   static const Duration _preparedTtl = Duration(minutes: 10);
+  // Hazırlanmış motoru aktife alırken tek bir native çağrı takılırsa kaynak
+  // değişimi kuyruğu kilitlenmesin. Controller üst sınırı daha da sıkıdır.
+  static const Duration _switchTimeout = Duration(seconds: 8);
   final Map<AudioPlayer, AndroidEqualizer> _equalizers =
       <AudioPlayer, AndroidEqualizer>{};
 
@@ -338,7 +341,7 @@ class JustAudioBackend implements AudioBackend {
     }
     final outgoing = _active;
     try {
-      await incoming.setVolume(1);
+      await incoming.setVolume(1).timeout(_switchTimeout);
       // Referansı önce değiştir: yeni motordan gelecek ilk olaylar arayüze
       // doğru aktif motor olarak yansır.
       _active = incoming;
@@ -398,8 +401,11 @@ class JustAudioBackend implements AudioBackend {
 
   @override
   Future<void> applyEqualizer(bool enabled, String preset) async {
-    for (final entry in _equalizers.entries) {
-      final eq = entry.value;
+    // Havuz hazırlığı/dispose işlemleri await aralığında _equalizers'ı
+    // değiştirebiliyor. Canlı haritayı gezmek "Concurrent modification"
+    // hatası veriyordu; anlık görüntü üzerinde çalışılır.
+    final targets = _equalizers.values.toList(growable: false);
+    for (final eq in targets) {
       try {
         await eq.setEnabled(enabled);
         if (!enabled) continue;
