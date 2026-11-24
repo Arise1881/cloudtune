@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:cloudtune/core/app_palette.dart';
 
@@ -205,6 +206,16 @@ class _HomePageState extends State<HomePage> {
     if (_lastQuery.isNotEmpty) {
       await _submit(_lastQuery, refresh: true);
     }
+  }
+
+  /// Fareyle pull-to-refresh çalışmadığı için Windows'ta görünür yenileme
+  /// düğmesi ve F5 kısayolu aynı akışı tetikler.
+  Future<void> _refreshCurrent() async {
+    if (_tab == SearchNavBar.search) {
+      await _refreshResults();
+      return;
+    }
+    await _refreshFeed();
   }
 
   void _onPlayerChanged() {
@@ -800,7 +811,22 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final searching = _tab == SearchNavBar.search;
-    return Scaffold(
+    return Focus(
+      autofocus: true,
+      onKey: (node, event) {
+        if (defaultTargetPlatform != TargetPlatform.windows) {
+          return KeyEventResult.ignored;
+        }
+        if (event is RawKeyDownEvent &&
+            (event.logicalKey == LogicalKeyboardKey.f5 ||
+                (event.isControlPressed &&
+                    event.logicalKey == LogicalKeyboardKey.keyR))) {
+          unawaited(_refreshCurrent());
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Scaffold(
       backgroundColor: AppPalette.surface,
       body: SafeArea(
         bottom: false,
@@ -822,6 +848,7 @@ class _HomePageState extends State<HomePage> {
             SearchNavBar(selected: _tab, onTap: _onNavTap),
           ],
         ),
+      ),
       ),
     );
   }
@@ -869,6 +896,12 @@ class _HomePageState extends State<HomePage> {
                 ?.copyWith(fontWeight: FontWeight.w800),
           ),
           const Spacer(),
+          if (defaultTargetPlatform == TargetPlatform.windows)
+            IconButton(
+              tooltip: 'Yenile (F5)',
+              icon: const Icon(Icons.refresh),
+              onPressed: _refreshCurrent,
+            ),
           IconButton(
             tooltip: 'Şarkı ara',
             icon: const Icon(Icons.search),

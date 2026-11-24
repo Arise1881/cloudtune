@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
 import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
@@ -202,6 +203,43 @@ class YoutubeService {
     // 141/251 öncelikli; yoksa en yüksek bitrate (hi-res/HDR) akışı.
     'lossless': _QualitySpec([141, 251], true),
   };
+
+  /// Windows'ta just_audio Media Foundation kullanır; WebM/Opus (itag
+  /// 249/250/251) genelde oynatılamaz. Yalnızca Windows'ta AAC itag'lerine
+  /// (140/141) zorlanır, diğer platformların seçimi değişmez.
+  static bool get _isWindows => defaultTargetPlatform == TargetPlatform.windows;
+
+  static _QualitySpec _specFor(String quality) {
+    final base = _qualitySpec[quality] ?? _qualitySpec['high']!;
+    if (!_isWindows) return base;
+    final itags = switch (quality) {
+      'low' => const <int>[140],
+      'medium' => const <int>[140, 141],
+      _ => const <int>[141, 140],
+    };
+    return _QualitySpec(itags, base.preferHighestBitrate);
+  }
+
+  static bool _windowsPlayableFormat(Map format) {
+    if (!_isWindows) return true;
+    final mime =
+        (format['mimeType'] ?? format['type'] ?? '').toString().toLowerCase();
+    if (mime.contains('webm') ||
+        mime.contains('opus') ||
+        mime.contains('ogg')) {
+      return false;
+    }
+    final container = (format['container'] ?? '').toString().toLowerCase();
+    return !container.contains('webm') && !container.contains('ogg');
+  }
+
+  static bool _windowsPlayableStream(dynamic stream) {
+    if (!_isWindows) return true;
+    final container = stream.container?.toString().toLowerCase() ?? '';
+    if (container.contains('webm') || container.contains('ogg')) return false;
+    final codec = stream.audioCodec?.toString().toLowerCase() ?? '';
+    return !codec.contains('opus');
+  }
 
   /// Invidious örneklerini eşzamanlı dener; ilk başarılı JSON döner.
   /// Sıralı denemede ilk üç örnek yanıt vermediğinde arama/öneri de 18 sn
@@ -865,9 +903,11 @@ class YoutubeService {
           .getManifest(id)
           .timeout(_resolveTimeout);
       final streams = manifest.audioOnly.toList();
-      final itags = _qualitySpec[quality]!.itags;
+      final playable =
+          streams.where(_windowsPlayableStream).toList(growable: false);
+      final itags = _specFor(quality).itags;
       for (final itag in itags) {
-        for (final stream in streams) {
+        for (final stream in playable) {
           if (stream.tag != itag) continue;
           if (await _isUriUsable(stream.url)) {
             _remember(id, stream.url);
@@ -875,10 +915,10 @@ class YoutubeService {
           }
         }
       }
-      streams.sort((a, b) => quality == 'low'
+      playable.sort((a, b) => quality == 'low'
           ? a.bitrate.compareTo(b.bitrate)
           : b.bitrate.compareTo(a.bitrate));
-      for (final stream in streams) {
+      for (final stream in playable) {
         if (await _isUriUsable(stream.url)) {
           _remember(id, stream.url);
           return stream.url;
@@ -915,7 +955,7 @@ class YoutubeService {
   /// denemede ilk istemci 6 sn takıldığında parça açılışı 30 sn'ye çıkıyordu.
   Future<Uri?> innerTube(String id) async {
     final quality = this.quality;
-    final spec = _qualitySpec[quality] ?? _qualitySpec['high']!;
+    final spec = _specFor(quality);
 
     _playability.remove(id);
     final uri = await firstSuccess<Uri>([
@@ -1025,7 +1065,8 @@ class YoutubeService {
   /// Kalite kısıtına uyan ilk geçerli URI'yı döner. Eşleşme yoksa
   /// `low` en düşük, diğer seçenekler en yüksek bitrate'e düşer (hi-res/HDR).
   Future<Uri?> _pickAudioUri(List<Map> formats, _QualitySpec spec) async {
-    final audio = formats.where(_isAudioFormat).toList();
+    final audio =
+        formats.where(_isAudioFormat).where(_windowsPlayableFormat).toList();
     for (final itag in spec.itags) {
       for (final format in audio) {
         if (_itagOf(format) != itag) continue;

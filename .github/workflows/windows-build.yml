@@ -1,7 +1,5 @@
 name: Windows Build
 
-# Yayın tetikleyicisi release.sh üzerinden workflow_dispatch'dir; sürüm
-# etiketi oluşturulmadığı için tag trigger'ı istemciyi yanıltıyordu.
 on:
   workflow_dispatch:
 
@@ -35,47 +33,43 @@ jobs:
           Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $Stage | Out-Null
           Copy-Item -Recurse -Force build/windows/x64/runner/Release/* $Stage/
-          # PDB hata ayıklama sembolleri dağıtıma girmez. flutter_windows.dll
-          # ZORUNLU: çalıştırıcı olmadan cloudtune.exe açılmaz.
           Get-ChildItem -Recurse -File -Path $Stage | Where-Object { $_.Extension -eq '.pdb' } | Remove-Item -Force
           Compress-Archive -Path "$Stage/*" -DestinationPath CloudTune-windows.zip -Force
           Get-Item CloudTune-windows.zip | Select-Object Name, Length
 
-      - name: Web release derle
-        run: flutter build web --release
-
-      - name: ZIP paketle (Web)
+      - name: Setup.exe üret (Inno Setup)
         shell: pwsh
         run: |
-          Compress-Archive -Path build/web/* -DestinationPath CloudTune-web.zip -Force
-          Get-Item CloudTune-web.zip | Select-Object Name, Length
+          $version = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)').Matches[0].Groups[1].Value
+          if (-not $version) { throw "pubspec.yaml sürümü okunamadı." }
+          $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
+          $pf = [Environment]::GetFolderPath('ProgramFiles')
+          $iscc = @("$pf86\Inno Setup 6\ISCC.exe", "$pf\Inno Setup 6\ISCC.exe") |
+            Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw "Inno Setup 6 (ISCC.exe) bulunamadı." }
+          & $iscc "/DAppVersion=$version" "installer\cloudtune.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC.exe hata kodu: $LASTEXITCODE" }
+          Copy-Item -Force installer-output\CloudTune-setup.exe CloudTune-setup.exe
+          Get-Item CloudTune-setup.exe | Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
-          name: CloudTune-windows
+          name: CloudTune-windows-setup
           path: |
+            CloudTune-setup.exe
             CloudTune-windows.zip
-            CloudTune-web.zip
           retention-days: 30
           compression-level: 6
 
-      - name: GitHub release'e yukle (windows + web)
+      # Yalnızca Windows asset'lerini değiştirir; diğer release dosyalarına,
+      # update.json ve sürüm etiketine dokunmaz.
+      - name: Windows asset'lerini release'e yükle
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          TOKEN_OK: ${{ secrets.GH_TOKEN != '' }}
-        shell: pwsh
         run: |
-          if ("$env:TOKEN_OK" -ne "True") { Write-Host "GH_TOKEN secret yok; sadece artifact yuklendi."; exit 0 }
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          $Headers = @{ Authorization = "token $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
-          $Release = Invoke-RestMethod -Method Get -Headers $Headers -Uri "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/tags/cloudtune-latest"
-          foreach ($a in $Release.assets) {
-            if ($a.name -eq "CloudTune-windows.zip" -or $a.name -eq "CloudTune-web.zip") {
-              Invoke-RestMethod -Method Delete -Headers $Headers -Uri "https://api.github.com/repos/Arise1881/cloudtune-dist/releases/assets/$($a.id)" | Out-Null
-            }
-          }
-          $ZipHeaders = @{ Authorization = "token $env:GH_TOKEN"; "Content-Type" = "application/zip" }
-          Invoke-RestMethod -Method Post -Headers $ZipHeaders -InFile "CloudTune-windows.zip" -Uri "https://uploads.github.com/repos/Arise1881/cloudtune-dist/releases/$($Release.id)/assets?name=CloudTune-windows.zip" | Out-Null
-          Write-Host "CloudTune-windows.zip -> release eklendi"
-          Invoke-RestMethod -Method Post -Headers $ZipHeaders -InFile "CloudTune-web.zip" -Uri "https://uploads.github.com/repos/Arise1881/cloudtune-dist/releases/$($Release.id)/assets?name=CloudTune-web.zip" | Out-Null
-          Write-Host "CloudTune-web.zip -> release eklendi"
+          gh release upload cloudtune-latest `
+            CloudTune-windows.zip `
+            CloudTune-setup.exe `
+            --repo Arise1881/cloudtune-dist `
+            --clobber

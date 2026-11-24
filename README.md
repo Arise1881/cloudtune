@@ -9,12 +9,12 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 | Android armv7 | ✅ | `CloudTune-armv7.apk` |
 | Android x86_64 | ✅ | `CloudTune-x86_64.apk` |
 | Linux x86_64 | ✅ | `CloudTune-linux.deb` (libmpv2 bağımlı), `CloudTune-linux.tar.gz` |
-| Windows 11 | ✅ | `CloudTune-windows.zip` — ZIP'i çıkarıp `cloudtune.exe`'yi çalıştırın (3.0.52+253) |
+| Windows 11 | ✅ | `CloudTune-setup.exe` — çalıştırınca kurulum yapar (3.0.52+253) |
 | iOS (AltStore / SideStore) | ⚠️ Eski paket | `CloudTune.ipa`; güncel CI ödeme limiti nedeniyle üretilemedi |
 
-> **Windows 11 kurulumu:** Paket self-contained; `flutter_windows.dll`, `app.so` ve Whisper DLL'leri ZIP içinde. Ek SDK/runtime veya yönetici yetkisi gerekmez. SmartScreen uyarısında *Daha fazla bilgi → Yine de çalıştır* seçin. Sesli arama için mikrofon izni; radyo, oda ve sohbet için ek izin gerekmez.
+> **Windows 11 kurulumu:** `CloudTune-setup.exe` dosyasını çalıştırın; uygulama Program Files'e kurulur, Start Menu + masaüstü kısayolu eklenir ve `.mp3/.m4a` gibi ses dosyaları CloudTune ile ilişkilendirilir. UAC onayı gerekir. SmartScreen uyarısında *Daha fazla bilgi → Yine de çalıştır* seçin. Sesli arama için mikrofon izni; radyo, oda ve sohbet için ek izin gerekmez. Taşınabilir ZIP yine yedek olarak yayında.
 >
-> **Windows güncellemeleri:** Uygulama Windows'ta ZIP indirmez. Yeni sürüm manifestte göründüğünde varsayılan tarayıcıda GitHub sürüm sayfasını (`cloudtune-latest`) açar. Sürüm numarası, `update.json` manifest'i ve Android/Linux/iOS güncelleme akışı değişmez; kullanıcı ZIP'i GitHub release sayfasından alır.
+> **Windows güncellemeleri:** Uygulama Windows'ta paket indirmez. Yeni sürüm manifestte göründüğünde varsayılan tarayıcıda GitHub sürüm sayfasını (`cloudtune-latest`) açar. Sürüm numarası, `update.json` manifest'i ve Android/Linux/iOS güncelleme akışı değişmez; kullanıcı Setup.exe'i GitHub release sayfasından alır.
 >
 > **iOS:** GitHub Actions ödeme limiti nedeniyle IPA eski sürümde kaldı. Android, Linux ve Windows paketleri güncel.
 
