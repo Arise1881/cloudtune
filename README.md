@@ -18,11 +18,12 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 > **Hangi APK?** Cihazınızın mimarisini bilmiyorsanız `CloudTune-universal.apk`'yı indirin. Uygulama içi güncelleyici cihazın ABI'sini algılar (`Abi.current`) ve doğru paketi seçer; uygun paket yoksa evrensel APK'ya düşer.
 
-## Son güncelleme (3.0.61+262)
+## Son güncelleme (3.0.62+263)
 
-- **Oynatma listeleri:** YouTube/YouTube Music kopyalanan playlist linkleri (`music.youtube.com/playlist?list=...` dahil, `si`/`drli` parametreleriyle) artık daha dayanıklı açılır. `youtube_explode`/Invidious boş dönerse InnerTube browse fallback + continuation denenir; PlaylistPage boş/hata durumunda “Tekrar dene” sunar.
-- **Önceki 3.0.60 hattı:** Playback error yüzeyi/kurtarma, Linux Başlat Menüsü ikonu/`.desktop`, Windows “Güncelle”nin GitHub release sayfasına yönlendirmesi korunur.
-- **Doğrulama:** `flutter analyze` temiz, `flutter test` 106/106 geçti; bildirilen playlist ID ile smoke testi geçti.
+- **Uygulama simgesi:** Android’de Ayarlar > Görünüm’den başlatıcı simgesi seçilebilir (Varsayılan/Mavi/Mor/Turuncu/Siyah-Beyaz). Varsayılan simge ve mevcut davranış korunur.
+- **Dinleme geçmişi:** Ayarlar’dan dinleme geçmişi temizlenebilir.
+- **Önceki hatlar:** 3.0.61 playlist açma dayanıklılığı ve 3.0.60 playback/Linux/Windows iyileştirmeleri korunur.
+- **Doğrulama:** `flutter analyze` temiz, `flutter test` 106/106 geçti.
 
 ---
 

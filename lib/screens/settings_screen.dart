@@ -119,6 +119,30 @@ class SettingsScreen extends StatelessWidget {
                     value: settings.oledBlack,
                     onChanged: settings.setOledBlack,
                   ),
+                  _DropdownRow<String>(
+                    icon: Icons.app_shortcut_outlined,
+                    title: s.appIcon,
+                    subtitle: s.appIconHint,
+                    value: settings.appIcon,
+                    items: [
+                      for (final entry in SettingsService.supportedAppIcons.entries)
+                        DropdownMenuItem(
+                          value: entry.key,
+                          child: Text(entry.value),
+                        ),
+                    ],
+                    onChanged: (value) async {
+                      if (value == null) return;
+                      final ok = await settings.setAppIcon(value);
+                      if (!ok && context.mounted) {
+                        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                          const SnackBar(
+                              content: Text(
+                                  'Uygulama simgesi bu cihazda değiştirilemedi.')),
+                        );
+                      }
+                    },
+                  ),
                 ],
               ),
               const SizedBox(height: 16),
@@ -272,6 +296,13 @@ class SettingsScreen extends StatelessWidget {
                     onTap: () => _showRepairLogs(context, s),
                   ),
                   ListTile(
+                    leading: const Icon(Icons.history_toggle_off),
+                    title: Text(s.clearListeningHistory),
+                    subtitle: Text(s.clearListeningHistoryHint),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _confirmClearListeningHistory(context, s),
+                  ),
+                  ListTile(
                     leading: const Icon(Icons.system_update_alt),
                     title: Text(s.updates),
                     subtitle: Text(_updateStatus(s)),
@@ -415,6 +446,33 @@ class SettingsScreen extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+
+  Future<void> _confirmClearListeningHistory(
+      BuildContext context, AppStrings s) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(s.clearListeningHistory),
+        content: Text(s.clearListeningHistoryHint),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(s.close),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(s.clear),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await Library.instance.clearHistory();
+    if (!context.mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(s.listeningHistoryCleared)),
     );
   }
 

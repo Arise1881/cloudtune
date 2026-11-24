@@ -1,6 +1,7 @@
 package com.cloudtune.app
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.os.Build
@@ -105,5 +106,66 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "cloudtune/app_icon")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "setIcon" -> {
+                        val icon = call.argument<String>("icon") ?: "default"
+                        try {
+                            setLauncherIcon(icon)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("icon_failed", e.message, null)
+                        }
+                    }
+                    "getIcon" -> {
+                        try {
+                            result.success(getCurrentLauncherIcon())
+                        } catch (e: Exception) {
+                            result.error("icon_failed", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun iconComponents(): Map<String, String> = mapOf(
+        "default" to "$packageName.MainActivity",
+        "blue" to "$packageName.MainActivityIconBlue",
+        "purple" to "$packageName.MainActivityIconPurple",
+        "amber" to "$packageName.MainActivityIconAmber",
+        "mono" to "$packageName.MainActivityIconMono",
+    )
+
+    private fun setLauncherIcon(icon: String) {
+        val pm = packageManager
+        val components = iconComponents()
+        val target = components[icon] ?: components["default"]!!
+        for ((_, name) in components) {
+            val state = if (name == target)
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+            else
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+            pm.setComponentEnabledSetting(
+                ComponentName(this, name),
+                state,
+                PackageManager.DONT_KILL_APP
+            )
+        }
+    }
+
+    private fun getCurrentLauncherIcon(): String {
+        val pm = packageManager
+        val components = iconComponents()
+        for ((key, name) in components) {
+            val state = pm.getComponentEnabledSetting(ComponentName(this, name))
+            if (state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                return key
+            }
+        }
+        // Varsayılan: MainActivity manifestte etkin, aliaslar kapalı.
+        return "default"
     }
 }

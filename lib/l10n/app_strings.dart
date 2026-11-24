@@ -72,6 +72,11 @@ class AppStrings {
     'repairLogsHint': 'Son onarım olaylarını görüntüle.',
     'noLogs': 'Kayıt yok.',
     'clear': 'Temizle',
+    'clearListeningHistory': 'Dinleme geçmişini temizle',
+    'clearListeningHistoryHint': 'Bu cihazdaki dinleme geçmişini siler.',
+    'listeningHistoryCleared': 'Dinleme geçmişi temizlendi.',
+    'appIcon': 'Uygulama simgesi',
+    'appIconHint': 'Başlatıcı simgesini değiştir (Android).',
     'close': 'Kapat',
     'updates': 'Güncellemeler',
     'updateNewVersion': 'Yeni sürüm: {version}',
@@ -150,6 +155,11 @@ class AppStrings {
     'repairLogsHint': 'View recent repair events.',
     'noLogs': 'No logs.',
     'clear': 'Clear',
+    'clearListeningHistory': 'Clear listening history',
+    'clearListeningHistoryHint': 'Deletes listening history on this device.',
+    'listeningHistoryCleared': 'Listening history cleared.',
+    'appIcon': 'App icon',
+    'appIconHint': 'Change launcher icon (Android).',
     'close': 'Close',
     'updates': 'Updates',
     'updateNewVersion': 'New version: {version}',
@@ -242,6 +252,11 @@ class AppStrings {
   String get repairLogsHint => _t('repairLogsHint');
   String get noLogs => _t('noLogs');
   String get clear => _t('clear');
+  String get clearListeningHistory => _t('clearListeningHistory');
+  String get clearListeningHistoryHint => _t('clearListeningHistoryHint');
+  String get listeningHistoryCleared => _t('listeningHistoryCleared');
+  String get appIcon => _t('appIcon');
+  String get appIconHint => _t('appIconHint');
   String get close => _t('close');
   String get updates => _t('updates');
   String updateNewVersion(String? version) =>

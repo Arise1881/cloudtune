@@ -333,6 +333,13 @@ class Library extends ChangeNotifier {
     await _saveTracks('ct.history', _history);
   }
 
+  Future<void> clearHistory() async {
+    if (_history.isEmpty) return;
+    _history.clear();
+    notifyListeners();
+    await _saveTracks('ct.history', _history);
+  }
+
   /// Seçilen dosyayı versiyonlu bir adla kopyalar; eski dosyalar silinmez.
   /// Dönen `avatarPath` her çağrıda değiştiği için UI cache'i yenilenir.
   Future<void> setAvatar(String? path) async {

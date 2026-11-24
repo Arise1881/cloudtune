@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'theme_state.dart';
@@ -20,6 +21,7 @@ class SettingsService extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.dark;
   Color _accentColor = const Color(ThemeState.defaultAccentArgb);
   String _languageCode = 'tr';
+  String _appIcon = 'default';
 
   bool get ready => _ready;
   String get audioQuality => _audioQuality;
@@ -29,6 +31,7 @@ class SettingsService extends ChangeNotifier {
   ThemeMode get themeMode => _themeMode;
   Color get accentColor => _accentColor;
   String get languageCode => _languageCode;
+  String get appIcon => _appIcon;
 
   /// `MaterialApp.locale` için kullanılan değer. Dil değişince
   /// `notifyListeners()` ile birlikte yeniden kurulur.
@@ -98,6 +101,14 @@ class SettingsService extends ChangeNotifier {
     'ms': 'Bahasa Melayu',
   };
 
+  static const Map<String, String> supportedAppIcons = {
+    'default': 'Varsayılan',
+    'blue': 'Mavi',
+    'purple': 'Mor',
+    'amber': 'Turuncu',
+    'mono': 'Siyah-Beyaz',
+  };
+
   Future<void> init() async {
     if (_ready) return;
     try {
@@ -118,6 +129,8 @@ class SettingsService extends ChangeNotifier {
       final storedLanguage = prefs.getString('ct.language');
       // Bozuk/artık desteklenmeyen kod uygulamayı kilitlemesin.
       _languageCode = canonicalLanguageCode(storedLanguage ?? '') ?? 'tr';
+      final storedIcon = prefs.getString('ct.appIcon') ?? 'default';
+      _appIcon = supportedAppIcons.containsKey(storedIcon) ? storedIcon : 'default';
     } catch (_) {
       // Unreadable storage: keep defaults and continue normally.
       _accentColor = const Color(ThemeState.defaultAccentArgb);
@@ -190,6 +203,22 @@ class SettingsService extends ChangeNotifier {
     ThemeState.set(color);
     notifyListeners();
     await _saveInt('ct.accentColor', color.toARGB32());
+  }
+
+  Future<bool> setAppIcon(String icon) async {
+    if (!supportedAppIcons.containsKey(icon)) return false;
+    try {
+      const channel = MethodChannel('cloudtune/app_icon');
+      final ok = await channel.invokeMethod<bool>('setIcon', {'icon': icon});
+      if (ok != true) return false;
+    } catch (_) {
+      // Android dışı veya kanal desteklenmiyor: tercihi yine de sakla.
+      if (icon != 'default') return false;
+    }
+    _appIcon = icon;
+    notifyListeners();
+    await _saveString('ct.appIcon', icon);
+    return true;
   }
 
   Future<void> setLanguage(String code) async {
