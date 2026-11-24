@@ -18,14 +18,11 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 > **Hangi APK?** Cihazınızın mimarisini bilmiyorsanız `CloudTune-universal.apk`'yı indirin. Uygulama içi güncelleyici cihazın ABI'sini algılar (`Abi.current`) ve doğru paketi seçer; uygun paket yoksa evrensel APK'ya düşer.
 
-## Son güncelleme (3.0.60+261)
+## Son güncelleme (3.0.61+262)
 
-- **Gerçek hata yüzeyi:** Playback açılış/başlatma hataları artık `errorStream` üzerinden yakalanıyor; hata banner’ı gerçek detayı gösteriyor (maskelenmiş "Parça oynatılamadı" yerine tanı detaylı).
-- **Kurtarma:** Yüzeye çıkan hata varken oynat/duraklat/devam/toggle aynı parçada retry dener; bağlantı geri gelince surfaced error durumu da otomatik recovery alır. Ready-not-playing takılmaları stall watch ile yakalanır.
-- **Linux:** 3.0.60+261 deb’e Başlat Menüsü `.desktop` kısayolu, uygulama ikonu ve `/usr/bin/cloudtune` eklendi.
-- **Oynatma listeleri:** YouTube/YouTube Music playlist linkleri (`music.youtube.com/playlist?list=...` dahil) için InnerTube browse fallback ve playlist sayfasında “Tekrar dene” eklendi; playlist açma daha dayanıklı.
-- **Windows 11 güncelleme akışı:** 3.0.60+ kodunda Windows “Güncelle” GitHub sürüm sayfasını açar (manuel indirme). Güncel Windows installer/EXE bu Linux ortamında build edilemedi; Windows assetleri eski kalabilir, CI/billing düzelince yeniden üretilmeli.
-- **Doğrulama:** `flutter analyze` temiz, `flutter test` 105/105 geçti; cihaz/emülatör smoke yapıldı.
+- **Oynatma listeleri:** YouTube/YouTube Music kopyalanan playlist linkleri (`music.youtube.com/playlist?list=...` dahil, `si`/`drli` parametreleriyle) artık daha dayanıklı açılır. `youtube_explode`/Invidious boş dönerse InnerTube browse fallback + continuation denenir; PlaylistPage boş/hata durumunda “Tekrar dene” sunar.
+- **Önceki 3.0.60 hattı:** Playback error yüzeyi/kurtarma, Linux Başlat Menüsü ikonu/`.desktop`, Windows “Güncelle”nin GitHub release sayfasına yönlendirmesi korunur.
+- **Doğrulama:** `flutter analyze` temiz, `flutter test` 106/106 geçti; bildirilen playlist ID ile smoke testi geçti.
 
 ---
 
