@@ -12,6 +12,37 @@ import 'models.dart';
 import 'player_controller.dart';
 import 'youtube_service.dart';
 
+/// Hata sonrası otomatik denemeler için üstel geri çekilme.
+Duration playbackRetryDelay(int attempts) {
+  if (attempts <= 0) return Duration.zero;
+  var seconds = 15;
+  for (var i = 1; i < attempts && seconds < 300; i++) {
+    seconds = seconds * 2;
+  }
+  if (seconds > 300) seconds = 300;
+  return Duration(seconds: seconds);
+}
+
+/// Aynı parçada üst üste hata varsa yalnızca geri çekilme süresi dolunca,
+/// parça değiştiyse hemen dene. Deneme limiti dolunca kullanıcı eylemi veya
+/// bağlantı düzelmesi gerekir.
+bool shouldAutoRetryPlayback({
+  required String? currentTrackId,
+  required String? attemptedTrackId,
+  required DateTime now,
+  required DateTime? nextAt,
+  required int attempts,
+  required int maxAttempts,
+}) {
+  if (currentTrackId == null ||
+      attemptedTrackId == null ||
+      currentTrackId != attemptedTrackId) {
+    return true;
+  }
+  if (attempts >= maxAttempts) return false;
+  return nextAt == null || !now.isBefore(nextAt);
+}
+
 /// Quiet, device-only maintenance worker. It never shows UI errors and never
 /// contacts a network service. Scans run on an adaptive interval: frequently
 /// while problems are present, rarely when idle or in the background.
@@ -31,6 +62,7 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
   static const Duration _downloadCooldown = Duration(seconds: 60);
   static const int _maxPendingAttempts = 4;
   static const Duration _playbackUnrecoverableCooldown = Duration(minutes: 5);
+  static const int _maxPlaybackAttempts = 3;
 
   Timer? _timer;
   bool _started = false;
@@ -44,6 +76,9 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
   DateTime? _lastFixAt;
   String? _lastIssue;
   DateTime? _lastPlaybackUnrecoverableAt;
+  int _playbackAttempts = 0;
+  DateTime? _nextPlaybackRetryAt;
+  String? _playbackRetryTrackId;
 
   final List<_PendingRepair> _pending = <_PendingRepair>[];
   final Map<String, int> _downloadAttempts = <String, int>{};
@@ -91,6 +126,24 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     await _runScan();
+  }
+
+  /// Kullanıcı aynı parçada tekrar dendiğinde veya bağlantı geri geldiğinde
+  /// tüketilmiş geri çekilme durumunu sıfırlar. Böylece tek bir bozuk parça
+  /// arka planda sonsuza dek YouTube çözümlemesi yapmaz.
+  void notifyPlaybackUserAction() => _resetPlaybackRetry();
+
+  void notifyConnectivityRestored() {
+    _resetPlaybackRetry();
+    if (_started) _schedule(_foreground ? _idleInterval : _backgroundInterval);
+  }
+
+  void _resetPlaybackRetry() {
+    _playbackAttempts = 0;
+    _nextPlaybackRetryAt = null;
+    _playbackRetryTrackId = null;
+    _consecutiveFailures = 0;
+    _lastPlaybackUnrecoverableAt = null;
   }
 
   /// Kullanıcı tarafından tetiklenen tam onarım. Sessiz taramanın aksine
@@ -169,10 +222,10 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     _lastIssue = error;
+    // Tam onarım kullanıcı eylemidir; geri çekilme sayacını sıfırlar.
+    notifyPlaybackUserAction();
     await player.retry();
     if (player.error == null) {
-      _consecutiveFailures = 0;
-      _lastPlaybackUnrecoverableAt = null;
       _fixCount++;
       _lastFixAt = DateTime.now();
       _schedule(_foreground ? _idleInterval : _backgroundInterval);
@@ -370,10 +423,11 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
     final error = player.error;
 
     if (error == null) {
-      // Reset only once the error is actually gone.
-      if (_consecutiveFailures > 0 || _lastPlaybackUnrecoverableAt != null) {
-        _consecutiveFailures = 0;
-        _lastPlaybackUnrecoverableAt = null;
+      // Hata geçtiyse sayaçları sıfırlar; bir sonraki hata ilk denemeden başlar.
+      if (_consecutiveFailures > 0 ||
+          _lastPlaybackUnrecoverableAt != null ||
+          _playbackAttempts > 0) {
+        _resetPlaybackRetry();
         _schedule(_foreground ? _idleInterval : _backgroundInterval);
       }
       return;
@@ -381,13 +435,41 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
 
     final track = player.current;
     if (track == null) return;
-
     _lastIssue = error;
-    await player.retry();
+
+    if (!shouldAutoRetryPlayback(
+      currentTrackId: track.id,
+      attemptedTrackId: _playbackRetryTrackId,
+      now: now,
+      nextAt: _nextPlaybackRetryAt,
+      attempts: _playbackAttempts,
+      maxAttempts: _maxPlaybackAttempts,
+    )) {
+      final next = _nextPlaybackRetryAt;
+      final wait = next == null
+          ? _backgroundInterval
+          : next.difference(now).compareTo(Duration.zero) > 0
+              ? next.difference(now)
+              : _backgroundInterval;
+      _schedule(_foreground && wait < _backgroundInterval
+          ? wait
+          : _backgroundInterval);
+      await _logUnrecoverableIfNeeded(now, track.id, player.error);
+      return;
+    }
+
+    if (_playbackRetryTrackId != track.id) {
+      _playbackAttempts = 0;
+      _nextPlaybackRetryAt = null;
+      _lastPlaybackUnrecoverableAt = null;
+    }
+    _playbackRetryTrackId = track.id;
+    _playbackAttempts++;
+    _nextPlaybackRetryAt = now.add(playbackRetryDelay(_playbackAttempts));
+    await player.retry(userInitiated: false);
 
     if (player.error == null) {
-      _consecutiveFailures = 0;
-      _lastPlaybackUnrecoverableAt = null;
+      _resetPlaybackRetry();
       _fixCount++;
       _lastFixAt = DateTime.now();
       _schedule(_foreground ? _idleInterval : _backgroundInterval);
@@ -397,19 +479,26 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
 
     _consecutiveFailures++;
     _schedule(_foreground ? _busyInterval : _backgroundInterval);
+    await _logUnrecoverableIfNeeded(now, track.id, player.error);
+  }
 
-    if (_consecutiveFailures >= 3) {
-      final loggedAt = _lastPlaybackUnrecoverableAt;
-      if (loggedAt == null ||
-          now.difference(loggedAt) >= _playbackUnrecoverableCooldown) {
-        _lastPlaybackUnrecoverableAt = now;
-        await _log('playback_unrecoverable', {
-          'video_id': track.id,
-          'issue': player.error,
-          'fix_attempts': _consecutiveFailures,
-        });
-      }
+  Future<void> _logUnrecoverableIfNeeded(
+    DateTime now,
+    String trackId,
+    String? error,
+  ) async {
+    if (_playbackAttempts < _maxPlaybackAttempts) return;
+    final loggedAt = _lastPlaybackUnrecoverableAt;
+    if (loggedAt != null &&
+        now.difference(loggedAt) < _playbackUnrecoverableCooldown) {
+      return;
     }
+    _lastPlaybackUnrecoverableAt = now;
+    await _log('playback_unrecoverable', {
+      'video_id': trackId,
+      'issue': error,
+      'fix_attempts': _playbackAttempts,
+    });
   }
 
   Future<void> _repairDownloads(DateTime now) async {

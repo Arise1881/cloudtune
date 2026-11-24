@@ -9,18 +9,21 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 | Android armv7 | ✅ | `CloudTune-armv7.apk` |
 | Android x86_64 | ✅ | `CloudTune-x86_64.apk` |
 | Linux x86_64 | ✅ | `CloudTune-linux.deb` (libmpv2 bağımlı), `CloudTune-linux.tar.gz` |
-| Windows 11 | ✅ | `CloudTune-setup.exe` — çalıştırınca kurulum yapar (3.0.52+253) |
+| Windows 11 | ⚠️ Eski paket | `CloudTune-windows.zip` (3.0.5+206); güncel CI ödeme limiti nedeniyle üretilemedi |
 | iOS (AltStore / SideStore) | ⚠️ Eski paket | `CloudTune.ipa`; güncel CI ödeme limiti nedeniyle üretilemedi |
 
-> **Windows 11 kurulumu:** `CloudTune-setup.exe` dosyasını çalıştırın; uygulama Program Files'e kurulur, Start Menu + masaüstü kısayolu eklenir ve `.mp3/.m4a` gibi ses dosyaları CloudTune ile ilişkilendirilir. UAC onayı gerekir. SmartScreen uyarısında *Daha fazla bilgi → Yine de çalıştır* seçin. Sesli arama için mikrofon izni; radyo, oda ve sohbet için ek izin gerekmez. Taşınabilir ZIP yine yedek olarak yayında.
->
-> **Windows güncellemeleri:** Uygulama Windows'ta paket indirmez. Yeni sürüm manifestte göründüğünde varsayılan tarayıcıda GitHub sürüm sayfasını (`cloudtune-latest`) açar. Sürüm numarası, `update.json` manifest'i ve Android/Linux/iOS güncelleme akışı değişmez; kullanıcı Setup.exe'i GitHub release sayfasından alır.
->
-> **iOS:** GitHub Actions ödeme limiti nedeniyle IPA eski sürümde kaldı. Android, Linux ve Windows paketleri güncel.
+> **Windows/iOS:** GitHub Actions job'ları “recent account payments have failed or spending limit needs to be increased” nedeniyle hiç başlamıyor. Billing/spending limiti düzeltildikten sonra `gh workflow run windows-build.yml` ve `gh workflow run ios-build.yml` ile güncel paketler üretilebilir. Android ve Linux paketleri güncel ve doğrulandı.
 
 > **Linux ses:** Oynatma motoru `media_kit + libmpv`'dir. `deb` paketi `libmpv2`'ye bağlıdır; `apt` bağımlılığı otomatik kurar. `tar.gz` kullanacaksanız sistemde `libmpv2` bulunmalıdır (`sudo apt install libmpv2`). `just_audio` Linux'ta desteklenmediği için ses motoru platforma göre seçilir.
 
 > **Hangi APK?** Cihazınızın mimarisini bilmiyorsanız `CloudTune-universal.apk`'yı indirin. Uygulama içi güncelleyici cihazın ABI'sini algılar (`Abi.current`) ve doğru paketi seçer; uygun paket yoksa evrensel APK'ya düşer.
+
+## Son güncelleme (3.0.60+261)
+
+- **Gerçek hata yüzeyi:** Playback açılış/başlatma hataları artık `errorStream` üzerinden yakalanıyor; hata banner’ı gerçek detayı gösteriyor (maskelenmiş "Parça oynatılamadı" yerine tanı detaylı).
+- **Kurtarma:** Yüzeye çıkan hata varken oynat/duraklat/devam/toggle aynı parçada retry dener; bağlantı geri gelince surfaced error durumu da otomatik recovery alır. Ready-not-playing takılmaları stall watch ile yakalanır.
+- **Stabilite guard’ları:** Prepared swap sonrası hız tekrar uygulanır; RepairBot track değişiminde retry sayacı sıfırlanır; radio extend stale-queue guard; Room discovery disposed/wanted guard.
+- **Doğrulama:** `flutter analyze` temiz, `flutter test` 105/105 geçti; gerçek cihaz + emülatör smoke testi yapıldı.
 
 ---
 
@@ -52,7 +55,6 @@ Cihaz üzerinden alınmış güncel görünümler. Büyütmek için görsele tı
 1. [Son sürüm](https://github.com/Arise1881/cloudtune-dist/releases/tag/cloudtune-latest) sayfasından platformunuza uygun dosyayı indirin.
 2. Android 7.0+ gerekir. **Bilinmeyen kaynaklardan yükleme** iznini verin (Ayarlar → Güvenlik). Paket imzalı olduğu için Google Play koruması uyarı verebilir; devam edin.
 3. APK'yı kurun ve uygulamayı açın. Uygulama doğrudan **ana sayfa** ile açılır; **sonsuz radyo** varsayılan olarak açıktır.
-   - **Android TV / Google TV / Fire TV:** [CloudTune-androidtv.apk](https://github.com/Arise1881/cloudtune-dist/releases/download/cloudtune-latest/CloudTune-androidtv.apk) dosyasını TV’ye USB ile veya dosya yöneticisiyle kurun. Uygulama TV ana ekranında görünür; uzaktan kumanda odağı ve büyütülmüş arayüz otomatik açılır. Medya tuşları (oynat/duraklat, sonraki/önceki) arka planda da çalışır.
 4. İlk açılışta izinler:
    - **Bildirimler** — arka plan çalma ve kilit ekranı kontrolleri için,
    - **Mikrofon** — uygulama açılışta **istemez**; sesli arama düğmesine bastığınızda ister ve yalnızca kayıt süresince aktif kalır,
@@ -139,7 +141,7 @@ Loglar yalnızca cihazda `repair_bot_logs.json` dosyasına yazılır; e-posta ve
 ```
 README.md                  Bu dosya: özellikler, kurulum, uyum, güncelleme, gizlilik
 LICENSE                    MIT lisans
-pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.52+253)
+pubspec.yaml / pubspec.lock  Flutter bağımlılıkları ve sürüm (3.0.55+256)
 analysis_options.yaml      Dart/Flutter linter kuralları
 .metadata                  Flutter proje metadata
 release.sh                 Build → analyze/test → artifact → GitHub release → push
@@ -270,6 +272,53 @@ flutter build ios --release --no-codesign \
   --obfuscate --split-debug-info=build/ios/symbols  # macOS'ta
 flutter build web --release
 ```
+
+### 3.0.55+256 — uzun süreli kullanım güvenilirliği
+
+- OTA artık platforma uygun dosyayı indiriyor; Linux `.deb`, Windows `.zip`,
+  Android ABI'sine özel APK alıyor. Yanlış dosya hazırlanıp kurulumun
+  bozulması engellendi.
+- Eşzamanlı güncelleme kontrolü/indirmesi tek isteğe indirgendi; yarım kalan
+  dosya siliniyor, hazırlanmış dosya sürüm ve dosya adıyla doğrulanıyor.
+- Hızlı parça geçişlerinde kaynak açılışları sıraya alındı ve her adımda
+  geçiş kimliği kontrol edildi. Bayat hata yeni parçanın üzerine yazmıyor.
+- Onarıcı aynı parçada üstel geri çekilme kullanıyor; üç denemeden sonra yalnızca
+  kullanıcı eylemi veya bağlantı düzelmesi yeniden deniyor. Radyo akışları için
+  geçersiz YouTube çözümlemesi atlandı.
+- Hazırlanmış oynatıcı havuzu, URI/playability önbelleği ve oda keşfi sınırlı/
+  süresli tutuldu; başarısız oda keşfi ve radyo listesi kendiliğinden yeniden
+  deneniyor. Bağlantı kopan MQTT istemcisi artık sızmıyor.
+- Invidious kaynaklı `/vi/...` göreli kapak adresleri YouTube CDN'ine bağlanarak
+  mutlak hale getirildi; ana sayfa ve bildirim kapakları artık yükleniyor.
+- `flutter analyze` 0 issue, `flutter test` 103/103.
+
+### 3.0.54+255 — hata sonrası parça atlama düzeltmesi
+
+- ExoPlayer'ın ağ hatasında ürettiği bayat `completed` sinyali artık otomatik
+  parça geçişi tetiklemiyor. Geçiş yalnızca parçanın bilinen süresinin sonuna
+  gelindiyse yapılıyor; hata/kurtarma/açılış durumlarında asla yapılmıyor.
+- Hazırlanmış motor havuzunda hata veren/sonlanan bir oynatıcı aktif motora
+  yükseltilmeden önce atılıyor.
+- Emülatörde ağ kesilerek hata tetiklendi: parça aynı sırada kaldı, başka
+  müziğe atlanmadı. `flutter analyze` 0 issue, `flutter test` 96/96.
+
+### 3.0.53+254 — akış çözümleme ve kapak yenileme
+
+- **Daha hızlı parça açılışı:** YouTube ses adresi, resmî InnerTube
+  `VISIONOS` istemcisi ve oturum kimliğiyle çözülüyor; ölü yansıma sunucuları
+  beklenmiyor. Ölçüm: `9WY6g8nGmPE` 483 ms, `3bfkyXtuIXk` 196 ms.
+- **Otomatik atlama yok:** akış/otorite hatasında parça aynı sırada kalıyor,
+  kullanıcıya Türkçe hata gösteriliyor; radyo modu da hata durumunda başka
+  parçaya geçmiyor.
+- **Ana sayfa kapakları:** `CoverImage` artık iki CDN yolunu deniyor, görüntülenen
+  boyuta göre decode ediyor ve pull-to-refresh sonrası yeni cache nesliyle
+  kapakları taze indiriyor. Emülatörde yenileme sonrası 8 yeni 320×180 JPEG
+  doğrulandı.
+- **Radyo korundu:** Türk radyoları listesi, logo/arama/HTTPS/HTTP/HLS akışları
+  ve beş desteklenen YouTube bağlantı biçimi aynı.
+- Doğrulama: `flutter analyze` 0 issue, `flutter test` 91/91; emülatörde
+  `PLAYING` + ilerleyen pozisyon, radyo çalma, kapak yenileme, YouTube
+  aktivitesi/WebView olmadığı kontrol edildi.
 
 ### 3.0.48+249 — Türk radyoları ve anında çalma
 
@@ -405,11 +454,6 @@ https://raw.githubusercontent.com/Arise1881/cloudtune-dist/main/update.json
 ```
 
 Manifest `version`, `versionCode`, `notes` ve `platforms` alanlarını içerir. Android için `android-arm64`, `android-armv7`, `android-x86_64` ve `android-universal` bağlantıları bulunur. Güncelleme indirilmeden önce cihazın ABI'si belirlenir; uygun paket yoksa evrensel paket kullanılır.
-
-Windows'ta akış farklıdır: `applyUpdate()` paket indirmez, varsayılan tarayıcıda
-`https://github.com/Arise1881/cloudtune-dist/releases/tag/cloudtune-latest`
-adresini açar. Sürüm, `update.json` ve diğer platformların güncelleme akışı
-değişmez; ZIP yalnızca GitHub release sayfasından indirilir.
 
 Aynı manifest GitHub Pages üzerinden de yayınlanır:
 `https://arise1881.github.io/cloudtune-dist/update.json` (CDN önbelleği nedeniyle raw bağlantı her zaman güncel kaynaktır).

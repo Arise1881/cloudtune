@@ -261,10 +261,11 @@ class PlayerPage extends StatelessWidget {
                         const Icon(Icons.error_outline,
                             color: Colors.redAccent),
                         const SizedBox(width: 10),
-                        const Expanded(
+                        Expanded(
                           child: Text(
-                            'Bu parça oynatılamadı. Başka parçaya geçilmedi.',
-                            style: TextStyle(fontSize: 12),
+                            player.errorMessage ??
+                                'Bu parça oynatılamadı. Başka parçaya geçilmedi.',
+                            style: const TextStyle(fontSize: 12),
                           ),
                         ),
                         TextButton(

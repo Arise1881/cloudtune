@@ -26,6 +26,7 @@ abstract class AudioBackend {
   bool get playing;
   Duration get position;
   Duration get buffered;
+  Duration? get duration;
   double get speed;
   double get volume;
   PlaybackStatus get status;
@@ -105,9 +106,12 @@ class JustAudioBackend implements AudioBackend {
   final Map<String, AudioPlayer> _pool = <String, AudioPlayer>{};
   final Set<String> _preparing = <String>{};
   final Map<String, int> _tokens = <String, int>{};
-  // Ana sayfa, arama ve beslemeler aynı havuzu kullanır. 10 motor dolunca
-  // kaydırılan yeni kartlar hiç ısınmadığı için soğuk açılış oluyordu.
-  static const int _maxPrepared = 16;
+  final Map<String, DateTime> _preparedAt = <String, DateTime>{};
+  static const int _maxPrepared = 10;
+  static const Duration _preparedTtl = Duration(minutes: 10);
+  // Hazırlanmış motoru aktife alırken tek bir native çağrı takılırsa kaynak
+  // değişimi kuyruğu kilitlenmesin. Controller üst sınırı daha da sıkıdır.
+  static const Duration _switchTimeout = Duration(seconds: 8);
   final Map<AudioPlayer, AndroidEqualizer> _equalizers =
       <AudioPlayer, AndroidEqualizer>{};
 
@@ -119,6 +123,7 @@ class JustAudioBackend implements AudioBackend {
   final StreamController<PlaybackStatus> _status =
       StreamController<PlaybackStatus>.broadcast();
   final StreamController<Object> _errors = StreamController<Object>.broadcast();
+  Duration? _currentDuration;
 
   JustAudioBackend() {
     _active = _newPlayer();
@@ -163,7 +168,10 @@ class JustAudioBackend implements AudioBackend {
       if (identical(player, _active)) _position.add(value);
     });
     player.durationStream.listen((value) {
-      if (identical(player, _active)) _duration.add(value);
+      if (identical(player, _active)) {
+        _currentDuration = value;
+        _duration.add(value);
+      }
     });
     player.playerStateStream.listen((state) {
       if (identical(player, _active)) _status.add(_mapState(state));
@@ -204,6 +212,9 @@ class JustAudioBackend implements AudioBackend {
   Duration get buffered => _active.bufferedPosition;
 
   @override
+  Duration? get duration => _currentDuration;
+
+  @override
   double get speed => _active.speed;
 
   @override
@@ -236,6 +247,13 @@ class JustAudioBackend implements AudioBackend {
 
   bool _current(String key, int token) => _tokens[key] == token;
 
+  void _dropPrepared(String key, AudioPlayer player) {
+    _pool.remove(key);
+    _preparedAt.remove(key);
+    _equalizers.remove(player);
+    unawaited(player.dispose().catchError((Object _) {}));
+  }
+
   /// Görünen parçanın ilk saniyesini ayrı bir motorla arka planda tamponlar.
   /// Mikrofon sessiz tutulur; kullanıcı dokunana kadar duyulmaz.
   @override
@@ -247,18 +265,21 @@ class JustAudioBackend implements AudioBackend {
   }) async {
     final key = _prepareKey(uri, initialPosition);
     if (_pool.containsKey(key) || _preparing.contains(key)) return;
-    // Havuz dolunca en eski hazırlığı at: ilk kartlar yerine kaydırılarak
-    // görünen kartların tamponu kalsın, dokunma anında soğuk başlatma olmasın.
-    if (_pool.length >= _maxPrepared) {
-      final oldest = _pool.keys.first;
-      final evicted = _pool.remove(oldest);
-      _tokens.remove(oldest);
-      if (evicted != null) {
-        _equalizers.remove(evicted);
-        unawaited(evicted.dispose().catchError((Object _) {}));
+    final now = DateTime.now();
+    for (final entry in _preparedAt.entries.toList(growable: false)) {
+      if (now.difference(entry.value) <= _preparedTtl) continue;
+      final stale = _pool[entry.key];
+      if (stale != null) {
+        _dropPrepared(entry.key, stale);
+      } else {
+        _preparedAt.remove(entry.key);
       }
     }
-    if (_preparing.length >= _maxPrepared) return;
+    // Havuz dolunca eski hazırlıkları atma: kullanıcı genelde ilk gördüğü
+    // kartlara dokunur, onların tamponunu korumak gecikmeyi asıl düşürüyor.
+    if (_pool.length >= _maxPrepared || _preparing.length >= _maxPrepared) {
+      return;
+    }
     final token = (_tokens[key] ?? 0) + 1;
     _tokens[key] = token;
     _preparing.add(key);
@@ -290,12 +311,14 @@ class JustAudioBackend implements AudioBackend {
       await player.pause();
       if (_current(key, token)) {
         _pool[key] = player;
+        _preparedAt[key] = DateTime.now();
       }
     } catch (_) {
     } finally {
       _preparing.remove(key);
       if (_tokens[key] == token) _tokens.remove(key);
       if (!_pool.containsKey(key)) {
+        _preparedAt.remove(key);
         _equalizers.remove(player);
         unawaited(player.dispose().catchError((Object _) {}));
       }
@@ -311,22 +334,43 @@ class JustAudioBackend implements AudioBackend {
   }) async {
     final key = _prepareKey(uri, initialPosition);
     final incoming = _pool.remove(key);
+    final preparedAt = _preparedAt.remove(key);
+    _tokens.remove(key);
     if (incoming == null) return false;
+    // Havuzdayken kaynak hata veren/sonlanan bir motor `completed` durumunda
+    // kalabilir. Aktif motora yükseltilirse bu bayat sinyal otomatik parça
+    // geçişi tetikler. Süresi dolan imzalı URI'nin tamponu da bayattır.
+    final expired = preparedAt == null ||
+        DateTime.now().difference(preparedAt) > _preparedTtl;
+    if (expired || _mapState(incoming.playerState) == PlaybackStatus.completed) {
+      _equalizers.remove(incoming);
+      unawaited(incoming.dispose().catchError((Object _) {}));
+      return false;
+    }
     final outgoing = _active;
-    _tokens[key] = (_tokens[key] ?? 0) + 1;
+    final speed = outgoing.speed;
     try {
-      await incoming.setVolume(1);
+      await incoming.setVolume(1).timeout(_switchTimeout);
+      if ((speed - 1.0).abs() > 0.001) {
+        await incoming.setSpeed(speed).timeout(_switchTimeout);
+      }
       // Referansı önce değiştir: yeni motordan gelecek ilk olaylar arayüze
       // doğru aktif motor olarak yansır.
       _active = incoming;
+      _currentDuration = incoming.duration;
+      _duration.add(_currentDuration);
       unawaited(outgoing.pause().catchError((Object _) {}).whenComplete(
           () => unawaited(outgoing.dispose().catchError((Object _) {}))));
       _equalizers.remove(outgoing);
-      unawaited(incoming.play().catchError((Object _) {}));
+      unawaited(incoming.play().catchError((Object e, StackTrace st) {
+        if (!_errors.isClosed) _errors.add(e);
+      }));
       return true;
     } catch (_) {
       _active = outgoing;
+      _currentDuration = outgoing.duration;
       _pool[key] = incoming;
+      _preparedAt[key] = preparedAt;
       return false;
     }
   }
@@ -361,9 +405,11 @@ class JustAudioBackend implements AudioBackend {
   @override
   Future<void> play() async {
     // just_audio'da play() Future'ı parça bitene/pause olana kadar tamamlanmaz.
-    // Komutu hemen iletip çalar akışını bloklamayız; hatalar errorStream'den
-    // zaten bildiriliyor.
-    unawaited(_active.play().catchError((Object _) {}));
+    // Komutu hemen iletip çalar akışını bloklamayız; başlatma hatasını
+    // errorStream'e iletiriz ki controller takılı kalmasın.
+    unawaited(_active.play().catchError((Object e, StackTrace st) {
+      if (!_errors.isClosed) _errors.add(e);
+    }));
   }
 
   @override
@@ -374,8 +420,11 @@ class JustAudioBackend implements AudioBackend {
 
   @override
   Future<void> applyEqualizer(bool enabled, String preset) async {
-    for (final entry in _equalizers.entries) {
-      final eq = entry.value;
+    // Havuz hazırlığı/dispose işlemleri await aralığında _equalizers'ı
+    // değiştirebiliyor. Canlı haritayı gezmek "Concurrent modification"
+    // hatası veriyordu; anlık görüntü üzerinde çalışılır.
+    final targets = _equalizers.values.toList(growable: false);
+    for (final eq in targets) {
       try {
         await eq.setEnabled(enabled);
         if (!enabled) continue;
@@ -472,6 +521,9 @@ class MediaKitAudioBackend implements AudioBackend {
 
   @override
   Duration get buffered => _player.state.buffer;
+
+  @override
+  Duration? get duration => _player.state.duration;
 
   @override
   double get speed => _player.state.rate;
