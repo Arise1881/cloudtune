@@ -18,11 +18,10 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 > **Hangi APK?** Cihazınızın mimarisini bilmiyorsanız `CloudTune-universal.apk`'yı indirin. Uygulama içi güncelleyici cihazın ABI'sini algılar (`Abi.current`) ve doğru paketi seçer; uygun paket yoksa evrensel APK'ya düşer.
 
-## Son güncelleme (3.0.65+266)
+## Son güncelleme (3.0.66+267)
 
-- **Oynatma düzeltmesi:** Fresh install/ilk açılışta Android equalizer efekt motoru init hatası (`Cannot initialize effect engine`) alınırsa equalizer etkisi kapatılıp aynı parça 1 kez yeniden denenir.
-- **Dinleme geçmişi:** Temizle, son şarkıyı “Dinlemeye devam et”te bırakır; ana sayfa öneri/feed bölümlerine dokunmaz.
-- **Önceki hatlar:** 3.0.62 simge varyantları, 3.0.61 playlist açma dayanıklılığı korunur.
+- **Linux güncelleme düzeltmesi:** Linux’ta indirilen `.deb` artık `pkexec apt-get install --reinstall --allow-downgrades` ile kurulmaya çalışılır; başarısız olursa varsayılan kurulum işleyicisine düşer. Kurulum sonrası yeniden başlatma mesajı verilir.
+- **Önceki hatlar:** 3.0.65 equalizer init kurtarma, dinleme geçmişi temizleme davranışı, 3.0.62 simge varyantları korunur.
 - **Doğrulama:** `flutter analyze` temiz, `flutter test` 106/106 geçti.
 
 ---

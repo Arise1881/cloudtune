@@ -380,6 +380,10 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
       _preparedAssetName = name;
     }
 
+    if (platform == UpdatePlatform.linux) {
+      return await _installLinuxPackage(path);
+    }
+
     final result = await OpenFilex.open(path);
     if (result.type != ResultType.done) {
       return 'Kurulum başlatılamadı. Dosya: $path';
@@ -387,7 +391,6 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     return switch (platform) {
       UpdatePlatform.windows =>
         'Windows paketi indirildi. ZIP içindeki cloudtune.exe ile temiz kurulum yapın.',
-      UpdatePlatform.linux => 'Paket indirildi. Kurulumu onaylayın.',
       _ => 'İndirildi. Kurulum izninizi verin.',
     };
   }
@@ -514,6 +517,67 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     final buildB = _build(b);
     if (buildA != buildB) return buildA > buildB ? 1 : -1;
     return 0;
+  }
+
+  Future<String> _installLinuxPackage(String path) async {
+    final file = File(path);
+    if (!await file.exists()) {
+      return 'İndirme dosyası bulunamadı: $path';
+    }
+
+    // GUI sudo istemi + gerçek kurulum. --reinstall: aynı sürüm dosyası
+    // üzerine yazılsa da paket içeriği güncellensin.
+    final commands = <List<String>>[
+      [
+        'pkexec',
+        'apt-get',
+        'install',
+        '-y',
+        '--reinstall',
+        '--allow-downgrades',
+        path,
+      ],
+      ['pkexec', 'dpkg', '-i', path],
+    ];
+
+    Object? lastError;
+    for (final cmd in commands) {
+      try {
+        final result = await Process.run(cmd.first, cmd.sublist(1));
+        if (result.exitCode == 0) {
+          await _invalidatePrepared();
+          return 'Güncelleme kuruldu. Değişikliklerin tam uygulanması için CloudTune\'u yeniden başlatın.';
+        }
+        lastError = '${result.exitCode}: ${result.stderr}'.trim();
+        // dpkg -i bağımlılık hatası döndürebilir; apt-get -f deneyelim.
+        if (cmd.first == 'pkexec' && cmd.contains('dpkg')) {
+          try {
+            final fix = await Process.run('pkexec', [
+              'apt-get',
+              'install',
+              '-f',
+              '-y',
+            ]);
+            if (fix.exitCode == 0) {
+              await _invalidatePrepared();
+              return 'Güncelleme kuruldu. Değişikliklerin tam uygulanması için CloudTune\'u yeniden başlatın.';
+            }
+          } catch (_) {}
+        }
+      } catch (e) {
+        lastError = e;
+      }
+    }
+
+    // pkexec yoksa/yetersizse varsayılan deb işleyicisine bırak.
+    try {
+      final opened = await OpenFilex.open(path);
+      if (opened.type == ResultType.done) {
+        return 'Paket kurulum ekranı açıldı. Kurulumu onaylayın, sonra CloudTune\'u yeniden başlatın.';
+      }
+    } catch (_) {}
+
+    return 'Linux paketi kurulamadı. Dosya: $path${lastError == null ? '' : ' ($lastError)'}';
   }
 
   Future<bool> _openExternalUrl(String url) async {
