@@ -55,7 +55,7 @@ String? updateAssetUrl({
     case UpdatePlatform.linux:
       return info.linuxDebUrl;
     case UpdatePlatform.windows:
-      return info.windowsZipUrl;
+      return info.windowsExeUrl ?? info.windowsZipUrl;
     case UpdatePlatform.ios:
     case UpdatePlatform.unknown:
       return null;
@@ -74,7 +74,9 @@ String updateAssetFileName({
     UpdatePlatform.android => 'cloudtune_update_$version.apk',
     UpdatePlatform.linux =>
       'cloudtune_${version}_${info.versionCode}_amd64.deb',
-    UpdatePlatform.windows => 'CloudTune-$version-windows.zip',
+    UpdatePlatform.windows => info.windowsExeUrl != null
+        ? 'CloudTune-${version}_${info.versionCode}-setup.exe'
+        : 'CloudTune-$version-windows.zip',
     UpdatePlatform.ios ||
     UpdatePlatform.unknown =>
       'cloudtune_update_$version.bin',
@@ -91,6 +93,7 @@ class UpdateInfo {
   final String? androidUniversalUrl;
   final String? linuxDebUrl;
   final String? windowsZipUrl;
+  final String? windowsExeUrl;
   final String? iosSourceUrl;
 
   const UpdateInfo({
@@ -103,6 +106,7 @@ class UpdateInfo {
     this.androidUniversalUrl,
     this.linuxDebUrl,
     this.windowsZipUrl,
+    this.windowsExeUrl,
     this.iosSourceUrl,
   });
 }
@@ -284,6 +288,7 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
       androidUniversalUrl: platforms['android-universal'] as String?,
       linuxDebUrl: platforms['linux'] as String?,
       windowsZipUrl: platforms['windows'] as String?,
+      windowsExeUrl: (platforms['windows-exe'] ?? platforms['windowsExe']) as String?,
       iosSourceUrl: platforms['ios'] as String?,
     );
   }
@@ -348,7 +353,7 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
           : 'Kaynak açılamadı: $url';
     }
 
-    if (platform == UpdatePlatform.windows) {
+    if (platform == UpdatePlatform.windows && info.windowsExeUrl == null) {
       final ok = await _openExternalUrl(kReleasePageUrl);
       return ok
           ? 'GitHub sürüm sayfası açıldı. En güncel Windows kurulum dosyasını indirip kurabilirsiniz.'
@@ -383,16 +388,15 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     if (platform == UpdatePlatform.linux) {
       return await _installLinuxPackage(path);
     }
+    if (platform == UpdatePlatform.windows) {
+      return await _installWindowsPackage(path);
+    }
 
     final result = await OpenFilex.open(path);
     if (result.type != ResultType.done) {
       return 'Kurulum başlatılamadı. Dosya: $path';
     }
-    return switch (platform) {
-      UpdatePlatform.windows =>
-        'Windows paketi indirildi. ZIP içindeki cloudtune.exe ile temiz kurulum yapın.',
-      _ => 'İndirildi. Kurulum izninizi verin.',
-    };
+    return 'İndirildi. Kurulum izninizi verin.';
   }
 
   /// Aynı dosya için eşzamanlı indirmeleri birleştirir; farklı dosyalar
@@ -578,6 +582,29 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     } catch (_) {}
 
     return 'Linux paketi kurulamadı. Dosya: $path${lastError == null ? '' : ' ($lastError)'}';
+  }
+
+  Future<String> _installWindowsPackage(String path) async {
+    final file = File(path);
+    if (!await file.exists()) {
+      return 'İndirme dosyası bulunamadı: $path';
+    }
+
+    try {
+      if (Platform.isWindows) {
+        // Setup exe'yi başlat; Windows UAC gerekirse yönetici onayı ister.
+        await Process.start(path, [], mode: ProcessStartMode.detached);
+        await _invalidatePrepared();
+        return 'Windows kurulum başlatıldı. Kurulumu tamamlayıp CloudTune\'u yeniden başlatın.';
+      }
+      final opened = await OpenFilex.open(path);
+      if (opened.type == ResultType.done) {
+        return 'Kurulum dosyası açıldı.';
+      }
+    } catch (e) {
+      return 'Windows kurulum başlatılamadı: $e';
+    }
+    return 'Windows kurulum başlatılamadı. Dosya: $path';
   }
 
   Future<bool> _openExternalUrl(String url) async {
