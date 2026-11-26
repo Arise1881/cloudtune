@@ -354,8 +354,8 @@ class _Controls extends StatelessWidget {
     // Flutter Material ikon setinde `repeat_off` yok. Kapalı durumda aynı
     // `repeat` glifini soluk renkte gösteriyoruz; `repeat_one` ayrı glif.
     final repeatIcon = switch (repeatMode) {
-      'one' => Icon(Icons.repeat_one, color: active),
-      'all' => Icon(Icons.repeat, color: active),
+      'one' => Icon(Icons.repeat_one, color: Colors.white),
+      'all' => Icon(Icons.repeat, color: Colors.white),
       _ => Icon(Icons.repeat, color: inactive),
     };
     final repeatTooltip = switch (repeatMode) {
@@ -430,7 +430,7 @@ class _Controls extends StatelessWidget {
           onPressed: () => _cycleRepeat(player, context),
         ),
         Transform.translate(
-          offset: const Offset(-4, 0),
+          offset: const Offset(-10, 0),
           child: _DownloadButton(track: track),
         ),
       ],

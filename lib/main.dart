@@ -50,7 +50,7 @@ Future<void> main() async {
       androidNotificationOngoing: false,
       androidStopForegroundOnPause: false,
       androidNotificationClickStartsActivity: true,
-      androidResumeOnClick: true,
+      androidResumeOnClick: false,
       androidNotificationIcon: 'mipmap/ic_launcher',
     ),
   );
