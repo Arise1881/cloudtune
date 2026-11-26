@@ -1141,7 +1141,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   }
 
   void _syncInactivityTimer() {
-    final active = _player.playing || _loading || _opening;
+    final active = _player.playing || _loading || _opening || _advancing || _recovering;
     if (active) {
       _inactivityTimer?.cancel();
       _inactivityTimer = null;
@@ -1154,7 +1154,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
   }
 
   Future<void> _forceStopDueToInactivity() async {
-    if (_player.playing || _loading || _opening) return;
+    if (_player.playing || _loading || _opening || _advancing || _recovering) return;
     try {
       _userPaused = true;
       await _player.pause();
@@ -1333,12 +1333,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
         } else {
           if (_interruptedBySystem) {
             _interruptedBySystem = false;
-            if (!_userPaused &&
-                !_player.playing &&
-                current != null &&
-                _error == null) {
-              unawaited(_player.play());
-            }
+            // Arama/ses kesintisi bitince otomatik devam etme; kullanıcı elle başlatır.
           }
         }
       });
