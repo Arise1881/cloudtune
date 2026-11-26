@@ -591,19 +591,43 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
       _installedBuild = info.versionCode;
     }
     notifyListeners();
-    _relaunchSelf();
+    unawaited(_relaunchSelf());
     return 'Güncelleme kuruldu. CloudTune yeniden başlatılıyor...';
   }
 
-  void _relaunchSelf() {
+  Future<void> _relaunchSelf() async {
+    var started = false;
+    final exe = Platform.resolvedExecutable;
     try {
-      final exe = Platform.resolvedExecutable;
-      final args = Platform.executableArguments;
-      Process.start(exe, args, mode: ProcessStartMode.detached);
+      await Process.start(
+        exe,
+        const <String>[],
+        mode: ProcessStartMode.detached,
+        workingDirectory: File(exe).parent.path,
+      );
+      started = true;
     } catch (_) {}
-    Future<void>.delayed(const Duration(milliseconds: 350), () {
-      exit(0);
-    });
+    if (!started) {
+      try {
+        await Process.start(
+          'cloudtune',
+          const <String>[],
+          mode: ProcessStartMode.detached,
+        );
+        started = true;
+      } catch (_) {}
+    }
+    if (!started) {
+      try {
+        await Process.start(
+          'xdg-open',
+          <String>[kReleasePageUrl],
+          mode: ProcessStartMode.detached,
+        );
+      } catch (_) {}
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    exit(0);
   }
 
   Future<String> _installWindowsPackage(String path) async {
