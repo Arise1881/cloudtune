@@ -549,8 +549,7 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
       try {
         final result = await Process.run(cmd.first, cmd.sublist(1));
         if (result.exitCode == 0) {
-          await _invalidatePrepared();
-          return 'Güncelleme kuruldu. Değişikliklerin tam uygulanması için CloudTune\'u yeniden başlatın.';
+          return await _finalizeLinuxInstallAndRelaunch();
         }
         lastError = '${result.exitCode}: ${result.stderr}'.trim();
         // dpkg -i bağımlılık hatası döndürebilir; apt-get -f deneyelim.
@@ -563,8 +562,7 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
               '-y',
             ]);
             if (fix.exitCode == 0) {
-              await _invalidatePrepared();
-              return 'Güncelleme kuruldu. Değişikliklerin tam uygulanması için CloudTune\'u yeniden başlatın.';
+              return await _finalizeLinuxInstallAndRelaunch();
             }
           } catch (_) {}
         }
@@ -582,6 +580,30 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     } catch (_) {}
 
     return 'Linux paketi kurulamadı. Dosya: $path${lastError == null ? '' : ' ($lastError)'}';
+  }
+
+  Future<String> _finalizeLinuxInstallAndRelaunch() async {
+    final info = _latest;
+    await _invalidatePrepared();
+    _updateAvailable = false;
+    if (info != null) {
+      _installedVersion = info.version;
+      _installedBuild = info.versionCode;
+    }
+    notifyListeners();
+    _relaunchSelf();
+    return 'Güncelleme kuruldu. CloudTune yeniden başlatılıyor...';
+  }
+
+  void _relaunchSelf() {
+    try {
+      final exe = Platform.resolvedExecutable;
+      final args = Platform.executableArguments;
+      Process.start(exe, args, mode: ProcessStartMode.detached);
+    } catch (_) {}
+    Future<void>.delayed(const Duration(milliseconds: 350), () {
+      exit(0);
+    });
   }
 
   Future<String> _installWindowsPackage(String path) async {
