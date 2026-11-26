@@ -3,6 +3,7 @@ package com.cloudtune.app
 import android.Manifest
 import android.content.ComponentName
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.MediaStore
@@ -124,6 +125,23 @@ class MainActivity : AudioServiceActivity() {
                             result.success(getCurrentLauncherIcon())
                         } catch (e: Exception) {
                             result.error("icon_failed", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "cloudtune/app")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "bringToFront" -> {
+                        try {
+                            val intent = Intent(this, MainActivity::class.java)
+                            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("bring_to_front_failed", e.message, null)
                         }
                     }
                     else -> result.notImplemented()

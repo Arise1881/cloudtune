@@ -4,6 +4,7 @@ import 'package:app_links/app_links.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloudtune/core/app_palette.dart';
 
 import 'core/download_service.dart';
@@ -86,6 +87,7 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
     _listenLinks();
     AudioService.notificationClicked.listen((clicked) {
       if (!clicked || !mounted) return;
+      const MethodChannel('cloudtune/app').invokeMethod('bringToFront');
       _navigatorKey.currentState?.popUntil((r) => r.isFirst);
     });
   }
