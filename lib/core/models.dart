@@ -5,15 +5,24 @@ import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatf
 /// tile'larda aynı görsel `mqdefault` (320x180) ile yüklenir. Mobil veride
 /// kapak trafiği belirgin düşer, Wi-Fi'de de gereksiz indirme olmaz.
 String compactThumbnailUrl(String url) {
-  final uri = Uri.tryParse(url);
+  var raw = url.trim();
+  if (raw.isEmpty) return raw;
+  if (raw.startsWith('//')) raw = 'https:$raw';
+  if (raw.startsWith('/')) {
+    raw = raw.startsWith('/vi/')
+        ? 'https://i.ytimg.com$raw'
+        : 'https://www.youtube.com$raw';
+  }
+  final uri = Uri.tryParse(raw);
   final youtubeThumbHost = uri?.host.endsWith('ytimg.com') == true ||
       uri?.host.endsWith('youtube.com') == true;
-  if (uri == null || !youtubeThumbHost) return url;
+  if (uri == null || !youtubeThumbHost) return raw;
   final segments = uri.pathSegments;
-  if (segments.length < 3 || segments[segments.length - 3] != 'vi') return url;
+  if (segments.length < 3 || segments[segments.length - 3] != 'vi') return raw;
   if (segments.last == 'mqdefault.jpg') return uri.toString();
   return uri
       .replace(
+        scheme: uri.scheme.isEmpty ? 'https' : uri.scheme,
         pathSegments: <String>[
           ...segments.sublist(0, segments.length - 1),
           'mqdefault.jpg',
@@ -22,24 +31,27 @@ String compactThumbnailUrl(String url) {
       .toString();
 }
 
-/// Windows'ta Invidious bazen göreli kapak URL'si döndürüyor; Dart bunu
-/// çözümleyemediği için görsel boş kalıyordu. Parça kimliğinden canonical
-/// YouTube CDN adresi üretilir. Diğer platformlar ve yerel/data kapaklar
-/// dokunulmaz.
+/// Bazı kaynaklar (Invidious/YouTube Music) göreli veya protokol-göreli kapak
+/// URL'si döndürebiliyor; Linux/desktop'ta bu görselin boş kalmasına neden olur.
+/// Mutlak http/https/file/data URL'ler korunur; göreli URL'ler normalize edilir;
+/// boş/geçersiz durumda YouTube CDN vi fallback kullanılır.
 String _windowsCoverUrl(String? coverUrl, String id, String file) {
-  if (defaultTargetPlatform != TargetPlatform.windows) {
-    return coverUrl ?? 'https://i.ytimg.com/vi/$id/$file';
+  final fallback = 'https://i.ytimg.com/vi/${Uri.encodeComponent(id)}/$file';
+  var raw = (coverUrl ?? '').trim();
+  if (raw.isEmpty) return fallback;
+  if (raw.startsWith('//')) raw = 'https:$raw';
+  if (raw.startsWith('/')) {
+    raw = raw.startsWith('/vi/')
+        ? 'https://i.ytimg.com$raw'
+        : 'https://www.youtube.com$raw';
   }
-  final uri = Uri.tryParse(coverUrl ?? '');
-  if (uri != null &&
-      uri.hasScheme &&
-      (uri.scheme == 'file' ||
-          uri.scheme == 'data' ||
-          uri.host.toLowerCase().endsWith('ytimg.com') ||
-          uri.host.toLowerCase().endsWith('youtube.com'))) {
-    return coverUrl!;
+  final uri = Uri.tryParse(raw);
+  if (uri == null) return fallback;
+  if (uri.scheme == 'file' || uri.scheme == 'data') return raw;
+  if ((uri.scheme == 'http' || uri.scheme == 'https') && uri.host.isNotEmpty) {
+    return raw;
   }
-  return 'https://i.ytimg.com/vi/${Uri.encodeComponent(id)}/$file';
+  return fallback;
 }
 
 class Track {

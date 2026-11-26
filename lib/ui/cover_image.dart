@@ -31,8 +31,14 @@ class CoverImage extends StatelessWidget {
   final String? cacheKey;
 
   List<String> _candidateUrls() {
-    final primary = url.trim();
+    var primary = url.trim();
     if (primary.isEmpty) return const [];
+    if (primary.startsWith('//')) primary = 'https:$primary';
+    if (primary.startsWith('/')) {
+      primary = primary.startsWith('/vi/')
+          ? 'https://i.ytimg.com$primary'
+          : 'https://www.youtube.com$primary';
+    }
     final uri = Uri.tryParse(primary);
     final out = <String>[];
     void add(String? u) {
