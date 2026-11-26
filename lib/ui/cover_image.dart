@@ -1,5 +1,4 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 /// YouTube kapakları için iki CDN yolu dener. `i.ytimg.com` bazı
@@ -14,7 +13,14 @@ class CoverImage extends StatelessWidget {
     this.borderRadius = 8,
     this.fit = BoxFit.cover,
     this.iconSize = 34,
+    this.cacheKey,
   });
+
+  /// Kapak yenileme nesli. Pull-to-refresh sonrası aynı URL yeniden indirilir;
+  /// aksi halde CachedNetworkImage eski dosyayı sonsuza kadar gösterir.
+  static int _epoch = 0;
+
+  static void refresh() => _epoch++;
 
   final String url;
   final double width;
@@ -22,53 +28,64 @@ class CoverImage extends StatelessWidget {
   final double borderRadius;
   final BoxFit fit;
   final double iconSize;
+  final String? cacheKey;
 
-  /// Windows'ta göreli/proxy kapak URL'leri yüklenmiyor. Parça kimliği
-  /// `/vi/<id>/` yolundan çıkarılıp canonical YouTube CDN'ine çevrilir.
-  String? _youtubeIdFromPath() {
-    final segments = Uri.tryParse(url)?.pathSegments ?? const <String>[];
-    final index = segments.indexOf('vi');
-    if (index < 0 || index + 1 >= segments.length) return null;
-    final id = segments[index + 1];
-    return id.isEmpty ? null : id;
+  List<String> _candidateUrls() {
+    final primary = url.trim();
+    if (primary.isEmpty) return const [];
+    final uri = Uri.tryParse(primary);
+    final out = <String>[];
+    void add(String? u) {
+      if (u == null) return;
+      final v = u.trim();
+      if (v.isEmpty || out.contains(v)) return;
+      out.add(v);
+    }
+
+    add(primary);
+
+    // YouTube vi kapaklarında büyük görsel isteyen yerler için kalite zinciri.
+    final isYtThumb = uri != null &&
+        (uri.host.endsWith('ytimg.com') || uri.host.endsWith('youtube.com')) &&
+        uri.pathSegments.length >= 3 &&
+        uri.pathSegments[uri.pathSegments.length - 3] == 'vi';
+    if (isYtThumb) {
+      final segs = uri.pathSegments;
+      final last = segs.last;
+      final highQualityView = !width.isFinite || width >= 180 || height >= 180;
+      final variants = highQualityView
+          ? const [
+              'maxresdefault.jpg',
+              'sddefault.jpg',
+              'hq720.jpg',
+              'hqdefault.jpg',
+              'mqdefault.jpg',
+            ]
+          : const ['mqdefault.jpg', 'hqdefault.jpg'];
+      for (final v in variants) {
+        final candidate = uri.replace(pathSegments: [...segs.sublist(0, segs.length - 1), v]).toString();
+        add(candidate);
+        // CDN host fallback
+        if (uri.host == 'i.ytimg.com') {
+          add(Uri.parse(candidate).replace(host: 'img.youtube.com').toString());
+        } else if (uri.host == 'img.youtube.com') {
+          add(Uri.parse(candidate).replace(host: 'i.ytimg.com').toString());
+        }
+      }
+      // Keep original last if different (e.g. webp/custom)
+      if (!variants.contains(last)) {
+        add(primary);
+      }
+    } else {
+      // Non-YT: just host fallback
+      if (uri?.host == 'i.ytimg.com') {
+        add(uri!.replace(host: 'img.youtube.com').toString());
+      } else if (uri?.host == 'img.youtube.com') {
+        add(uri!.replace(host: 'i.ytimg.com').toString());
+      }
+    }
+    return out;
   }
-
-  String _resolvedUrl() {
-    if (defaultTargetPlatform != TargetPlatform.windows) return url;
-    final uri = Uri.tryParse(url);
-    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
-      final id = _youtubeIdFromPath();
-      return id == null ? url : 'https://i.ytimg.com/vi/$id/mqdefault.jpg';
-    }
-    if (uri.scheme == 'file' || uri.scheme == 'data') return url;
-    final host = uri.host.toLowerCase();
-    if (!host.endsWith('ytimg.com') && !host.endsWith('youtube.com')) {
-      final id = _youtubeIdFromPath();
-      return id == null ? url : 'https://i.ytimg.com/vi/$id/mqdefault.jpg';
-    }
-    return url;
-  }
-
-  String? _fallbackUrl(String source) {
-    final uri = Uri.tryParse(source);
-    if (uri == null) return null;
-    if (uri.host == 'i.ytimg.com') {
-      return uri.replace(host: 'img.youtube.com').toString();
-    }
-    if (uri.host == 'img.youtube.com') {
-      return uri.replace(host: 'i.ytimg.com').toString();
-    }
-    return null;
-  }
-
-  Map<String, String>? get _headers =>
-      defaultTargetPlatform == TargetPlatform.windows
-          ? const <String, String>{
-              'User-Agent':
-                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) CloudTune/3.0',
-              'Referer': 'https://www.youtube.com/',
-            }
-          : null;
 
   Widget _placeholder() => Container(
         width: width,
@@ -84,40 +101,32 @@ class CoverImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final resolved = _resolvedUrl();
-    final fallback = _fallbackUrl(resolved);
-    final headers = _headers;
-    // Kapak dosyası küçük olsa da 320x180 tüm çözücü bellekte tutulur.
-    // Görüntülenen boyuta göre decode ederek liste kaydırmada bellek ve
-    // GPU yükünü azaltır; mobil veride ek indirme yapmaz.
+    final candidates = _candidateUrls();
+    if (candidates.isEmpty) return _error(Icons.music_note);
     final ratio = MediaQuery.devicePixelRatioOf(context).clamp(1.0, 2.0);
     final cacheWidth = width.isFinite ? (width * ratio).round() : null;
     final cacheHeight = height.isFinite ? (height * ratio).round() : null;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(borderRadius),
-      child: CachedNetworkImage(
-        imageUrl: resolved,
-        httpHeaders: headers,
+
+    Widget buildAt(int i) {
+      final u = candidates[i];
+      final key = cacheKey == null ? '$u#$_epoch' : '$cacheKey#$u#$_epoch';
+      return CachedNetworkImage(
+        imageUrl: u,
+        cacheKey: key,
         width: width,
         height: height,
         memCacheWidth: cacheWidth,
         memCacheHeight: cacheHeight,
         fit: fit,
         placeholder: (_, __) => _placeholder(),
-        errorWidget: (_, __, ___) {
-          if (fallback == null) return _error(Icons.music_note);
-          return Image.network(
-            fallback,
-            headers: headers ?? const <String, String>{},
-            width: width,
-            height: height,
-            cacheWidth: cacheWidth,
-            cacheHeight: cacheHeight,
-            fit: fit,
-            errorBuilder: (_, __, ___) => _error(Icons.music_note),
-          );
-        },
-      ),
+        errorWidget: (_, __, ___) =>
+            i + 1 < candidates.length ? buildAt(i + 1) : _error(Icons.music_note),
+      );
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(borderRadius),
+      child: buildAt(0),
     );
   }
 }

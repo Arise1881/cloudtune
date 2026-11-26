@@ -18,12 +18,12 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 > **Hangi APK?** Cihazınızın mimarisini bilmiyorsanız `CloudTune-universal.apk`'yı indirin. Uygulama içi güncelleyici cihazın ABI'sini algılar (`Abi.current`) ve doğru paketi seçer; uygun paket yoksa evrensel APK'ya düşer.
 
-## Son güncelleme (3.0.67+268)
+## Son güncelleme (3.0.68+269)
 
-- **Android bildirim/dinamik ada:** Medya bildirimi görseline/dinamik adaya dokununca uygulama açılır (`androidResumeOnClick`/`androidNotificationClickStartsActivity`).
-- **Arama kesintisi:** Telefon görüşmesi/ses kesintilerinde oynatma duraklatılır; kesinti bitince yalnızca sistem kesintisi öncesi çalıyorsa devam eder. Kulaklık çıkınca duraklatılır.
-- **Hareketsizlik:** 10 dakikadan fazla müzik dinlenmiyorsa uygulama otomatik durdurulur.
-- **Arayüz:** Ana sayfa üst indirme simgesi taşmayı önleyecek şekilde hizalandı; şarkı sayfası kapağı YT Music benzeri kare/geniş görünümde; indirme simgesi döngü simgesinin yanına taşındı; yazı/alt gezinme çubuğu cihaz ve sistem gezinme çubuğu kalınlığına göre ayarlanır.
+- **Bildirim/dinamik ada:** Medya bildirimi tıklaması dinleyicisi eklendi; bildirim/dinamik ada görseline dokununca uygulama öne alınır.
+- **İndirmeler:** Devam eden indirmeler için iptal düğmesi eklendi. Şarkı sayfası indirme simgesi eski konumuna alınıp hafif sola kaydırıldı.
+- **Kapaklar:** YT kapaklarında büyük görünümler için maxres/sd/hq kalite zinciri ve CDN fallback eklendi; şarkı sayfası yüksek kaliteli kapak kullanır.
+- **Önceki düzeltmeler:** Arama kesintisi yönetimi, 10 dk hareketsizlikte otomatik durdurma, duyarlı yazı/alt gezinme çubuğu uyumu korunur.
 - **Doğrulama:** `flutter analyze` temiz, `flutter test` 106/106 geçti.
 
 ---

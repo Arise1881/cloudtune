@@ -80,6 +80,8 @@ class DownloadService extends ChangeNotifier {
   final Map<String, String> _failureReason = <String, String>{};
   final Map<String, Track> _failedTracks = <String, Track>{};
   final Map<String, DownloadGroup> _groups = <String, DownloadGroup>{};
+  final Set<String> _cancelled = <String>{};
+  final Map<String, http.Client> _activeClients = <String, http.Client>{};
 
   /// `savedPathOf` senkron dosya araması yapabilsin diye belgeler dizini önbelleği.
   String? _libraryDir;
@@ -146,6 +148,13 @@ class DownloadService extends ChangeNotifier {
     _failures.remove(id);
     _failureReason.remove(id);
     _failedTracks.remove(id);
+    notifyListeners();
+  }
+
+  void cancelDownload(String id) {
+    if (!_progress.containsKey(id)) return;
+    _cancelled.add(id);
+    _activeClients[id]?.close();
     notifyListeners();
   }
 
@@ -260,6 +269,7 @@ class DownloadService extends ChangeNotifier {
 
     File? temp;
     http.Client? client;
+    IOSink? sink;
     try {
       Uri uri;
       final source = track.sourceUrl;
@@ -290,6 +300,7 @@ class DownloadService extends ChangeNotifier {
       final directory = await getTemporaryDirectory();
 
       client = http.Client();
+      _activeClients[track.id] = client;
       final response = await client.send(request).timeout(
             const Duration(seconds: 30),
           );
@@ -301,9 +312,14 @@ class DownloadService extends ChangeNotifier {
       temp = File('${directory.path}/ct_${track.id}$extension');
 
       final total = response.contentLength ?? 0;
-      final sink = temp.openWrite();
+      sink = temp.openWrite();
       var received = 0;
-      await for (final chunk in response.stream) {
+      await for (final chunk in response.stream.timeout(
+        const Duration(seconds: 45),
+      )) {
+        if (_cancelled.contains(track.id)) {
+          throw StateError('download-cancelled');
+        }
         sink.add(chunk);
         received += chunk.length;
         if (total > 0) {
@@ -312,6 +328,7 @@ class DownloadService extends ChangeNotifier {
         }
       }
       await sink.close();
+      sink = null;
 
       if (received <= 0) throw StateError('download-empty');
 
@@ -327,12 +344,26 @@ class DownloadService extends ChangeNotifier {
       unawaited(Library.instance.remember(track));
       return path;
     } catch (error) {
-      _failures.add(track.id);
-      _failureReason[track.id] = error.toString();
-      _failedTracks[track.id] = track;
+      if (_cancelled.contains(track.id) ||
+          error.toString().contains('download-cancelled')) {
+        _failures.remove(track.id);
+        _failureReason.remove(track.id);
+        _failedTracks.remove(track.id);
+      } else {
+        _failures.add(track.id);
+        _failureReason[track.id] = error.toString();
+        _failedTracks[track.id] = track;
+      }
       notifyListeners();
       return null;
     } finally {
+      if (sink != null) {
+        try {
+          await sink.close();
+        } catch (_) {}
+      }
+      _activeClients.remove(track.id);
+      _cancelled.remove(track.id);
       client?.close();
       _progress.remove(track.id);
       notifyListeners();

@@ -316,6 +316,12 @@ class DownloadsPage extends StatelessWidget {
                   '${(progress * 100).round()}%',
                   style: TextStyle(color: accent, fontSize: 12),
                 ),
+                IconButton(
+                  tooltip: 'İptal et',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () => DownloadService.instance.cancelDownload(id),
+                ),
               ],
             ),
             const SizedBox(height: 10),

@@ -7,12 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:cloudtune/core/app_palette.dart';
 
 import 'core/download_service.dart';
-import 'core/launch_args_stub.dart'
-    if (dart.library.io) 'core/launch_args_io.dart';
 import 'core/library.dart';
 import 'core/link_handler.dart';
 import 'core/link_resolver.dart';
-import 'core/models.dart';
 import 'core/player_controller.dart';
 import 'core/repair_bot.dart';
 import 'core/room_service.dart';
@@ -89,24 +86,10 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
   void initState() {
     super.initState();
     _listenLinks();
-    final initialFile = initialMediaPath();
-    if (initialFile != null) unawaited(_openLocalFile(initialFile));
-  }
-
-  /// Windows dosya ilişkilendirmesiyle açılan yerel ses dosyasını çalar.
-  Future<void> _openLocalFile(String path) async {
-    final name = path.split(RegExp(r'[\\/]')).last;
-    final track = Track(
-      id: 'local:${name.hashCode}:${path.hashCode}',
-      title: name,
-      artist: 'Yerel dosya',
-      sourceUrl: Uri.file(path).toString(),
-    );
-    await PlayerController.instance.playQueue(
-      <Track>[track],
-      0,
-      radio: false,
-    );
+    AudioService.notificationClicked.listen((clicked) {
+      if (!clicked || !mounted) return;
+      _navigatorKey.currentState?.popUntil((r) => r.isFirst);
+    });
   }
 
   Future<void> _listenLinks() async {

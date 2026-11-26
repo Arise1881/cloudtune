@@ -196,7 +196,7 @@ class PlayerPage extends StatelessWidget {
                     child: AspectRatio(
                       aspectRatio: 1,
                       child: CoverImage(
-                        url: track.thumb,
+                        url: track.artwork,
                         width: double.infinity,
                         height: double.infinity,
                         borderRadius: 12,
@@ -422,13 +422,16 @@ class _Controls extends StatelessWidget {
           icon: const Icon(Icons.skip_next),
           onPressed: player.hasNext ? player.next : null,
         ),
-        _DownloadButton(track: track),
         IconButton(
           tooltip: repeatTooltip,
           iconSize: 20,
           constraints: compact,
           icon: repeatIcon,
           onPressed: () => _cycleRepeat(player, context),
+        ),
+        Transform.translate(
+          offset: const Offset(-4, 0),
+          child: _DownloadButton(track: track),
         ),
       ],
     );
