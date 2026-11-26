@@ -18,9 +18,9 @@ Açık kaynak, reklamsız müzik çalar. Şarkılar **doğrudan cihazdan YouTube
 
 > **Hangi APK?** Cihazınızın mimarisini bilmiyorsanız `CloudTune-universal.apk`'yı indirin. Uygulama içi güncelleyici cihazın ABI'sini algılar (`Abi.current`) ve doğru paketi seçer; uygun paket yoksa evrensel APK'ya düşer.
 
-## Son güncelleme (3.0.69+270)
+## Son güncelleme (3.0.70+271)
 
-- **Dinamik ada/sihirli kapsül:** Bildirim/dinamik ada tıklamasında uygulama açılışı düzeltildi (`androidResumeOnClick` kapatıldı, `androidNotificationClickStartsActivity` korunur).
+- **Dinamik ada/sihirli kapsül:** Bildirim/dinamik ada tıklamasında uygulama açılışı düzeltildi (bildirim tıklama yapılandırması 3.0.67 öncesi davranışa geri alındı).
 - **Şarkı sayfası:** İndirme logosu yanındaki aktif tekrar renk vurgusu kaldırıldı; indirme logosu biraz daha sola kaydırıldı.
 - **Önceki düzeltmeler:** İndirme iptali, YT kapak kalite zinciri, arama kesintisi, 10 dk hareketsizlik, duyarlı yazı/alt gezinme çubuğu korunur.
 - **Doğrulama:** `flutter analyze` ve `flutter test` publish öncesi çalıştırılacak.
