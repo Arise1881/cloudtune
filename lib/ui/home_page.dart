@@ -888,47 +888,62 @@ class _HomePageState extends State<HomePage> {
       padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
       child: Row(
         children: [
-          Text(
-            _greeting,
-            style: Theme.of(context)
-                .textTheme
-                .headlineSmall
-                ?.copyWith(fontWeight: FontWeight.w800),
-          ),
-          const Spacer(),
-          if (defaultTargetPlatform == TargetPlatform.windows)
-            IconButton(
-              tooltip: 'Yenile (F5)',
-              icon: const Icon(Icons.refresh),
-              onPressed: _refreshCurrent,
-            ),
-          IconButton(
-            tooltip: 'Şarkı ara',
-            icon: const Icon(Icons.search),
-            onPressed: () => _onNavTap(SearchNavBar.search),
-          ),
-          IconButton(
-            tooltip: 'Odalar (Beta)',
-            icon: const Icon(Icons.groups_outlined),
-            onPressed: () => _openRooms(),
-          ),
-          IconButton(
-            tooltip: 'Çalma listesi oluştur',
-            icon: const Icon(Icons.playlist_add),
-            onPressed: _createPlaylist,
-          ),
-          IconButton(
-            tooltip: 'Oluşturulan çalma listeleri',
-            icon: const Icon(Icons.playlist_play),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const MyPlaylistsPage()),
+          Expanded(
+            child: Text(
+              _greeting,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w800),
             ),
           ),
-          IconButton(
-            tooltip: 'İndirilenler',
-            icon: const Icon(Icons.download),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const DownloadsPage()),
+          Flexible(
+            flex: 0,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              reverse: true,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (defaultTargetPlatform == TargetPlatform.windows)
+                    IconButton(
+                      tooltip: 'Yenile (F5)',
+                      icon: const Icon(Icons.refresh),
+                      onPressed: _refreshCurrent,
+                    ),
+                  IconButton(
+                    tooltip: 'Şarkı ara',
+                    icon: const Icon(Icons.search),
+                    onPressed: () => _onNavTap(SearchNavBar.search),
+                  ),
+                  IconButton(
+                    tooltip: 'Odalar (Beta)',
+                    icon: const Icon(Icons.groups_outlined),
+                    onPressed: () => _openRooms(),
+                  ),
+                  IconButton(
+                    tooltip: 'Çalma listesi oluştur',
+                    icon: const Icon(Icons.playlist_add),
+                    onPressed: _createPlaylist,
+                  ),
+                  IconButton(
+                    tooltip: 'Oluşturulan çalma listeleri',
+                    icon: const Icon(Icons.playlist_play),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const MyPlaylistsPage()),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'İndirilenler',
+                    icon: const Icon(Icons.download),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const DownloadsPage()),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],

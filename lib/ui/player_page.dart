@@ -1,5 +1,6 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+
+import 'cover_image.dart';
 
 import '../core/app_palette.dart';
 import '../core/download_service.dart';
@@ -194,14 +195,13 @@ class PlayerPage extends StatelessWidget {
                   child: Center(
                     child: AspectRatio(
                       aspectRatio: 1,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: CachedNetworkImage(
-                          imageUrl: track.thumb,
-                          fit: BoxFit.cover,
-                          errorWidget: (_, __, ___) =>
-                              const Icon(Icons.music_note, size: 96),
-                        ),
+                      child: CoverImage(
+                        url: track.thumb,
+                        width: double.infinity,
+                        height: double.infinity,
+                        borderRadius: 12,
+                        fit: BoxFit.cover,
+                        iconSize: 96,
                       ),
                     ),
                   ),
@@ -422,6 +422,7 @@ class _Controls extends StatelessWidget {
           icon: const Icon(Icons.skip_next),
           onPressed: player.hasNext ? player.next : null,
         ),
+        _DownloadButton(track: track),
         IconButton(
           tooltip: repeatTooltip,
           iconSize: 20,
@@ -429,7 +430,6 @@ class _Controls extends StatelessWidget {
           icon: repeatIcon,
           onPressed: () => _cycleRepeat(player, context),
         ),
-        _DownloadButton(track: track),
       ],
     );
   }

@@ -52,9 +52,12 @@ Future<void> main() async {
       // bunun için ongoing=false zorunlu kılar.
       androidNotificationOngoing: false,
       androidStopForegroundOnPause: false,
+      androidNotificationClickStartsActivity: true,
+      androidResumeOnClick: true,
       androidNotificationIcon: 'mipmap/ic_launcher',
     ),
   );
+  await PlayerController.instance.initAudioSession();
 
   // Ekolayzer efektini bir kez, açılışta uygula. Parça başına uygulanırsa
   // ExoPlayer'da kısa ses kesintileri/çizirti oluşuyordu.
@@ -225,6 +228,15 @@ class _CloudTuneAppState extends State<CloudTuneApp> {
                   darkTheme: _theme(accent, Brightness.dark,
                       oled: SettingsService.instance.oledBlack),
                   themeMode: themeMode,
+                  builder: (context, child) {
+                    final mq = MediaQuery.of(context);
+                    final clamped =
+                        mq.textScaler.clamp(minScaleFactor: 0.9, maxScaleFactor: 1.2);
+                    return MediaQuery(
+                      data: mq.copyWith(textScaler: clamped),
+                      child: child ?? const SizedBox.shrink(),
+                    );
+                  },
                   localizationsDelegates: const [
                     AppStringsDelegate(),
                     AppMaterialLocalizationsDelegate(),

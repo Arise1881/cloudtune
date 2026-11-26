@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'audio_backend.dart';
@@ -160,6 +162,11 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
 
   Timer? _sleepTimer;
   DateTime? _sleepEndsAt;
+  Timer? _inactivityTimer;
+  bool _interruptedBySystem = false;
+  StreamSubscription<AudioInterruptionEvent>? _interruptionSub;
+  StreamSubscription<void>? _noisySub;
+  static const Duration _inactivityLimit = Duration(minutes: 10);
 
   /// Kalan uyku süresi; zamanlayıcı kapalıysa null.
   Duration? get sleepRemaining {
@@ -1133,6 +1140,33 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     notifyListeners();
   }
 
+  void _syncInactivityTimer() {
+    final active = _player.playing || _loading || _opening;
+    if (active) {
+      _inactivityTimer?.cancel();
+      _inactivityTimer = null;
+      return;
+    }
+    _inactivityTimer ??= Timer(_inactivityLimit, () {
+      _inactivityTimer = null;
+      unawaited(_forceStopDueToInactivity());
+    });
+  }
+
+  Future<void> _forceStopDueToInactivity() async {
+    if (_player.playing || _loading || _opening) return;
+    try {
+      _userPaused = true;
+      await _player.pause();
+    } catch (_) {}
+    try {
+      await stop();
+    } catch (_) {}
+    try {
+      await SystemNavigator.pop();
+    } catch (_) {}
+  }
+
   Future<void> toggle() async {
     if (_error != null && current != null) {
       await retry();
@@ -1282,6 +1316,42 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       await _playAt(_index, resumeAt: position);
     }
     _publishModeState();
+  }
+
+  Future<void> initAudioSession() async {
+    try {
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration.music());
+      _interruptionSub?.cancel();
+      _interruptionSub = session.interruptionEventStream.listen((event) {
+        if (event.begin) {
+          if (_player.playing) {
+            _interruptedBySystem = true;
+            _userPaused = false;
+            unawaited(_player.pause());
+          }
+        } else {
+          if (_interruptedBySystem) {
+            _interruptedBySystem = false;
+            if (!_userPaused &&
+                !_player.playing &&
+                current != null &&
+                _error == null) {
+              unawaited(_player.play());
+            }
+          }
+        }
+      });
+      _noisySub?.cancel();
+      _noisySub = session.becomingNoisyEventStream.listen((_) {
+        if (_player.playing) {
+          _userPaused = true;
+          unawaited(_player.pause());
+        }
+      });
+    } catch (_) {
+      // Audio session yoksa oynatma yine de çalışsın.
+    }
   }
 
   Future<void> _restorePreferences() {
@@ -1447,6 +1517,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       errorCode: _error == null ? null : _errorCode(_error),
       errorMessage: errorMessage,
     ));
+    _syncInactivityTimer();
     notifyListeners();
   }
 

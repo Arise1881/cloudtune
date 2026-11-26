@@ -390,17 +390,21 @@ class SearchNavBar extends StatelessWidget {
   Widget _item(BuildContext context, IconData icon, String label, int value) {
     final active = value == selected;
     // Dar ekranlarda ikon/yazı küçülür; geniş tabletlerde büyür.
-    final width = MediaQuery.sizeOf(context).width;
+    final mq = MediaQuery.of(context);
+    final width = mq.size.width;
+    final bottomInset = mq.viewPadding.bottom;
+    final thickNav = bottomInset >= 24;
     final compact = width < 360;
     final wide = width >= 600;
     final iconSize = compact ? 18.0 : (wide ? 22.0 : 20.0);
     final labelSize = compact ? 9.0 : (wide ? 11.0 : 10.0);
     final pillPadding = compact ? 12.0 : (wide ? 20.0 : 17.0);
+    final verticalPad = thickNav ? (compact ? 3.0 : 4.0) : (compact ? 5.0 : 7.0);
     return Expanded(
       child: InkWell(
         onTap: () => onTap(value),
         child: Padding(
-          padding: EdgeInsets.symmetric(vertical: compact ? 5 : 7),
+          padding: EdgeInsets.symmetric(vertical: verticalPad),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
