@@ -49,8 +49,6 @@ Future<void> main() async {
       // bunun için ongoing=false zorunlu kılar.
       androidNotificationOngoing: false,
       androidStopForegroundOnPause: false,
-      androidNotificationClickStartsActivity: true,
-      androidResumeOnClick: false,
       androidNotificationIcon: 'mipmap/ic_launcher',
     ),
   );

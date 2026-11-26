@@ -364,9 +364,11 @@ class _Controls extends StatelessWidget {
       _ => 'Tekrar: kapalı',
     };
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
         ListenableBuilder(
           listenable: Library.instance,
           builder: (context, _) {
@@ -434,6 +436,7 @@ class _Controls extends StatelessWidget {
           child: _DownloadButton(track: track),
         ),
       ],
+      ),
     );
   }
 }
