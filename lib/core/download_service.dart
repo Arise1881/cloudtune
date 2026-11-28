@@ -89,6 +89,26 @@ class DownloadService extends ChangeNotifier {
   String? _libraryDir;
 
   Future<void>? _initFuture;
+  Timer? _notifyTimer;
+  bool _notifyPending = false;
+
+  void _notify([bool immediate = false]) {
+    if (immediate) {
+      _notifyTimer?.cancel();
+      _notifyTimer = null;
+      _notifyPending = false;
+      _notify();
+      return;
+    }
+    if (_notifyPending) return;
+    _notifyPending = true;
+    _notifyTimer?.cancel();
+    _notifyTimer = Timer(const Duration(milliseconds: 150), () {
+      _notifyPending = false;
+      _notifyTimer = null;
+      _notify();
+    });
+  }
 
   Future<void> init() => _initFuture ??= _load();
 
@@ -100,25 +120,21 @@ class DownloadService extends ChangeNotifier {
   /// uzantılar arasında da arar (eski sürümlerden kalan dosyalar dahil).
   String? savedPathOf(String id) {
     final known = _saved[id];
-    if (known != null && File(known).existsSync()) return known;
+    if (known != null) {
+      if (File(known).existsSync()) return known;
+      _saved.remove(id);
+    }
 
     final base = _libraryDir;
     if (base != null && id.isNotEmpty) {
-      final dir = Directory('$base/CloudTune');
-      if (dir.existsSync()) {
-        for (final entity in dir.listSync()) {
-          if (entity is! File) continue;
-          final name = entity.path.split(RegExp(r'[\\/]')).last;
-          for (final ext in _extensions) {
-            if (!name.endsWith('-$id$ext')) continue;
-            _saved[id] = entity.path;
-            return entity.path;
-          }
+      for (final ext in _extensions) {
+        final candidate = File('$base/CloudTune/ct_$id$ext');
+        if (candidate.existsSync()) {
+          _saved[id] = candidate.path;
+          return candidate.path;
         }
       }
     }
-
-    // Bilinen yol artık yoksa çağırana geçersiz bir yol vermeyelim.
     return null;
   }
 
@@ -150,7 +166,7 @@ class DownloadService extends ChangeNotifier {
     _failures.remove(id);
     _failureReason.remove(id);
     _failedTracks.remove(id);
-    notifyListeners();
+    _notify();
   }
 
   void cancelDownload(String id) {
@@ -159,7 +175,7 @@ class DownloadService extends ChangeNotifier {
     _cancelledByUser.add(id);
     _cancelSignals[id]?.complete();
     _activeClients[id]?.close();
-    notifyListeners();
+    _notify();
   }
 
   Future<T> _raceCancel<T>(String id, Future<T> future) {
@@ -197,7 +213,7 @@ class DownloadService extends ChangeNotifier {
               continue;
             }
             // Kayıtlı dosya hâlâ var mı? Yoksa girişi atla (prune).
-            if (!File(path).existsSync()) {
+            if (!await File(path).exists()) {
               changed = true;
               continue;
             }
@@ -231,11 +247,36 @@ class DownloadService extends ChangeNotifier {
       // Bozuk kayıt varsa sessizce yok sayılır.
     }
 
+    // Dizin taraması: kayıtlı olmayan ama diskte bulunan dosyaları indeksle.
+    try {
+      final base = _libraryDir;
+      if (base != null) {
+        final dir = Directory('$base/CloudTune');
+        if (await dir.exists()) {
+          await for (final entity in dir.list()) {
+            if (entity is! File) continue;
+            final name = entity.path.split(RegExp(r'[\\/]')).last;
+            for (final ext in _extensions) {
+              final marker = '-';
+              final suffix = ext;
+              if (!name.endsWith(suffix)) continue;
+              final withoutExt = name.substring(0, name.length - suffix.length);
+              final idx = withoutExt.lastIndexOf(marker);
+              if (idx <= 0) continue;
+              final id = withoutExt.substring(idx + 1);
+              if (id.isEmpty) continue;
+              _saved.putIfAbsent(id, () => entity.path);
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
     // Hafızadaki (önceki yüklemelerden kalmış) girdileri de doğrula.
-    final invalid = _saved.entries
-        .where((entry) => !File(entry.value).existsSync())
-        .map((entry) => entry.key)
-        .toList();
+    final invalid = <String>[];
+    for (final entry in _saved.entries) {
+      if (!await File(entry.value).exists()) invalid.add(entry.key);
+    }
     for (final id in invalid) {
       _saved.remove(id);
       _savedTracks.remove(id);
@@ -243,7 +284,7 @@ class DownloadService extends ChangeNotifier {
     }
 
     if (changed) await _persistState();
-    notifyListeners();
+    _notify();
   }
 
   Future<void> _persistState() async {
@@ -282,7 +323,7 @@ class DownloadService extends ChangeNotifier {
     _failureReason.remove(track.id);
     _failedTracks.remove(track.id);
     _progress[track.id] = 0;
-    notifyListeners();
+    _notify();
 
     try {
       for (var attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -295,7 +336,7 @@ class DownloadService extends ChangeNotifier {
             YoutubeService.instance.dropUri(track.id);
           } catch (_) {}
           _progress[track.id] = 0;
-          notifyListeners();
+          _notify();
           await Future<void>.delayed(Duration(milliseconds: 600 * attempt));
         }
       }
@@ -303,7 +344,7 @@ class DownloadService extends ChangeNotifier {
       _cancelled.remove(track.id);
       _cancelSignals.remove(track.id);
       _progress.remove(track.id);
-      notifyListeners();
+      _notify();
     }
     return null;
   }
@@ -369,7 +410,7 @@ class DownloadService extends ChangeNotifier {
                 received == total)) {
           lastProgressAt = now;
           _progress[track.id] = (received / total).clamp(0.0, 1.0);
-          notifyListeners();
+          _notify();
         }
       }
       await sink.close();
@@ -388,7 +429,7 @@ class DownloadService extends ChangeNotifier {
       await _persistState();
       unawaited(Library.instance.remember(track));
       _progress.remove(track.id);
-      notifyListeners();
+      _notify();
       return path;
     } catch (error) {
       if (_cancelled.contains(track.id) ||
@@ -401,7 +442,7 @@ class DownloadService extends ChangeNotifier {
         _failureReason[track.id] = error.toString();
         _failedTracks[track.id] = track;
       }
-      notifyListeners();
+      _notify();
       return null;
     } finally {
       if (sink != null) {
@@ -527,7 +568,7 @@ class DownloadService extends ChangeNotifier {
       createdAt: _groups[id]?.createdAt ?? DateTime.now(),
     );
     await _persistGroups();
-    notifyListeners();
+    _notify();
   }
 
   /// Arama sonuçlarını indirir ve kalıcı bir grup olarak kaydeder.
@@ -542,7 +583,7 @@ class DownloadService extends ChangeNotifier {
       createdAt: _groups[id]?.createdAt ?? DateTime.now(),
     );
     await _persistGroups();
-    notifyListeners();
+    _notify();
   }
 
   List<String> _downloadedIds(List<Track> tracks) {
@@ -569,7 +610,7 @@ class DownloadService extends ChangeNotifier {
     final groupsChanged = _pruneTrackFromGroups(id, removeEmpty: true);
     if (groupsChanged) await _persistGroups();
     await _persistState();
-    notifyListeners();
+    _notify();
     return true;
   }
 
@@ -612,7 +653,7 @@ class DownloadService extends ChangeNotifier {
       await _persistGroups();
       if (changedFiles) await _persistState();
     } catch (_) {}
-    notifyListeners();
+    _notify();
     return !_groups.containsKey(key);
   }
 

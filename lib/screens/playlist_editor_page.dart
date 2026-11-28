@@ -834,6 +834,10 @@ class _AddTrackSheetState extends State<_AddTrackSheet> {
               imageUrl: track.thumb,
               width: 44,
               height: 44,
+              memCacheWidth: 88,
+              memCacheHeight: 88,
+              fadeInDuration: Duration.zero,
+              fadeOutDuration: Duration.zero,
               fit: BoxFit.cover,
               errorWidget: (_, __, ___) =>
                   const Icon(Icons.music_note, size: 24),

@@ -169,6 +169,10 @@ class _Header extends StatelessWidget {
                 : CachedNetworkImage(
                     imageUrl: cover!,
                     fit: BoxFit.cover,
+                    memCacheWidth: 264,
+                    memCacheHeight: 264,
+                    fadeInDuration: Duration.zero,
+                    fadeOutDuration: Duration.zero,
                     errorWidget: (_, __, ___) =>
                         Icon(Icons.person, size: 64, color: accent),
                   ),

@@ -1642,6 +1642,10 @@ class _ArtCard extends StatelessWidget {
                 imageUrl: track.thumb,
                 width: width,
                 height: width,
+                memCacheWidth: (width * 2).round().clamp(64, 512),
+                memCacheHeight: (width * 2).round().clamp(64, 512),
+                fadeInDuration: Duration.zero,
+                fadeOutDuration: Duration.zero,
                 fit: BoxFit.cover,
                 placeholder: (_, __) => Container(color: AppPalette.card),
                 errorWidget: (_, __, ___) => Container(

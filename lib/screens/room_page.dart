@@ -1331,6 +1331,10 @@ class _RoomPageState extends State<RoomPage>
                     imageUrl: track.thumb,
                     width: 136,
                     height: 136,
+                    memCacheWidth: 272,
+                    memCacheHeight: 272,
+                    fadeInDuration: Duration.zero,
+                    fadeOutDuration: Duration.zero,
                     fit: BoxFit.cover,
                     errorWidget: (_, __, ___) => Container(
                       color: AppPalette.card,

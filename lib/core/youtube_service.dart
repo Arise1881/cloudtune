@@ -1193,23 +1193,20 @@ class YoutubeService {
   /// bu yüzden doğrulamayı atlarız, TTL zaten yeniden çözümü garanti eder.
   /// Diğer hostlarda 1 baytlık Range-GET, HEAD'den daha güvenilirdir.
   Future<bool> _isUriUsable(Uri uri) async {
+    // Googlevideo imzalı URL'ler HEAD/Range GET'e sık 403 döndürür; TTL yeterli.
+    if (uri.host.endsWith('googlevideo.com')) return true;
     try {
       final headers = <String, String>{'Range': 'bytes=0-0'};
-      if (uri.host.endsWith('googlevideo.com') ||
-          uri.host.endsWith('youtube.com')) {
+      if (uri.host.endsWith('youtube.com')) {
         headers['User-Agent'] =
             'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36';
         headers['Referer'] = 'https://www.youtube.com/';
         headers['Origin'] = 'https://www.youtube.com';
       }
       final response = await http.get(uri, headers: headers).timeout(_requestTimeout);
-      if (_staleUriStatuses.contains(response.statusCode)) return false;
-      return response.statusCode == 200 ||
-          response.statusCode == 206 ||
-          response.statusCode == 302 ||
-          response.statusCode == 301;
+      return !_staleUriStatuses.contains(response.statusCode);
     } catch (_) {
-      return false;
+      return true;
     }
   }
 
@@ -1229,11 +1226,11 @@ class YoutubeService {
 
   /// Aynı parçanın çözümünü paylaşır: arka plandaki prefetch ile kullanıcı
   /// dokunması aynı future'ı bekler. İkinci YouTube isteği açılmaz.
-  Future<Uri> uriFor(String id) {
+  Future<Uri> uriFor(String id, {bool priority = false}) {
     final running = _resolving[id];
     if (running != null) return running;
     late final Future<Uri> future;
-    future = audioUri(id).whenComplete(() {
+    future = audioUri(id, priority: priority).whenComplete(() {
       if (identical(_resolving[id], future)) _resolving.remove(id);
     });
     _resolving[id] = future;
@@ -1268,7 +1265,7 @@ class YoutubeService {
 
   /// Çözülmüş akış adresi. Önbellekte varsa doğrulayıp kullanır,
   /// bayatsa (403/410/404) anında invalide edip yeniden çözer.
-  Future<Uri> audioUri(String id) async {
+  Future<Uri> audioUri(String id, {bool priority = false}) async {
     final cached = _cached(id);
     if (cached != null) {
       final checked = _uriCheckedAt[id];
@@ -1280,11 +1277,12 @@ class YoutubeService {
       }
       _dropUri(id);
     }
-    return _resolve(id);
+    return _resolve(id, priority: priority);
   }
 
   /// Eski çağrılar için uyumluluk takma adı.
-  Future<Uri> fastUri(String id) => audioUri(id);
+  Future<Uri> fastUri(String id, {bool priority = false}) =>
+      audioUri(id, priority: priority);
 
   /// Önbelleği atlayıp doğrudan çözümü farklı yollarla yeniden dener.
   Future<Uri?> forceDirect(String id) async {
@@ -1344,8 +1342,8 @@ class YoutubeService {
     return null;
   }
 
-  Future<Uri> _resolve(String id) async {
-    final uri = await innerTube(id);
+  Future<Uri> _resolve(String id, {bool priority = false}) async {
+    final uri = await innerTube(id, priority: priority);
     if (uri != null) {
       _remember(id, uri);
       return uri;
@@ -1389,12 +1387,12 @@ class YoutubeService {
   /// Doğrudan InnerTube isteğiyle oynatılabilir ses adresini bulur.
   /// InnerTube istemcileri, Invidious ve youtube_explode manifest paralel
   /// yarışır; ilk geçerli URI kazanır.
-  Future<Uri?> innerTube(String id) async {
-    await _acquireResolveSlot();
+  Future<Uri?> innerTube(String id, {bool priority = false}) async {
+    if (!priority) await _acquireResolveSlot();
     try {
       return await _innerTubeUnlocked(id);
     } finally {
-      _releaseResolveSlot();
+      if (!priority) _releaseResolveSlot();
     }
   }
 
@@ -1406,7 +1404,10 @@ class YoutubeService {
     _playabilityStatuses.remove(id);
     _resolveDebug[id] = '';
 
-    final visitor = await _visitorDataFor(id);
+    String? visitor;
+    try {
+      visitor = await _visitorDataFor(id).timeout(const Duration(milliseconds: 600));
+    } catch (_) {}
     final uri = await firstSuccess<Uri>([
       for (final client in _clients)
         _innerTubeClient(client, id, spec, visitor: visitor),

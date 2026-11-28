@@ -382,7 +382,7 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
       Uri? alternative;
       try {
         alternative = await YoutubeService.instance
-            .audioUri(track.id)
+            .audioUri(track.id, priority: true)
             .timeout(_resolveTimeout);
       } catch (_) {}
       if (_isStale(transition, generation)) return;
@@ -458,7 +458,9 @@ class PlayerController extends BaseAudioHandler with ChangeNotifier {
     final direct = track.sourceUrl;
     if (direct != null && direct.isNotEmpty) return Uri.parse(direct);
     // Prefetch zaten sürüyorsa aynı çözümü bekler; ikinci ağ isteği açılmaz.
-    return YoutubeService.instance.uriFor(track.id).timeout(_resolveTimeout);
+    return YoutubeService.instance
+        .uriFor(track.id, priority: true)
+        .timeout(_resolveTimeout);
   }
 
   Map<String, String> _headersFor(Uri uri) {
