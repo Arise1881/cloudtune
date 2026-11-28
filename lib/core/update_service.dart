@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ffi' as ffi;
+import 'platform_abi.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -40,15 +40,15 @@ enum UpdatePlatform { android, linux, windows, ios, unknown }
 String? updateAssetUrl({
   required UpdateInfo info,
   required UpdatePlatform platform,
-  required ffi.Abi abi,
+  required String abi,
 }) {
   switch (platform) {
     case UpdatePlatform.android:
       final specific = switch (abi) {
-        ffi.Abi.androidArm64 => info.androidArm64Url,
-        ffi.Abi.androidArm => info.androidArmv7Url,
-        ffi.Abi.androidX64 => info.androidX64Url,
-        ffi.Abi.androidIA32 => info.androidUniversalUrl,
+        'androidArm64' => info.androidArm64Url,
+        'androidArm' => info.androidArmv7Url,
+        'androidX64' => info.androidX64Url,
+        'androidIA32' => info.androidUniversalUrl,
         _ => null,
       };
       return specific ?? info.androidUniversalUrl ?? info.androidArm64Url;
@@ -67,7 +67,7 @@ String? updateAssetUrl({
 String updateAssetFileName({
   required UpdateInfo info,
   required UpdatePlatform platform,
-  required ffi.Abi abi,
+  required String abi,
 }) {
   final version = info.version;
   return switch (platform) {
@@ -299,7 +299,7 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     return updateAssetUrl(
       info: info,
       platform: platform,
-      abi: ffi.Abi.current(),
+      abi: currentAndroidAbi(),
     );
   }
 
@@ -309,7 +309,7 @@ class UpdateService extends ChangeNotifier with WidgetsBindingObserver {
     return updateAssetFileName(
       info: info,
       platform: platform,
-      abi: ffi.Abi.current(),
+      abi: currentAndroidAbi(),
     );
   }
 

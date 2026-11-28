@@ -508,7 +508,7 @@ class MediaKitAudioBackend implements AudioBackend {
   Future<void> _setMpvProperty(String name, String value) async {
     final native = _nativePlayer;
     if (native == null) return;
-    await native.setProperty(name, value);
+    await (native as dynamic).setProperty(name, value);
   }
 
   void _emitStatus() {
