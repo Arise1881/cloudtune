@@ -69,6 +69,7 @@ class YoutubeService {
   static const Duration _invTimeout = Duration(seconds: 6);
   static const Duration _playlistTimeout = Duration(seconds: 15);
   static const Duration _resolveTimeout = Duration(seconds: 20);
+  static const Duration _visitorTtl = Duration(minutes: 10);
   static const Duration _cacheTtl = Duration(minutes: 15);
   static const Duration _searchTtlWifi = Duration(minutes: 10);
   static const Duration _searchTtlMobile = Duration(minutes: 30);
@@ -83,10 +84,27 @@ class YoutubeService {
     'https://yewtu.be',
     'https://inv.nadeko.net',
     'https://invidious.privacyredirect.com',
+    'https://invidious.fdn.fr',
+    'https://iv.ggtyler.dev',
+  ];
+
+  static const List<String> _pipedBases = [
+    'https://pipedapi.kavin.rocks',
+    'https://pipedapi.adminforge.de',
+    'https://api.piped.private.coffee',
+    'https://pipedapi.in.projectsegfau.lt',
   ];
 
   bool _mobileData = false;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+
+  String? _visitorData;
+  DateTime? _visitorDataAt;
+  Future<String?>? _visitorFuture;
+
+  // Toplu indirmede aynı anda çok fazla InnerTube isteği 429/timeout üretir.
+  int _resolveSlots = 2;
+  final List<Completer<void>> _resolveWaiters = <Completer<void>>[];
 
   /// Mobil veride arama/öneri yanıtları daha uzun önbellekte tutulur ve daha
   /// az yedek sunucuya başvurulur. Ses çözümlemesi kaliteyi düşürmez.
@@ -141,6 +159,8 @@ class YoutubeService {
   /// doğrudan bekleyen future'a bağlanır.
   final Map<String, Future<Uri>> _resolving = {};
   final Map<String, String> _playability = {};
+  final Map<String, Set<String>> _playabilityStatuses = {};
+  final Map<String, String> _resolveDebug = {};
   final Map<String, _CachedSearch> _searchCache = {};
   final Map<String, List<Track>> _relatedCache = {};
 
@@ -1153,6 +1173,8 @@ class YoutubeService {
     return uri;
   }
 
+  void dropUri(String id) => _dropUri(id);
+
   void _dropUri(String id) {
     _cache.remove(id);
     _cachedAt.remove(id);
@@ -1171,15 +1193,23 @@ class YoutubeService {
   /// bu yüzden doğrulamayı atlarız, TTL zaten yeniden çözümü garanti eder.
   /// Diğer hostlarda 1 baytlık Range-GET, HEAD'den daha güvenilirdir.
   Future<bool> _isUriUsable(Uri uri) async {
-    if (uri.host.endsWith('googlevideo.com')) return true;
     try {
-      final response = await http.get(
-        uri,
-        headers: const <String, String>{'Range': 'bytes=0-0'},
-      ).timeout(_requestTimeout);
-      return !_staleUriStatuses.contains(response.statusCode);
+      final headers = <String, String>{'Range': 'bytes=0-0'};
+      if (uri.host.endsWith('googlevideo.com') ||
+          uri.host.endsWith('youtube.com')) {
+        headers['User-Agent'] =
+            'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36';
+        headers['Referer'] = 'https://www.youtube.com/';
+        headers['Origin'] = 'https://www.youtube.com';
+      }
+      final response = await http.get(uri, headers: headers).timeout(_requestTimeout);
+      if (_staleUriStatuses.contains(response.statusCode)) return false;
+      return response.statusCode == 200 ||
+          response.statusCode == 206 ||
+          response.statusCode == 302 ||
+          response.statusCode == 301;
     } catch (_) {
-      return true;
+      return false;
     }
   }
 
@@ -1192,6 +1222,8 @@ class YoutubeService {
     _uriCheckedAt.clear();
     _resolving.clear();
     _playability.clear();
+    _playabilityStatuses.clear();
+    _resolveDebug.clear();
     clearSearchCache();
   }
 
@@ -1318,12 +1350,15 @@ class YoutubeService {
       _remember(id, uri);
       return uri;
     }
+    final dbg = (_resolveDebug[id] ?? '').trim();
     final status = _playability[id];
     if (status != null && status.isNotEmpty && status != 'OK') {
-      throw AudioBlocked(id, status);
+      final reason = dbg.isEmpty ? status : '$status [$dbg]';
+      throw AudioBlocked(id, reason);
     }
+    final detail = dbg.isEmpty ? '' : ' [$dbg]';
     throw StateError(
-        'Ses akışına ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.');
+        'Ses akışına ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.$detail');
   }
 
   Future<http.Response> _innerTubePost(
@@ -1333,34 +1368,273 @@ class YoutubeService {
   }) =>
       http.post(url, headers: headers, body: body).timeout(_requestTimeout);
 
+  Future<void> _acquireResolveSlot() async {
+    if (_resolveSlots > 0) {
+      _resolveSlots--;
+      return;
+    }
+    final waiter = Completer<void>();
+    _resolveWaiters.add(waiter);
+    await waiter.future;
+  }
+
+  void _releaseResolveSlot() {
+    if (_resolveWaiters.isNotEmpty) {
+      _resolveWaiters.removeAt(0).complete();
+    } else {
+      _resolveSlots++;
+    }
+  }
+
   /// Doğrudan InnerTube isteğiyle oynatılabilir ses adresini bulur.
-  /// İstemciler eşzamanlı başlatılır; ilk çalışan yanıt kullanılır. Sıralı
-  /// denemede ilk istemci 6 sn takıldığında parça açılışı 30 sn'ye çıkıyordu.
+  /// InnerTube istemcileri, Invidious ve youtube_explode manifest paralel
+  /// yarışır; ilk geçerli URI kazanır.
   Future<Uri?> innerTube(String id) async {
+    await _acquireResolveSlot();
+    try {
+      return await _innerTubeUnlocked(id);
+    } finally {
+      _releaseResolveSlot();
+    }
+  }
+
+  Future<Uri?> _innerTubeUnlocked(String id) async {
     final quality = this.quality;
     final spec = _specFor(quality);
 
     _playability.remove(id);
+    _playabilityStatuses.remove(id);
+    _resolveDebug[id] = '';
+
+    final visitor = await _visitorDataFor(id);
     final uri = await firstSuccess<Uri>([
-      for (final client in _clients) _innerTubeClient(client, id, spec),
+      for (final client in _clients)
+        _innerTubeClient(client, id, spec, visitor: visitor),
+      _invidiousAudioUri(id, spec),
+      _pipedAudioUri(id, spec),
+      _youtubeExplodeUri(id, spec),
     ]);
     if (uri != null) return uri;
 
-    // Son çare: birden fazla Invidious örneğinden local=true akış adresleri.
-    final inv = await _invGet(
-      '/api/v1/videos/${Uri.encodeComponent(id)}?local=true',
-    );
-    if (inv is Map) {
+    final statuses = _playabilityStatuses[id] ?? const <String>{};
+    final dbg = (_resolveDebug[id] ?? '').trim();
+    if (statuses.isNotEmpty) {
+      const hardBlocked = {'LOGIN_REQUIRED', 'UNPLAYABLE', 'CONTENT_CHECK_REQUIRED', 'AGE_CHECK_REQUIRED', 'AGE_VERIFICATION_REQUIRED'};
+      final allBlocked = statuses.every((s) => hardBlocked.contains(s) || s == 'ERROR');
+      if (allBlocked) _playability[id] = statuses.first;
+    }
+    if (dbg.isNotEmpty) {
+      _playabilityStatuses[id] = {...statuses, 'DBG:$dbg'};
+    }
+    return null;
+  }
+
+  Future<Uri?> _invidiousAudioUri(String id, _QualitySpec spec) async {
+    try {
+      final inv = await _invGet(
+        '/api/v1/videos/${Uri.encodeComponent(id)}?local=true',
+      ).timeout(const Duration(seconds: 12));
+      if (inv is! Map) return null;
       final formats = <Map>[
         ...(inv['formatStreams'] as List? ?? const []).whereType<Map>(),
         ...(inv['adaptiveFormats'] as List? ?? const []).whereType<Map>(),
       ];
-      final picked = await _pickAudioUri(formats, spec);
-      if (picked != null) return picked;
+      return await _pickAudioUri(formats, spec);
+    } catch (e) {
+      _resolveDebug[id] = '${_resolveDebug[id] ?? ''}inv:err ';
+      return null;
     }
+  }
 
-    // Çözülemezse null: oynatıcı aynı parçada hata gösterir, atlama yapmaz.
+  Future<Uri?> _pipedAudioUri(String id, _QualitySpec spec) async {
+    return firstSuccess<Uri>([
+      for (final base in _pipedBases) _pipedAudioUriBase(base, id, spec),
+    ]);
+  }
+
+  Future<Uri?> _pipedAudioUriBase(
+      String base, String id, _QualitySpec spec) async {
+    try {
+      final response = await http
+          .get(Uri.parse('$base/streams/${Uri.encodeComponent(id)}'))
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        _resolveDebug[id] = '${_resolveDebug[id] ?? ''}piped:${response.statusCode} ';
+        return null;
+      }
+      final data = jsonDecode(response.body);
+      if (data is! Map) return null;
+      final streams = <Map>[
+        ...(data['audioStreams'] as List? ?? const []).whereType<Map>(),
+      ];
+      if (streams.isEmpty) {
+        _resolveDebug[id] = '${_resolveDebug[id] ?? ''}piped:empty ';
+        return null;
+      }
+
+      bool isPlayablePiped(Map s) {
+        final mime = (s['mimeType'] ?? '').toString().toLowerCase();
+        if (_isWindows && (mime.contains('webm') || mime.contains('opus'))) {
+          return false;
+        }
+        return true;
+      }
+
+      final candidates = streams.where(isPlayablePiped).toList();
+      final usable = candidates.isEmpty ? streams : candidates;
+
+      int bitrateOf(Map s) {
+        final v = s['bitrate'];
+        if (v is num) return v.toInt();
+        return int.tryParse(v?.toString() ?? '') ?? 0;
+      }
+
+      int? itagOf(Map s) {
+        final v = s['itag'];
+        if (v is num) return v.toInt();
+        return int.tryParse(v?.toString() ?? '');
+      }
+
+      Uri? uriOf(Map s) {
+        final url = s['url']?.toString() ?? '';
+        if (url.isEmpty) return null;
+        return Uri.tryParse(url);
+      }
+
+      for (final itag in spec.itags) {
+        for (final s in usable) {
+          if (itagOf(s) != itag) continue;
+          final uri = uriOf(s);
+          if (uri != null && await _isUriUsable(uri)) return uri;
+        }
+      }
+      usable.sort((a, b) => spec.preferHighestBitrate
+          ? bitrateOf(b).compareTo(bitrateOf(a))
+          : bitrateOf(a).compareTo(bitrateOf(b)));
+      for (final s in usable) {
+        final uri = uriOf(s);
+        if (uri != null && await _isUriUsable(uri)) return uri;
+      }
+    } catch (e) {
+      _resolveDebug[id] = '${_resolveDebug[id] ?? ''}piped:err ';
+    }
     return null;
+  }
+
+  Future<Uri?> _youtubeExplodeUri(String id, _QualitySpec spec) async {
+    try {
+      final manifest = await _yt.videos.streamsClient
+          .getManifest(id)
+          .timeout(_resolveTimeout);
+      final audio = manifest.audioOnly.toList();
+      final muxed = manifest.muxed.toList();
+      final audioPlayable = audio.where(_windowsPlayableStream).toList(growable: false);
+      final muxedPlayable = muxed.where(_windowsPlayableStream).toList(growable: false);
+      final candidates = <dynamic>[
+        ...(audioPlayable.isEmpty ? audio : audioPlayable),
+        ...(muxedPlayable.isEmpty ? muxed : muxedPlayable),
+      ];
+      for (final itag in spec.itags) {
+        for (final stream in candidates) {
+          if (stream.tag != itag) continue;
+          if (await _isUriUsable(stream.url)) return stream.url;
+        }
+      }
+      candidates.sort((a, b) => spec.preferHighestBitrate
+          ? b.bitrate.compareTo(a.bitrate)
+          : a.bitrate.compareTo(b.bitrate));
+      for (final stream in candidates) {
+        if (await _isUriUsable(stream.url)) return stream.url;
+      }
+    } catch (e) {
+      _resolveDebug[id] = '${_resolveDebug[id] ?? ''}ytExplode:err ';
+    }
+    return null;
+  }
+
+  Future<String?> _visitorDataFor(String id) {
+    final cached = _visitorData;
+    final at = _visitorDataAt;
+    if (cached != null &&
+        cached.isNotEmpty &&
+        at != null &&
+        DateTime.now().difference(at) < _visitorTtl) {
+      return Future<String?>.value(cached);
+    }
+    final running = _visitorFuture;
+    if (running != null) return running;
+    late final Future<String?> future;
+    future = _fetchVisitorData(id).whenComplete(() {
+      if (identical(_visitorFuture, future)) _visitorFuture = null;
+    });
+    _visitorFuture = future;
+    return future;
+  }
+
+  Future<String?> _fetchVisitorData(String id) async {
+    try {
+      final response = await _innerTubePost(
+        Uri.parse(
+          'https://www.youtube-nocookie.com/youtubei/v1/player'
+          '?key=${_visionosClient['key']}&prettyPrint=false',
+        ),
+        headers: _playerHeaders(_visionosClient),
+        body: _playerBody(id, _visionosClient, null),
+      );
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body);
+      if (data is! Map) return null;
+      final value = _visitorFrom(data);
+      if (value != null) {
+        _visitorData = value;
+        _visitorDataAt = DateTime.now();
+      }
+      return value;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String? _visitorFrom(Map data) {
+    final context = data['responseContext'];
+    if (context is! Map) return null;
+    final value = context['visitorData']?.toString() ?? '';
+    return value.isEmpty ? null : value;
+  }
+
+  Map<String, String> _playerHeaders(Map<String, dynamic> client) =>
+      <String, String>{
+        'content-type': 'application/json',
+        'accept-language': 'en-US,en;q=0.9',
+        'x-youtube-client-name': '${client['name']}',
+        'x-youtube-client-version': '${client['version']}',
+        'user-agent': '${client['ua']}',
+        'origin': 'https://www.youtube-nocookie.com',
+      };
+
+  String _playerBody(
+    String id,
+    Map<String, dynamic> client,
+    String? visitor,
+  ) {
+    final requestClient = Map<String, dynamic>.from(client['client'] as Map);
+    if (visitor != null && visitor.isNotEmpty) {
+      requestClient['visitorData'] = visitor;
+    }
+    return jsonEncode(<String, dynamic>{
+      'context': <String, dynamic>{
+        'client': requestClient,
+        'thirdParty': <String, String>{'embedUrl': 'https://www.youtube.com'},
+      },
+      'videoId': id,
+      'contentCheckOk': true,
+      'racyCheckOk': true,
+      'playbackContext': <String, dynamic>{
+        'contentPlaybackContext': <String, String>{
+          'html5Preference': 'HTML5_PREF_WANTS',
+        },
+      },
+    });
   }
 
   /// Tek InnerTube istemcisi. Hata/engel durumunda null döner; diğer
@@ -1368,33 +1642,25 @@ class YoutubeService {
   Future<Uri?> _innerTubeClient(
     Map<String, dynamic> client,
     String id,
-    _QualitySpec spec,
-  ) async {
+    _QualitySpec spec, {
+    String? visitor,
+    bool allowVisitorRefresh = true,
+  }) async {
     try {
       final response = await _innerTubePost(
         Uri.parse(
-          'https://www.youtube.com/youtubei/v1/player'
+          'https://www.youtube-nocookie.com/youtubei/v1/player'
           '?key=${client['key']}&prettyPrint=false',
         ),
-        headers: {
-          'content-type': 'application/json',
-          'accept-language': 'en-US,en;q=0.9',
-          'x-youtube-client-name': client['name'],
-          'x-youtube-client-version': client['version'],
-          'user-agent': client['ua'],
-        },
-        body: jsonEncode({
-          'context': {
-            'client': client['client'],
-            'thirdParty': {'embedUrl': 'https://www.youtube.com'},
-          },
-          'videoId': id,
-          'contentCheckOk': true,
-          'racyCheckOk': true,
-        }),
+        headers: _playerHeaders(client),
+        body: _playerBody(id, client, visitor),
       );
 
-      if (response.statusCode != 200) return null;
+      if (response.statusCode != 200) {
+        _resolveDebug[id] =
+            '${_resolveDebug[id] ?? ''}${client['name']}:${response.statusCode} ';
+        return null;
+      }
       final data = jsonDecode(response.body);
       if (data is! Map) return null;
 
@@ -1402,7 +1668,21 @@ class YoutubeService {
       if (status is Map && status['status'] is String) {
         final value = status['status'] as String;
         if (value != 'OK') {
-          _playability[id] = value;
+          _playabilityStatuses.putIfAbsent(id, () => <String>{}).add(value);
+          _resolveDebug[id] =
+              '${_resolveDebug[id] ?? ''}${client['name']}:$value ';
+          final fresh = _visitorFrom(data);
+          if (allowVisitorRefresh && fresh != null && fresh != visitor) {
+            _visitorData = fresh;
+            _visitorDataAt = DateTime.now();
+            return await _innerTubeClient(
+              client,
+              id,
+              spec,
+              visitor: fresh,
+              allowVisitorRefresh: false,
+            );
+          }
           return null;
         }
       }
@@ -1414,8 +1694,9 @@ class YoutubeService {
         ...(streaming['formats'] as List? ?? const []).whereType<Map>(),
       ];
       return await _pickAudioUri(formats, spec);
-    } catch (_) {
-      // Bir istemci başarısızsa diğerleri devam eder.
+    } catch (e) {
+      _resolveDebug[id] =
+          '${_resolveDebug[id] ?? ''}${client['name']}:err ';
       return null;
     }
   }
@@ -1468,79 +1749,100 @@ class YoutubeService {
     return null;
   }
 
+  static const Map<String, dynamic> _visionosClient = {
+    'key': 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',
+    'name': 'VISIONOS',
+    'version': '1.02',
+    'client': {
+      'clientName': 'VISIONOS',
+      'clientVersion': '1.02',
+      'deviceMake': 'Apple',
+      'deviceModel': 'RealityDevice17,1',
+      'userAgent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
+      'osName': 'visionOS',
+      'osVersion': '26.5.23O471',
+      'hl': 'en',
+      'gl': 'US',
+      'timeZone': 'UTC',
+      'utcOffsetMinutes': 0,
+    },
+    'ua':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
+  };
+
   static const List<Map<String, dynamic>> _clients = [
+    _visionosClient,
     {
       'key': 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
       'name': 'ANDROID_VR',
-      'version': '1.60.19',
+      'version': '1.65.10',
       'client': {
         'clientName': 'ANDROID_VR',
-        'clientVersion': '1.60.19',
+        'clientVersion': '1.65.10',
         'deviceMake': 'Oculus',
         'deviceModel': 'Quest 3',
         'androidSdkVersion': 32,
         'osName': 'Android',
-        'osVersion': '12',
+        'osVersion': '12L',
+        'hl': 'en',
+        'gl': 'US',
+        'timeZone': 'UTC',
+        'utcOffsetMinutes': 0,
       },
-      'ua': 'com.google.android.apps.youtube.vr.oculus/1.60.19 '
-          '(Linux; U; Android 12; GB) gzip',
+      'ua':
+          'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
     },
     {
       'key': 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
       'name': 'ANDROID',
-      'version': '19.09.37',
+      'version': '20.10.38',
       'client': {
         'clientName': 'ANDROID',
-        'clientVersion': '19.09.37',
-        'androidSdkVersion': 30,
+        'clientVersion': '20.10.38',
+        'androidSdkVersion': 35,
         'osName': 'Android',
+        'osVersion': '15',
+        'hl': 'en',
+        'gl': 'US',
+        'timeZone': 'UTC',
+        'utcOffsetMinutes': 0,
       },
-      'ua': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+      'ua': 'com.google.android.youtube/20.10.38 (Linux; U; Android 15) gzip',
     },
     {
       'key': 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',
       'name': 'WEB',
-      'version': '2.20241113.01.00',
+      'version': '2.20250312.04.00',
       'client': {
         'clientName': 'WEB',
-        'clientVersion': '2.20241113.01.00',
-        'osName': 'Windows',
-        'osVersion': '10',
-        'deviceMake': 'Desktop',
-        'deviceModel': 'Desktop',
+        'clientVersion': '2.20250312.04.00',
+        'hl': 'en',
+        'gl': 'US',
+        'timeZone': 'UTC',
+        'utcOffsetMinutes': 0,
       },
-      'ua': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-          '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    },
-    {
-      'key': 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',
-      'name': 'IOS',
-      'version': '19.46.4',
-      'client': {
-        'clientName': 'IOS',
-        'clientVersion': '19.46.4',
-        'osName': 'iOS',
-        'osVersion': '17.6',
-        'deviceMake': 'Apple',
-        'deviceModel': 'iPhone',
-      },
-      'ua': 'com.google.ios.youtube/19.46.4 (iPhone15,2; U; CPU iOS 17_6 '
-          'like Mac OS X) gzip',
+      'ua':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
     },
     {
       'key': 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',
       'name': 'MWEB',
-      'version': '2.20241113.01.00',
+      'version': '2.20250312.04.00',
       'client': {
         'clientName': 'MWEB',
-        'clientVersion': '2.20241113.01.00',
+        'clientVersion': '2.20250312.04.00',
         'osName': 'Android',
         'osVersion': '14',
         'deviceMake': 'Mobile',
         'deviceModel': 'Mobile',
+        'hl': 'en',
+        'gl': 'US',
+        'timeZone': 'UTC',
+        'utcOffsetMinutes': 0,
       },
-      'ua': 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 '
-          '(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+      'ua':
+          'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Mobile Safari/537.36',
     },
   ];
 }

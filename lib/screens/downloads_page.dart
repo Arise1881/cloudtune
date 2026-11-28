@@ -28,7 +28,6 @@ class DownloadsPage extends StatelessWidget {
         builder: (context, _) {
           final service = DownloadService.instance;
           final saved = service.savedTracks;
-          final failures = service.failureIds;
           final active = service.downloadProgress.entries
               .where((entry) => entry.value >= 0 && entry.value < 1)
               .toList();
@@ -76,17 +75,8 @@ class DownloadsPage extends StatelessWidget {
               else
                 for (var i = 0; i < saved.length; i++)
                   _savedTile(saved[i], saved, i, accent, context, service),
-              const SizedBox(height: 24),
-              if (failures.isNotEmpty) ...[
-                _sectionHeader(
-                  'Başarısız indirmeler (${failures.length})',
-                  accent,
-                ),
-                const SizedBox(height: 8),
-                for (final id in failures) _failureTile(service, id, accent),
-              ] else
-                _empty('Başarısız indirme yok.', Icons.check_circle_outline),
               if (active.isNotEmpty) ...[
+                const SizedBox(height: 24),
                 const SizedBox(height: 24),
                 _sectionHeader(
                   'Devam eden indirmeler (${active.length})',
@@ -181,11 +171,13 @@ class DownloadsPage extends StatelessWidget {
       ),
     );
     if (confirmed != true) return;
-    await deleteDownloadGroup(group);
+    final ok = await deleteDownloadGroup(group);
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${group.name} grubu silindi.')),
-    );
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${group.name} grubu silindi.')),
+      );
+    }
   }
 
   Widget _sectionHeader(String title, Color accent, {Widget? action}) {
@@ -249,45 +241,6 @@ class DownloadsPage extends StatelessWidget {
     );
   }
 
-  Widget _failureTile(DownloadService service, String id, Color accent) {
-    final reason = service.failureReason(id) ?? 'Bilinmeyen hata';
-    return Card(
-      color: AppPalette.cardAlt,
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: Colors.red.withValues(alpha: 0.14),
-          child: const Icon(Icons.error_outline, color: Colors.redAccent),
-        ),
-        title: Text(
-          _titleFor(id),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Text(
-          reason,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: Colors.redAccent, fontSize: 12),
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: 'Yeniden dene',
-              icon: Icon(Icons.refresh, color: accent),
-              onPressed: () => service.retryDownload(id),
-            ),
-            IconButton(
-              tooltip: 'Listeden kaldır',
-              icon: const Icon(Icons.close, size: 20),
-              onPressed: () => service.forgetFailure(id),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Widget _activeTile(String id, double value, Color accent) {
     final progress = value.clamp(0.0, 1.0);

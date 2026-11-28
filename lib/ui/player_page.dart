@@ -246,35 +246,6 @@ class PlayerPage extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 12),
-                if (player.error != null)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
-                      border:
-                          Border.all(color: Colors.red.withValues(alpha: 0.35)),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.error_outline,
-                            color: Colors.redAccent),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            player.errorMessage ??
-                                'Bu parça oynatılamadı. Başka parçaya geçilmedi.',
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: player.retry,
-                          child: const Text('Tekrar dene'),
-                        ),
-                      ],
-                    ),
-                  ),
                 _SeekBar(track: track),
                 _Controls(track: track),
                 const SizedBox(height: 8),

@@ -52,32 +52,6 @@ class MiniPlayer extends StatelessWidget {
                     ),
                   ),
                 _Progress(track: track),
-                if (player.error != null)
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 6,
-                    ),
-                    color: Colors.red.withValues(alpha: 0.14),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.error_outline,
-                            size: 16, color: Colors.redAccent),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            player.errorMessage ?? 'Parça oynatılamadı · atlanmadı',
-                            style: const TextStyle(fontSize: 11),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: player.retry,
-                          child: const Text('Tekrar dene'),
-                        ),
-                      ],
-                    ),
-                  ),
                 InkWell(
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const PlayerPage()),

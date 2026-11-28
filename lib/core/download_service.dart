@@ -81,7 +81,9 @@ class DownloadService extends ChangeNotifier {
   final Map<String, Track> _failedTracks = <String, Track>{};
   final Map<String, DownloadGroup> _groups = <String, DownloadGroup>{};
   final Set<String> _cancelled = <String>{};
+  final Set<String> _cancelledByUser = <String>{};
   final Map<String, http.Client> _activeClients = <String, http.Client>{};
+  final Map<String, Completer<void>> _cancelSignals = <String, Completer<void>>{};
 
   /// `savedPathOf` senkron dosya araması yapabilsin diye belgeler dizini önbelleği.
   String? _libraryDir;
@@ -154,8 +156,19 @@ class DownloadService extends ChangeNotifier {
   void cancelDownload(String id) {
     if (!_progress.containsKey(id)) return;
     _cancelled.add(id);
+    _cancelledByUser.add(id);
+    _cancelSignals[id]?.complete();
     _activeClients[id]?.close();
     notifyListeners();
+  }
+
+  Future<T> _raceCancel<T>(String id, Future<T> future) {
+    final signal = _cancelSignals.putIfAbsent(id, () => Completer<void>());
+    if (signal.isCompleted) throw StateError('download-cancelled');
+    return Future.any<T>(<Future<T>>[
+      future,
+      signal.future.then<T>((_) => throw StateError('download-cancelled')),
+    ]);
   }
 
   Future<void> _load() async {
@@ -256,35 +269,61 @@ class DownloadService extends ChangeNotifier {
     } catch (_) {}
   }
 
-  Future<String?> download(Track track) async {
+  Future<String?> download(Track track, {int maxAttempts = 3}) async {
+    await init();
     final existing = savedPathOf(track.id);
     if (existing != null && File(existing).existsSync()) return existing;
     if (_progress.containsKey(track.id)) return null;
 
+    _cancelled.remove(track.id);
+    _cancelSignals.remove(track.id)?.complete();
+    _cancelledByUser.remove(track.id);
     _failures.remove(track.id);
     _failureReason.remove(track.id);
     _failedTracks.remove(track.id);
     _progress[track.id] = 0;
     notifyListeners();
 
+    try {
+      for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (_cancelled.remove(track.id)) break;
+        final result = await _downloadOnce(track);
+        if (result != null) return result;
+        if (_cancelled.remove(track.id)) break;
+        if (attempt < maxAttempts) {
+          try {
+            YoutubeService.instance.dropUri(track.id);
+          } catch (_) {}
+          _progress[track.id] = 0;
+          notifyListeners();
+          await Future<void>.delayed(Duration(milliseconds: 600 * attempt));
+        }
+      }
+    } finally {
+      _cancelled.remove(track.id);
+      _cancelSignals.remove(track.id);
+      _progress.remove(track.id);
+      notifyListeners();
+    }
+    return null;
+  }
+
+  Future<String?> _downloadOnce(Track track) async {
     File? temp;
     http.Client? client;
     IOSink? sink;
+    _cancelSignals.putIfAbsent(track.id, () => Completer<void>());
     try {
+      if (_cancelled.contains(track.id)) throw StateError('download-cancelled');
       Uri uri;
       final source = track.sourceUrl;
       if (source != null && source.trim().isNotEmpty) {
         uri = Uri.parse(source);
       } else {
-        try {
-          uri = await YoutubeService.instance.audioUri(track.id);
-        } catch (_) {
-          final forced = await YoutubeService.instance.forceDirect(track.id);
-          if (forced == null) throw StateError('download-uri-unavailable');
-          uri = forced;
-        }
+        uri = await _raceCancel(track.id, _resolveDownloadUri(track));
       }
 
+      if (_cancelled.contains(track.id)) throw StateError('download-cancelled');
       final host = uri.host;
       final isGoogle = host.contains('googlevideo') || host.contains('youtube');
       final request = http.Request('GET', uri)
@@ -301,9 +340,10 @@ class DownloadService extends ChangeNotifier {
 
       client = http.Client();
       _activeClients[track.id] = client;
-      final response = await client.send(request).timeout(
-            const Duration(seconds: 30),
-          );
+      final response = await _raceCancel(
+        track.id,
+        client.send(request).timeout(const Duration(seconds: 35)),
+      );
       if (response.statusCode != 200) {
         throw StateError('download-http-${response.statusCode}');
       }
@@ -314,15 +354,20 @@ class DownloadService extends ChangeNotifier {
       final total = response.contentLength ?? 0;
       sink = temp.openWrite();
       var received = 0;
+      var lastProgressAt = DateTime.now();
       await for (final chunk in response.stream.timeout(
-        const Duration(seconds: 45),
+        const Duration(seconds: 60),
       )) {
         if (_cancelled.contains(track.id)) {
           throw StateError('download-cancelled');
         }
         sink.add(chunk);
         received += chunk.length;
-        if (total > 0) {
+        final now = DateTime.now();
+        if (total > 0 &&
+            (now.difference(lastProgressAt).inMilliseconds > 250 ||
+                received == total)) {
+          lastProgressAt = now;
           _progress[track.id] = (received / total).clamp(0.0, 1.0);
           notifyListeners();
         }
@@ -342,6 +387,8 @@ class DownloadService extends ChangeNotifier {
       _failedTracks.remove(track.id);
       await _persistState();
       unawaited(Library.instance.remember(track));
+      _progress.remove(track.id);
+      notifyListeners();
       return path;
     } catch (error) {
       if (_cancelled.contains(track.id) ||
@@ -363,14 +410,32 @@ class DownloadService extends ChangeNotifier {
         } catch (_) {}
       }
       _activeClients.remove(track.id);
-      _cancelled.remove(track.id);
       client?.close();
-      _progress.remove(track.id);
-      notifyListeners();
       try {
         if (temp != null && await temp.exists()) await temp.delete();
       } catch (_) {}
     }
+  }
+
+  Future<Uri> _resolveDownloadUri(Track track) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final uri = await YoutubeService.instance
+            .audioUri(track.id)
+            .timeout(const Duration(seconds: 35));
+        return uri;
+      } catch (e) {
+        lastError = e;
+      }
+      try {
+        YoutubeService.instance.dropUri(track.id);
+      } catch (_) {}
+      if (attempt == 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+    }
+    throw StateError('download-uri-unavailable: ${lastError ?? 'unknown'}');
   }
 
   /// Toplu indirme. Paralellik [_maxParallel] ile sınırlıdır; tek bir hata
@@ -387,20 +452,61 @@ class DownloadService extends ChangeNotifier {
     onProgress?.call(0, total);
     if (total == 0) return results;
 
-    var next = 0;
-    var done = 0;
-    final workerCount = _maxParallel < total ? _maxParallel : total;
-    final workers = List<Future<void>>.generate(workerCount, (_) async {
-      while (true) {
-        final index = next++;
-        if (index >= total) return;
-        final path = await download(tracks[index]);
-        results[index] = path ?? '';
-        done++;
-        onProgress?.call(done, total);
+    // Aynı id'yi bir kez indir; sonuçları tüm indekslere yay.
+    final uniqueIndices = <int>[];
+    final seenIds = <String>{};
+    for (var i = 0; i < total; i++) {
+      final id = tracks[i].id;
+      if (seenIds.add(id)) uniqueIndices.add(i);
+    }
+
+    Future<void> runPass(List<int> indices, {required bool countProgress}) async {
+      var next = 0;
+      var done = 0;
+      final workerCount = _maxParallel < indices.length ? _maxParallel : indices.length;
+      final workers = List<Future<void>>.generate(workerCount, (_) async {
+        while (true) {
+          final cursor = next++;
+          if (cursor >= indices.length) return;
+          final index = indices[cursor];
+          final path = await download(tracks[index]);
+          results[index] = path ?? '';
+          if (countProgress) {
+            done++;
+            onProgress?.call(done, uniqueIndices.length);
+          }
+        }
+      });
+      await Future.wait(workers);
+    }
+
+    await runPass(uniqueIndices, countProgress: true);
+
+    final retryIndices = <int>[];
+    for (final i in uniqueIndices) {
+      final id = tracks[i].id;
+      if (results[i].isEmpty &&
+          savedPathOf(id) == null &&
+          !_cancelledByUser.contains(id)) {
+        retryIndices.add(i);
       }
-    });
-    await Future.wait(workers);
+    }
+    _cancelledByUser.removeWhere((id) => tracks.any((t) => t.id == id));
+    if (retryIndices.isNotEmpty) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      await runPass(retryIndices, countProgress: false);
+    }
+
+    // Dedupe sonuçlarını tüm eşleşen indekslere yay.
+    final byId = <String, String>{};
+    for (final i in uniqueIndices) {
+      final p = results[i].isNotEmpty ? results[i] : (savedPathOf(tracks[i].id) ?? '');
+      byId[tracks[i].id] = p;
+    }
+    for (var i = 0; i < total; i++) {
+      results[i] = byId[tracks[i].id] ?? results[i];
+    }
+    onProgress?.call(total, total);
     return results;
   }
 
@@ -458,11 +564,73 @@ class DownloadService extends ChangeNotifier {
 
   /// İndirmeyi (dosya + tüm ilişkili durum) kaldırır.
   Future<bool> deleteDownload(String id) async {
+    await init();
+    await _deleteTrackEntry(id);
+    final groupsChanged = _pruneTrackFromGroups(id, removeEmpty: true);
+    if (groupsChanged) await _persistGroups();
+    await _persistState();
+    notifyListeners();
+    return true;
+  }
+
+  /// Bir indirme grubunu ve grubun sahip olduğu parçaları siler.
+  /// Parça başka bir grupta da varsa dosya korunur, yalnızca bu grubun kaydı
+  /// kaldırılır.
+  Future<bool> deleteGroup(String groupId) async {
+    await init();
+    final key = _groups.containsKey(groupId)
+        ? groupId
+        : _groups.entries
+            .where((e) => e.value.id == groupId || e.value.name == groupId)
+            .map((e) => e.key)
+            .cast<String?>()
+            .firstWhere((_) => true, orElse: () => null);
+    if (key == null) return false;
+    final group = _groups.remove(key);
+    if (group == null) return false;
+
+    final retained = <String>{};
+    for (final entry in _groups.values) {
+      retained.addAll(entry.trackIds);
+    }
+
+    var changedFiles = false;
+    for (final id in group.trackIds) {
+      if (retained.contains(id)) continue;
+      final had = _saved.containsKey(id) ||
+          _savedTracks.containsKey(id) ||
+          _failures.contains(id) ||
+          _failedTracks.containsKey(id) ||
+          _failureReason.containsKey(id);
+      await _deleteTrackEntry(id);
+      if (had) changedFiles = true;
+    }
+
+    _pruneMissingGroupTracks();
+
+    try {
+      await _persistGroups();
+      if (changedFiles) await _persistState();
+    } catch (_) {}
+    notifyListeners();
+    return !_groups.containsKey(key);
+  }
+
+  /// Eski uyumluluk adı.
+  Future<bool> removeGroup(String groupId) => deleteGroup(groupId);
+
+  Future<void> _deleteTrackEntry(String id) async {
     final path = _saved.remove(id);
     _savedTracks.remove(id);
     _failures.remove(id);
     _failureReason.remove(id);
     _failedTracks.remove(id);
+
+    _activeClients[id]?.close();
+    _activeClients.remove(id);
+    _cancelled.remove(id);
+    _cancelSignals.remove(id)?.complete();
+    _progress.remove(id);
 
     if (path != null) {
       try {
@@ -470,23 +638,58 @@ class DownloadService extends ChangeNotifier {
         if (file.existsSync()) await file.delete();
       } catch (_) {}
     }
+  }
 
+  bool _pruneTrackFromGroups(String id, {required bool removeEmpty}) {
     var groupsChanged = false;
+    final emptyIds = <String>[];
     for (final entry in _groups.entries) {
       if (!entry.value.trackIds.contains(id)) continue;
-      _groups[entry.key] = DownloadGroup(
-        id: entry.value.id,
-        name: entry.value.name,
-        trackIds: entry.value.trackIds.where((item) => item != id).toList(),
-        createdAt: entry.value.createdAt,
-      );
+      final nextIds =
+          entry.value.trackIds.where((item) => item != id).toList();
+      if (removeEmpty && nextIds.isEmpty) {
+        emptyIds.add(entry.key);
+      } else {
+        _groups[entry.key] = DownloadGroup(
+          id: entry.value.id,
+          name: entry.value.name,
+          trackIds: nextIds,
+          createdAt: entry.value.createdAt,
+        );
+      }
       groupsChanged = true;
     }
-    if (groupsChanged) await _persistGroups();
+    for (final emptyId in emptyIds) {
+      _groups.remove(emptyId);
+    }
+    return groupsChanged;
+  }
 
-    await _persistState();
-    notifyListeners();
-    return true;
+  void _pruneMissingGroupTracks() {
+    final emptyIds = <String>[];
+    for (final entry in _groups.entries.toList()) {
+      final nextIds = entry.value.trackIds
+          .where((id) =>
+              _saved.containsKey(id) ||
+              _savedTracks.containsKey(id) ||
+              _progress.containsKey(id) ||
+              _failures.contains(id))
+          .toList();
+      if (nextIds.length == entry.value.trackIds.length) continue;
+      if (nextIds.isEmpty) {
+        emptyIds.add(entry.key);
+      } else {
+        _groups[entry.key] = DownloadGroup(
+          id: entry.value.id,
+          name: entry.value.name,
+          trackIds: nextIds,
+          createdAt: entry.value.createdAt,
+        );
+      }
+    }
+    for (final emptyId in emptyIds) {
+      _groups.remove(emptyId);
+    }
   }
 
   String _safeName(Track track) {

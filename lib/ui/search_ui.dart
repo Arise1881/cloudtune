@@ -130,22 +130,29 @@ class SearchSectionTitle extends StatelessWidget {
         children: [
           Icon(icon, color: SearchUi.titleAccent, size: 20),
           const SizedBox(width: 8),
-          Text(
-            title,
-            style: TextStyle(
-              color: AppPalette.text,
-              fontSize: 17,
-              fontWeight: FontWeight.w800,
+          Flexible(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: AppPalette.text,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
           if (trailing != null && trailing!.isNotEmpty) ...[
             const SizedBox(width: 8),
-            Text(
-              trailing!,
-              style: TextStyle(color: AppPalette.textSubtle, fontSize: 12),
+            Flexible(
+              child: Text(
+                trailing!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: AppPalette.textSubtle, fontSize: 12),
+              ),
             ),
           ],
-          const Spacer(),
           if (onPlayAll != null)
             IconButton(
               tooltip: 'Tümünü çal',

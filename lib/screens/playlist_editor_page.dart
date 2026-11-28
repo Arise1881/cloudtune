@@ -449,20 +449,24 @@ Future<void> downloadTracks(List<Track> tracks) async {
   }
 }
 
-Future<void> deleteDownloadGroup(DownloadGroupView group) async {
+Future<bool> deleteDownloadGroup(DownloadGroupView group) async {
   final service = DownloadService.instance;
   try {
-    await (service as dynamic).deleteGroup(group.id);
-    return;
+    final result = await (service as dynamic).deleteGroup(group.id);
+    if (result is bool) return result;
+    return !service.groups.values.any((g) => g.id == group.id || g.name == group.id);
   } on NoSuchMethodError catch (_) {}
   try {
-    await (service as dynamic).removeGroup(group.id);
-    return;
+    final result = await (service as dynamic).removeGroup(group.id);
+    if (result is bool) return result;
+    return !service.groups.values.any((g) => g.id == group.id || g.name == group.id);
   } on NoSuchMethodError catch (_) {}
 
+  var changed = false;
   for (final track in group.tracks) {
-    await service.deleteDownload(track.id);
+    changed = await service.deleteDownload(track.id) || changed;
   }
+  return changed;
 }
 
 /// ---------------------------------------------------------------------------
@@ -563,11 +567,14 @@ class _PlaylistEditorPageState extends State<PlaylistEditorPage> {
               children: [
                 Icon(widget.playlist.sourceIcon, size: 18, color: accent),
                 const SizedBox(width: 8),
-                Text(
-                  '${_tracks.length} parça · ${widget.playlist.sourceLabel}',
-                  style: TextStyle(color: AppPalette.textSubtle, fontSize: 12),
+                Expanded(
+                  child: Text(
+                    '${_tracks.length} parça · ${widget.playlist.sourceLabel}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: AppPalette.textSubtle, fontSize: 12),
+                  ),
                 ),
-                const Spacer(),
                 TextButton.icon(
                   onPressed: _openAddSheet,
                   icon: Icon(Icons.add, color: accent),

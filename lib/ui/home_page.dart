@@ -1515,14 +1515,17 @@ class _SavedStrip extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
           child: Row(
             children: [
-              Text(
-                'İndirilenler',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w800),
+              Expanded(
+                child: Text(
+                  'İndirilenler',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
               ),
-              const Spacer(),
               TextButton.icon(
                 onPressed: onPlayAll,
                 icon: const Icon(Icons.play_arrow, size: 18),

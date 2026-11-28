@@ -517,10 +517,12 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
 
       final Track? t = service.failedTrack(id);
       final attempt = (_downloadAttempts[id] ?? 0) + 1;
+      final reason = service.failureReason(id);
       _lastIssue = 'download_failed:$id';
       await _log('download_failed', {
         'video_id': id,
         'title': t?.title,
+        'reason': reason,
         'attempt': attempt,
         'max_attempts': _maxDownloadAttempts,
         'retry': true,
@@ -548,6 +550,7 @@ class RepairBot extends ChangeNotifier with WidgetsBindingObserver {
         if (attempt >= _maxDownloadAttempts) {
           await _log('download_unrecoverable', {
             'video_id': id,
+            'reason': service.failureReason(id),
             'attempts': attempt,
           });
         } else {
